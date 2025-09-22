@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import AuthService from '../services/AuthService';
+import TradingService from '../services/TradingService';
 
 const AuthCallback = () => {
   const [searchParams] = useSearchParams();
@@ -26,8 +27,26 @@ const AuthCallback = () => {
         .then(() => {
           setStatus('success');
           setMessage('Login successful! Redirecting…');
-          // Navigate away so this effect cannot run again
-          setTimeout(() => navigate('/dashboard'), 1000);
+          
+          // Force WebSocket connection to be established with the new token
+          console.log('Re-initializing WebSocket connection after login...');
+          
+          // Call setupWebSocket from TradingService
+          // This will ensure the WebSocket connection uses the new token
+          setTimeout(() => {
+            try {
+              if (typeof TradingService.setupWebSocket === 'function') {
+                TradingService.setupWebSocket();
+                console.log('WebSocket connection re-initialized successfully');
+              } else {
+                console.warn('setupWebSocket method not found on TradingService');
+              }
+            } catch (error) {
+              console.error('Error setting up WebSocket after login:', error);
+            }
+            // Navigate away so this effect cannot run again
+            navigate('/dashboard');
+          }, 1000);
         })
         .catch(err => {
           console.error('Auth error:', err);

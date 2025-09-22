@@ -1,103 +1,36 @@
-/* Minimal Table Styles */
-.minimal-section {
-  margin-top: 2.5rem;
-  background: #181818;
-  border-radius: 12px;
-  padding: 1.5rem 2rem;
-  box-shadow: 0 2px 16px rgba(0,255,136,0.04);
-  min-width: 320px;
-}
-.minimal-section-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: #00ff88;
-  margin-bottom: 1rem;
-}
-.minimal-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 1rem;
-}
-.minimal-table th, .minimal-table td {
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  border-bottom: 1px solid #222;
-}
-.minimal-table th {
-  color: #00ff88;
-  font-weight: 600;
-  background: #181818;
-}
-.minimal-table tr:last-child td {
-  border-bottom: none;
-}
-.minimal-link {
-  color: #00ff88;
-  cursor: pointer;
-}
-/* Minimal Dashboard Styles */
-.minimal-dashboard {
-  background: #111;
+/* Loading Component Styles */
+.loading-container {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  padding-top: 48px;
-  color: #fff;
-}
-.minimal-header {
-  font-size: 1.5rem;
-  font-weight: 600;
-  margin-bottom: 2rem;
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-}
-.minimal-name {
-  color: #00ff88;
-}
-.minimal-values {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  background: #181818;
-  border-radius: 12px;
-  padding: 2rem 2.5rem;
-  box-shadow: 0 2px 16px rgba(0,255,136,0.04);
-  min-width: 320px;
-}
-.minimal-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 1.15rem;
-}
-.minimal-label {
-  color: #aaa;
-  font-weight: 500;
-}
-.minimal-value {
-  color: #fff;
-  font-weight: 600;
-}
-/* Professional Trading Dashboard Styles */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
+  justify-content: center;
+  background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+  color: var(--text-primary);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  background: #0a0a0a;
-  color: #ffffff;
-  overflow-x: hidden;
 }
 
-.trading-dashboard {
-  min-height: 100vh;
-  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid var(--surface-border);
+  border-top: 3px solid var(--brand-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow-glow);
+}
+
+.loading-container p {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-medium);
+  color: var(--text-secondary);
+  letter-spacing: 0.025em;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* Header Styles */
@@ -216,13 +149,10 @@ body {
 
 /* Dashboard Container */
 .dashboard-container {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  height: calc(100vh - 80px);
-  max-width: 1400px;
-  margin: 0 auto;
   width: 100%;
+  max-width: 100%;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 /* Sidebar */
@@ -311,16 +241,9 @@ body {
 
 /* Main Content */
 .dashboard-main {
-  flex: 1;
-  padding: 2rem 2.5rem;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
-  min-width: 0;
-  max-width: 1000px;
-  margin-left: 0;
-  margin-right: auto;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
   box-sizing: border-box;
 }
 
@@ -602,14 +525,9 @@ body {
 
 @media (max-width: 768px) {
 .dashboard-container {
-  display: flex;
-  flex-direction: row;
-  justify-content: flex-start;
-  align-items: flex-start;
-  height: calc(100vh - 80px);
-  max-width: 1400px;
-  margin: 2rem auto 0 auto;
   width: 100%;
+  max-width: 100%;
+  margin: 0;
   box-sizing: border-box;
 }
   
