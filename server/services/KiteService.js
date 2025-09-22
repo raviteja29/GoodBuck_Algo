@@ -24,6 +24,30 @@ class KiteService {
     this.initializeTicker(accessToken);
   }
 
+  async generateSession(requestToken) {
+    try {
+      console.log('Generating session with request token:', requestToken);
+      
+      const sessionData = await this.kite.generateSession(requestToken, process.env.KITE_API_SECRET);
+      
+      // Set the access token after successful session generation
+      this.setAccessToken(sessionData.access_token);
+      
+      return {
+        access_token: sessionData.access_token,
+        user_id: sessionData.user_id,
+        user_name: sessionData.user_name,
+        user_shortname: sessionData.user_shortname,
+        email: sessionData.email,
+        user_type: sessionData.user_type,
+        broker: sessionData.broker
+      };
+    } catch (error) {
+      console.error('Error generating session:', error);
+      throw error;
+    }
+  }
+
   initializeTicker(accessToken) {
     if (this.ticker) {
       this.ticker.close();
@@ -156,6 +180,61 @@ class KiteService {
       };
     } catch (error) {
       console.error('Error getting instrument details:', error);
+      throw error;
+    }
+  }
+
+  // Trading API Methods
+  async getProfile() {
+    try {
+      return await this.kite.getProfile();
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+      throw error;
+    }
+  }
+
+  async getMargins() {
+    try {
+      return await this.kite.getMargins();
+    } catch (error) {
+      console.error('Error fetching margins:', error);
+      throw error;
+    }
+  }
+
+  async getPositions() {
+    try {
+      return await this.kite.getPositions();
+    } catch (error) {
+      console.error('Error fetching positions:', error);
+      throw error;
+    }
+  }
+
+  async getOrders() {
+    try {
+      return await this.kite.getOrders();
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      throw error;
+    }
+  }
+
+  async placeOrder(orderParams) {
+    try {
+      return await this.kite.placeOrder(orderParams);
+    } catch (error) {
+      console.error('Error placing order:', error);
+      throw error;
+    }
+  }
+
+  async getHoldings() {
+    try {
+      return await this.kite.getHoldings();
+    } catch (error) {
+      console.error('Error fetching holdings:', error);
       throw error;
     }
   }

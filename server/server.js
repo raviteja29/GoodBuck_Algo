@@ -82,6 +82,62 @@ app.get('/api/instruments/details', async (req, res) => {
   }
 });
 
+// Profile endpoint
+app.get('/api/profile', async (req, res) => {
+  try {
+    const profile = await KiteService.getProfile();
+    res.json(profile);
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    res.status(500).json({ error: 'Failed to fetch profile' });
+  }
+});
+
+// Margins endpoint
+app.get('/api/margins', async (req, res) => {
+  try {
+    const margins = await KiteService.getMargins();
+    res.json(margins);
+  } catch (error) {
+    console.error('Error fetching margins:', error);
+    res.status(500).json({ error: 'Failed to fetch margins' });
+  }
+});
+
+// Positions endpoint
+app.get('/api/positions', async (req, res) => {
+  try {
+    const positions = await KiteService.getPositions();
+    res.json(positions);
+  } catch (error) {
+    console.error('Error fetching positions:', error);
+    res.status(500).json({ error: 'Failed to fetch positions' });
+  }
+});
+
+// Orders endpoint
+app.get('/api/orders', async (req, res) => {
+  try {
+    const orders = await KiteService.getOrders();
+    res.json(orders);
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+// Place order endpoint
+app.post('/api/orders', async (req, res) => {
+  try {
+    const orderParams = req.body;
+    const result = await KiteService.placeOrder(orderParams);
+    res.json(result);
+  } catch (error) {
+    console.error('Error placing order:', error);
+    res.status(500).json({ error: 'Failed to place order' });
+  }
+});
+
 // Existing routes for profile, margins, positions, orders...
 
 // Function to find an available port
@@ -162,5 +218,28 @@ app.post('/api/auth/token', (req, res) => {
   } catch (error) {
     console.error('Error setting access token:', error);
     res.status(500).json({ error: 'Failed to set access token' });
+  }
+});
+
+// Session generation endpoint
+app.post('/api/generate_session', async (req, res) => {
+  try {
+    const { request_token } = req.body;
+    
+    if (!request_token) {
+      return res.status(400).json({ error: 'Request token is required' });
+    }
+
+    console.log('Generating session for request token:', request_token);
+    
+    // Use KiteConnect to generate session
+    const sessionData = await KiteService.generateSession(request_token);
+    
+    console.log('Session generated successfully:', sessionData);
+    res.json(sessionData);
+    
+  } catch (error) {
+    console.error('Error generating session:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate session' });
   }
 });
