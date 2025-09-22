@@ -4,8 +4,9 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { KiteConnect } from 'kiteconnect';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
+import { v4 as uuidv4 } from 'uuid';
 
 // In-memory cache for used request_tokens
 const usedTokens = new Set();
@@ -240,6 +241,69 @@ app.get('/api/historical', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// Add search endpoint for instruments
+app.get('/api/instruments/search', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (!access_token) {
+      return res.status(401).json({ error: 'Access token required' });
+    }
+    
+    const { query } = req.query;
+    console.log('[INSTRUMENT SEARCH] Received search query:', query);
+    
+    if (!query) {
+      console.warn('[INSTRUMENT SEARCH] Missing query parameter');
+      return res.status(400).json({ error: 'Query parameter is required' });
+    }
+    
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token);
+    
+    try {
+      console.log('[INSTRUMENT SEARCH] Fetching instruments from KiteConnect...');
+      const instruments = await kc.getInstruments();
+      console.log(`[INSTRUMENT SEARCH] Fetched ${instruments.length} instruments`);
+      
+      // Search instruments by tradingsymbol or name
+      const searchTerm = query.toUpperCase();
+      const matchingInstruments = instruments.filter(inst => 
+        (inst.tradingsymbol && inst.tradingsymbol.toUpperCase().includes(searchTerm)) ||
+        (inst.name && inst.name.toUpperCase().includes(searchTerm))
+      );
+      
+      console.log(`[INSTRUMENT SEARCH] Found ${matchingInstruments.length} matching instruments`);
+      
+      // Limit results to 20 and return relevant fields
+      const results = matchingInstruments.slice(0, 20).map(inst => ({
+        instrument_token: inst.instrument_token,
+        tradingsymbol: inst.tradingsymbol,
+        name: inst.name,
+        exchange: inst.exchange,
+        segment: inst.segment,
+        instrument_type: inst.instrument_type
+      }));
+      
+      res.json(results);
+    } catch (apiErr) {
+      console.error('[INSTRUMENT SEARCH] Error fetching instruments:', {
+        message: apiErr.message,
+        error_type: apiErr.error_type,
+        data: apiErr.data,
+        stack: apiErr.stack
+      });
+      res.status(500).json({ 
+        error: apiErr.message,
+        error_type: apiErr.error_type,
+        data: apiErr.data
+      });
+    }
+  } catch (err) {
+    console.error('[INSTRUMENT SEARCH] Route error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Proxy route for instrument details
 app.get('/api/instruments/details', async (req, res) => {
   try {
@@ -260,8 +324,39 @@ app.get('/api/instruments/details', async (req, res) => {
     try {
       console.log('[INSTRUMENT DETAILS] Fetching instruments from KiteConnect...');
       const instruments = await kc.getInstruments();
-      console.log(`[INSTRUMENT DETAILS] Fetched ${instruments.length} instruments`);
-      const instrument = instruments.find(i => i.tradingsymbol.toUpperCase() === name.toUpperCase());
+      console.log(`[INSTRUMENT DETAILS] Fetched ${instruments ? instruments.length : 0} instruments`);
+      
+      if (!instruments || !Array.isArray(instruments)) {
+        console.error('[INSTRUMENT DETAILS] No instruments returned from KiteConnect');
+        return res.status(500).json({ error: 'Failed to fetch instruments from Kite API' });
+      }
+      
+      // More flexible search - handle NIFTY 50, NIFTY, etc.
+      const searchName = name ? name.toUpperCase().replace(/\s+/g, '') : '';
+      let instrument = instruments.find(i => i && i.tradingsymbol && i.tradingsymbol.toUpperCase() === searchName);
+      
+      // If exact match not found, try a more flexible search
+      if (!instrument) {
+        console.log('[INSTRUMENT DETAILS] Exact match not found, trying flexible search for:', searchName);
+        
+        // Special case for NIFTY 50
+        if (searchName === 'NIFTY50' || searchName === 'NIFTY') {
+          instrument = instruments.find(i => i && i.tradingsymbol && i.tradingsymbol.toUpperCase() === 'NIFTY' && i.exchange === 'NSE');
+        }
+        
+        // Special case for BANKNIFTY
+        if (searchName === 'BANKNIFTY') {
+          instrument = instruments.find(i => i && i.tradingsymbol && i.tradingsymbol.toUpperCase() === 'BANKNIFTY' && i.exchange === 'NSE');
+        }
+        
+        // If still not found, try a partial match
+        if (!instrument) {
+          instrument = instruments.find(i => 
+            i.tradingsymbol.toUpperCase().includes(searchName) || 
+            (i.name && i.name.toUpperCase().includes(searchName))
+          );
+        }
+      }
       
       if (!instrument) {
         console.warn('[INSTRUMENT DETAILS] Instrument not found:', name);
@@ -311,23 +406,47 @@ const wss = new WebSocketServer({
   verifyClient: async ({ req }, done) => {
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
+      console.log('WebSocket connection attempt from:', req.socket.remoteAddress);
+      console.log('Request URL:', req.url);
+      
       const token = url.searchParams.get('token');
+      console.log('Token present:', !!token);
       
       if (!token) {
         console.log('WebSocket connection rejected: No token provided');
         return done(false, 401, 'Unauthorized');
       }
-
-      // Verify token by making a test API call
-      const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-      kc.setAccessToken(token);
+      
+      // Expect token in format api_key:access_token
+      const [apiKey, accessToken] = token.split(':');
+      console.log('API key present:', !!apiKey);
+      console.log('Access token present:', !!accessToken);
+      
+      if (!apiKey || !accessToken) {
+        console.log('WebSocket connection rejected: Malformed public token');
+        return done(false, 401, 'Unauthorized');
+      }
+      const kc = new KiteConnect({ api_key: apiKey });
+      kc.setAccessToken(accessToken);
       
       try {
-        await kc.getProfile();
-        console.log('WebSocket connection authenticated successfully');
+        console.log('Attempting to validate token with Kite API...');
+        // Use a simple method like getProfile to check if the token is valid
+        const profile = await kc.getProfile();
+        console.log('WebSocket authentication successful for user:', profile.user_id);
         done(true);
       } catch (error) {
-        console.log('WebSocket connection rejected: Invalid token');
+        console.log('WebSocket authentication failed:', error.message);
+        console.log('Error type:', error.error_type || 'Unknown');
+        
+        if (error.message && error.message.includes('Insufficient permission')) {
+          console.log('This appears to be a permission error. Check that the API key has appropriate permissions.');
+        }
+        
+        if (error.message && error.message.includes('Invalid access token')) {
+          console.log('The access token appears to be invalid or expired.');
+        }
+        
         done(false, 401, 'Unauthorized');
       }
     } catch (error) {
@@ -373,10 +492,13 @@ wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const token = url.searchParams.get('token');
   
+  // Extract access token from the public token format (api_key:access_token)
+  const [, accessToken] = token.split(':');
+  
   // Store client info
   clients.set(clientId, {
     ws,
-    token,
+    token: accessToken, // Store only the access token
     subscribedTokens: new Set(),
     lastPong: Date.now(),
     kiteClient: new KiteConnect({ api_key: process.env.KITE_API_KEY })
@@ -384,7 +506,7 @@ wss.on('connection', (ws, req) => {
 
   // Initialize Kite client for this connection
   const clientInfo = clients.get(clientId);
-  clientInfo.kiteClient.setAccessToken(token);
+  clientInfo.kiteClient.setAccessToken(accessToken);
 
   // Send immediate confirmation
   try {
