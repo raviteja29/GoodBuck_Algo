@@ -601,13 +601,22 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       
       <MarketIndices className="grid-3x1" />
       
-      <PerformanceCard 
-        title="Active Positions"
-        value={positions.length}
-        subtitle="Open Trades"
-        icon={ChartBarIcon}
-        className="grid-3x1"
-      />
+      <div className="grid-item grid-3x1">
+        <div className="card-header">
+          <h3 className="card-title">Positions Summary</h3>
+          <ChartBarIcon className="card-icon" />
+        </div>
+        <div className="stats-grid">
+          <div className="stat-item">
+            <div className="stat-label">Active Positions</div>
+            <div className="stat-value">{positions.filter(p => p.quantity !== 0).length}</div>
+          </div>
+          <div className="stat-item">
+            <div className="stat-label">Closed Positions</div>
+            <div className="stat-value">{positions.filter(p => p.quantity === 0).length}</div>
+          </div>
+        </div>
+      </div>
       
       <div className="grid-item grid-3x1">
         <div className="card-header">
