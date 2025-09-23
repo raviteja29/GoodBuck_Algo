@@ -11,6 +11,7 @@ import {
   AdjustmentsHorizontalIcon
 } from '@heroicons/react/24/outline';
 import TradingService from '../../services/TradingService';
+import MarketIndices from './MarketIndices';
 
 const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   const [positions, setPositions] = useState([]);
@@ -37,6 +38,8 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
     const fetchData = async () => {
       try {
         setLoading(true);
+        
+        // Fetch positions and orders
         const [positionsData, ordersData] = await Promise.all([
           TradingService.getPositions(),
           TradingService.getOrders()
@@ -373,14 +376,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
         className="grid-3x1 featured"
       />
       
-      <PerformanceCard 
-        title="Today's P&L"
-        value={todayPnL}
-        subtitle="Current Session"
-        icon={ArrowTrendingUpIcon}
-        trend={todayPnL}
-        className="grid-3x1"
-      />
+      <MarketIndices className="grid-3x1" />
       
       <PerformanceCard 
         title="Active Positions"
@@ -427,13 +423,12 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
                 <th>Qty</th>
                 <th>Price</th>
                 <th>Status</th>
-                <th>Time</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" style={{ textAlign: 'center', padding: '2rem' }}>
+                  <td colSpan="6" style={{ textAlign: 'center', padding: '2rem' }}>
                     <div className="loading-skeleton" style={{ height: '20px', width: '100%' }}></div>
                   </td>
                 </tr>
@@ -458,14 +453,11 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
                         {order.status}
                       </span>
                     </td>
-                    <td style={{ fontSize: 'var(--font-size-xs)' }}>
-                      {new Date(order.order_timestamp).toLocaleTimeString()}
-                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7" className="empty-state" style={{ padding: '3rem' }}>
+                  <td colSpan="6" className="empty-state" style={{ padding: '3rem' }}>
                     <ClockIcon className="empty-state-icon" />
                     <div className="empty-state-title">No Recent Orders</div>
                     <div className="empty-state-description">

@@ -168,6 +168,36 @@ app.get('/api/profile', async (req, res) => {
   }
 });
 
+// Quotes endpoint - for multiple instruments
+app.get('/api/quotes', async (req, res) => {
+  try {
+    const { tokens } = req.query;
+    if (!tokens) {
+      return res.status(400).json({ error: 'Tokens parameter is required' });
+    }
+    
+    const tokenArray = tokens.split(',').map(t => parseInt(t, 10));
+    console.log(`[Server] Fetching quotes for tokens: ${tokenArray.join(',')}`);
+    
+    // Get quotes for each token and build a response object
+    const result = {};
+    for (const token of tokenArray) {
+      try {
+        const quote = await KiteService.getQuote(token);
+        result[token] = quote;
+      } catch (error) {
+        console.error(`Error fetching quote for token ${token}:`, error);
+        result[token] = { error: error.message };
+      }
+    }
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching quotes:', error);
+    res.status(500).json({ error: 'Failed to fetch quotes' });
+  }
+});
+
 // Margins endpoint
 app.get('/api/margins', async (req, res) => {
   try {

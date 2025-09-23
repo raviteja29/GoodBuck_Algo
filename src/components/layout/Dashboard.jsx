@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import Header from './Header';
 import Sidebar from './Sidebar';
 import DashboardGrid from './DashboardGrid';
+import TradingService from '../../services/TradingService';
 import './Dashboard.css';
 
 const Dashboard = ({ userInfo, onLogout }) => {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [activeSection, setActiveSection] = useState('dashboard');
   const [dashboardData, setDashboardData] = useState({
     totalPnL: 0,
@@ -39,7 +40,14 @@ const Dashboard = ({ userInfo, onLogout }) => {
     };
 
     const interval = setInterval(updateData, 2000);
-    return () => clearInterval(interval);
+    
+    // Start polling for order updates
+    const stopOrderPolling = TradingService.startOrderPolling(10000); // Poll every 10 seconds
+    
+    return () => {
+      clearInterval(interval);
+      stopOrderPolling(); // Stop order polling when component unmounts
+    };
   }, []);
 
   return (

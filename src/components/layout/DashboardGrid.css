@@ -37,6 +37,57 @@
   font-feature-settings: 'tnum';
 }
 
+/* Market Indices Card */
+.market-indices-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.market-indices-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 0.75rem 0;
+}
+
+.market-index-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.market-index-item:last-child {
+  border-bottom: none;
+}
+
+.index-name {
+  font-weight: var(--font-semibold);
+  font-size: var(--font-size-sm);
+}
+
+.index-value {
+  font-weight: var(--font-bold);
+  font-size: var(--font-size-sm);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.index-change {
+  font-size: var(--font-size-xs);
+  margin-left: 0.5rem;
+}
+
+.loading-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  color: var(--text-tertiary);
+}
+
 /* Connection Status Indicator */
 .connection-status {
   display: flex;
@@ -174,12 +225,16 @@
 }
 
 /* Table Cell Styling for P&L */
-.table td.positive {
+.table td.positive,
+.index-price.positive,
+.index-change.positive {
   color: var(--profit-primary);
   font-weight: var(--font-semibold);
 }
 
-.table td.negative {
+.table td.negative,
+.index-price.negative,
+.index-change.negative {
   color: var(--loss-primary);
   font-weight: var(--font-semibold);
 }
