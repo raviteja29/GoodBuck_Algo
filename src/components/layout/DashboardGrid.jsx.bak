@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
@@ -18,21 +18,8 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   const [watchlist, setWatchlist] = useState([]);
   const [realTimeData, setRealTimeData] = useState({});
   const [loading, setLoading] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
-  // Function to update positions with real-time data
-  const updatePositionsWithRealTimeData = useCallback((ticks) => {
-    if (!ticks || !ticks.length || !positions.length) return;
-    
-    console.log(`Updating positions with ${ticks.length} ticks`);
-    
-    setPositions(currentPositions => {
-      // Use the TradingService utility to merge ticks and recalculate P&L
-      return TradingService.mergeTicksAndRecalculatePnL([...currentPositions], ticks);
-    });
-  }, [positions.length]);
-
-  // Fetch positions and orders data on component mount
+  // Fetch data on component mount
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -42,22 +29,8 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
           TradingService.getOrders()
         ]);
         
-        // Extract positions from the response
-        const positionsList = positionsData?.net || [];
-        setPositions(positionsList);
+        setPositions(positionsData?.net || []);
         setOrders(ordersData || []);
-        
-        // If we have positions, ensure we subscribe to their instrument tokens
-        if (positionsList.length > 0) {
-          const tokens = positionsList
-            .filter(pos => pos.instrument_token)
-            .map(pos => pos.instrument_token);
-          
-          if (tokens.length > 0) {
-            console.log(`Subscribing to ${tokens.length} position instruments`);
-            TradingService.subscribeToInstruments(tokens);
-          }
-        }
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
       } finally {
@@ -66,50 +39,26 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
     };
 
     fetchData();
-    
-    // Subscribe to connection status changes
-    const unsubscribeStatus = TradingService.onConnectionStatusChange(status => {
-      setConnectionStatus(status);
-    });
-    
-    return () => {
-      unsubscribeStatus();
-    };
   }, []);
 
-  // Subscribe to real-time market data
+  // Subscribe to real-time data
   useEffect(() => {
-    console.log('Setting up real-time tick subscription');
-    
-    // Subscribe to real-time ticks
     const unsubscribe = TradingService.subscribeToTicks(ticks => {
-      // Update real-time data state
       setRealTimeData(prev => {
         const updates = {};
         ticks.forEach(tick => {
-          if (!tick || !tick.instrument_token) return;
-          
           updates[tick.instrument_token] = {
             ltp: tick.last_price,
-            change: tick.change || 
-              ((tick.last_price && tick.ohlc && tick.ohlc.open) ? 
-                ((tick.last_price - tick.ohlc.open) / tick.ohlc.open * 100).toFixed(2) + '%' : 
-                '0%'),
-            volume: tick.volume || 0
+            change: ((tick.last_price - tick.ohlc.open) / tick.ohlc.open * 100).toFixed(2) + '%',
+            volume: tick.volume
           };
         });
         return { ...prev, ...updates };
       });
-      
-      // Update positions with real-time data
-      updatePositionsWithRealTimeData(ticks);
     });
 
-    return () => {
-      console.log('Cleaning up real-time tick subscription');
-      unsubscribe();
-    };
-  }, [updatePositionsWithRealTimeData]);
+    return () => unsubscribe();
+  }, []);
 
   // Calculate total P&L from positions
   const totalPnL = positions.reduce((sum, pos) => sum + (pos.pnl || 0), 0);
@@ -137,27 +86,11 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
     </div>
   );
 
-  // Connection Status Indicator
-  const ConnectionStatus = () => (
-    <div className={`connection-status ${connectionStatus}`}>
-      <span className="status-indicator"></span>
-      <span className="status-text">
-        {connectionStatus === 'connected' ? 'Connected' : 
-         connectionStatus === 'connecting' ? 'Connecting...' : 
-         connectionStatus === 'disconnected' ? 'Disconnected' : 
-         connectionStatus === 'authentication_failed' ? 'Auth Failed' : 
-         connectionStatus === 'error' ? 'Connection Error' : 
-         connectionStatus === 'failed' ? 'Connection Failed' : 'Unknown'}
-      </span>
-    </div>
-  );
-
   // Quick Stats Component
   const QuickStats = () => (
     <div className="grid-item grid-3x1">
       <div className="table-header">
         <h3 className="table-title">Quick Stats</h3>
-        <ConnectionStatus />
       </div>
       <div className="stats-grid">
         <div className="stat-item">
@@ -217,40 +150,27 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
                 </td>
               </tr>
             ) : positions.length > 0 ? (
-              positions.map((position, index) => {
-                const hasRealTimeUpdates = position.instrument_token && 
-                  realTimeData[position.instrument_token];
-                
-                return (
-                  <tr key={index} className={hasRealTimeUpdates ? 'has-updates' : ''}>
-                    <td style={{ fontWeight: 'var(--font-semibold)' }}>
-                      {position.tradingsymbol}
-                    </td>
-                    <td>{position.quantity}</td>
-                    <td>₹{position.average_price?.toFixed(2) || '0.00'}</td>
-                    <td className={hasRealTimeUpdates ? 'highlight' : ''}>
-                      ₹{position.last_price?.toFixed(2) || '0.00'}
-                    </td>
-                    <td className={`${position.pnl >= 0 ? 'positive' : 'negative'} ${hasRealTimeUpdates ? 'highlight' : ''}`}>
-                      ₹{position.pnl?.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      }) || '0.00'}
-                    </td>
-                    <td className={position.day_pnl >= 0 ? 'positive' : 'negative'}>
-                      ₹{position.day_pnl?.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      }) || '0.00'}
-                    </td>
-                    <td>
-                      <button className="table-btn" style={{ padding: '0.25rem 0.5rem' }}>
-                        <EyeIcon style={{ width: '14px', height: '14px' }} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })
+              positions.map((position, index) => (
+                <tr key={index}>
+                  <td style={{ fontWeight: 'var(--font-semibold)' }}>
+                    {position.tradingsymbol}
+                  </td>
+                  <td>{position.quantity}</td>
+                  <td>₹{position.average_price?.toFixed(2) || '0.00'}</td>
+                  <td>₹{position.last_price?.toFixed(2) || '0.00'}</td>
+                  <td className={position.pnl >= 0 ? 'positive' : 'negative'}>
+                    ₹{position.pnl?.toLocaleString() || '0'}
+                  </td>
+                  <td className={position.day_pnl >= 0 ? 'positive' : 'negative'}>
+                    ₹{position.day_pnl?.toLocaleString() || '0'}
+                  </td>
+                  <td>
+                    <button className="table-btn" style={{ padding: '0.25rem 0.5rem' }}>
+                      <EyeIcon style={{ width: '14px', height: '14px' }} />
+                    </button>
+                  </td>
+                </tr>
+              ))
             ) : (
               <tr>
                 <td colSpan="7" className="empty-state" style={{ padding: '3rem' }}>

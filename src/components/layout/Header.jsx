@@ -94,7 +94,7 @@ const Header = ({ userInfo, onLogout, onToggleSidebar, sidebarCollapsed }) => {
           </div>
           <div className="brand-text">
             <h1 className="brand-name">GoodBuck</h1>
-            <span className="brand-tagline">Professional Trading</span>
+            <span className="brand-tagline">Algo trader</span>
           </div>
         </div>
 

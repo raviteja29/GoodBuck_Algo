@@ -53,7 +53,7 @@
 - Poor mobile experience
 
 ### **After:**
-- **Professional trading workspace** with flexible grid
+- **Algo trader workspace** with flexible grid
 - **Sophisticated glass morphism** design with premium colors
 - **Modular component architecture** with clear separation
 - **Real-time market data** integration throughout

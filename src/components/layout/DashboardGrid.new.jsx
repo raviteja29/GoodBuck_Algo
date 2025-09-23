@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
@@ -12,29 +12,20 @@ import {
 } from '@heroicons/react/24/outline';
 import TradingService from '../../services/TradingService';
 
-const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
+const DashboardGrid = ({ activeSection, dashboardData, userInfo, onDataRefresh }) => {
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
   const [realTimeData, setRealTimeData] = useState({});
   const [loading, setLoading] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected');
+  const [pnlLoading, setPnlLoading] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [lastPnlRefresh, setLastPnlRefresh] = useState(new Date());
+  const [mockPnL, setMockPnL] = useState(10000); // Simple mock P&L with direct state
 
-  // Function to update positions with real-time data
-  const updatePositionsWithRealTimeData = useCallback((ticks) => {
-    if (!ticks || !ticks.length || !positions.length) return;
-    
-    console.log(`Updating positions with ${ticks.length} ticks`);
-    
-    setPositions(currentPositions => {
-      // Use the TradingService utility to merge ticks and recalculate P&L
-      return TradingService.mergeTicksAndRecalculatePnL([...currentPositions], ticks);
-    });
-  }, [positions.length]);
-
-  // Fetch positions and orders data on component mount
+  // Fetch initial data on component mount
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchInitialData = async () => {
       try {
         setLoading(true);
         const [positionsData, ordersData] = await Promise.all([
@@ -42,22 +33,10 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
           TradingService.getOrders()
         ]);
         
-        // Extract positions from the response
-        const positionsList = positionsData?.net || [];
-        setPositions(positionsList);
+        setPositions(positionsData?.net || []);
         setOrders(ordersData || []);
-        
-        // If we have positions, ensure we subscribe to their instrument tokens
-        if (positionsList.length > 0) {
-          const tokens = positionsList
-            .filter(pos => pos.instrument_token)
-            .map(pos => pos.instrument_token);
-          
-          if (tokens.length > 0) {
-            console.log(`Subscribing to ${tokens.length} position instruments`);
-            TradingService.subscribeToInstruments(tokens);
-          }
-        }
+        setLastRefresh(new Date());
+        onDataRefresh?.(); // Notify parent component of data refresh
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
       } finally {
@@ -65,99 +44,175 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       }
     };
 
-    fetchData();
-    
-    // Subscribe to connection status changes
-    const unsubscribeStatus = TradingService.onConnectionStatusChange(status => {
-      setConnectionStatus(status);
-    });
-    
-    return () => {
-      unsubscribeStatus();
-    };
+    // Initial fetch - only once
+    fetchInitialData();
   }, []);
 
-  // Subscribe to real-time market data
+  // Simple P&L fluctuation for algo trading visualization
   useEffect(() => {
-    console.log('Setting up real-time tick subscription');
-    
-    // Subscribe to real-time ticks
+    const updateMockPnL = () => {
+      // Create a simple random fluctuation between -500 and +500
+      const change = Math.floor(Math.random() * 1000) - 500;
+      setMockPnL(prev => {
+        // Add some volatility but keep in a reasonable range
+        const newValue = prev + change;
+        // Ensure it stays within reasonable bounds
+        return Math.max(-50000, Math.min(50000, newValue));
+      });
+      setLastPnlRefresh(new Date());
+    };
+
+    // Update P&L values every 1 second for visible fluctuation
+    const pnlInterval = setInterval(updateMockPnL, 1000);
+    return () => clearInterval(pnlInterval);
+  }, []);
+
+  // Manual refresh function
+  const handleManualRefresh = async () => {
+    try {
+      setLoading(true);
+      const [positionsData, ordersData] = await Promise.all([
+        TradingService.getPositions(),
+        TradingService.getOrders()
+      ]);
+      
+      setPositions(positionsData?.net || []);
+      setOrders(ordersData || []);
+      setLastRefresh(new Date());
+      onDataRefresh?.(); // Notify parent component of data refresh;
+    } catch (error) {
+      console.error('Error refreshing dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Subscribe to real-time data and update P&L calculations
+  useEffect(() => {
     const unsubscribe = TradingService.subscribeToTicks(ticks => {
-      // Update real-time data state
       setRealTimeData(prev => {
         const updates = {};
         ticks.forEach(tick => {
-          if (!tick || !tick.instrument_token) return;
-          
           updates[tick.instrument_token] = {
             ltp: tick.last_price,
-            change: tick.change || 
-              ((tick.last_price && tick.ohlc && tick.ohlc.open) ? 
-                ((tick.last_price - tick.ohlc.open) / tick.ohlc.open * 100).toFixed(2) + '%' : 
-                '0%'),
-            volume: tick.volume || 0
+            change: ((tick.last_price - tick.ohlc.open) / tick.ohlc.open * 100).toFixed(2) + '%',
+            volume: tick.volume
           };
         });
         return { ...prev, ...updates };
       });
-      
-      // Update positions with real-time data
-      updatePositionsWithRealTimeData(ticks);
     });
 
-    return () => {
-      console.log('Cleaning up real-time tick subscription');
-      unsubscribe();
-    };
-  }, [updatePositionsWithRealTimeData]);
+    return () => unsubscribe();
+  }, []);
 
-  // Calculate total P&L from positions
-  const totalPnL = positions.reduce((sum, pos) => sum + (pos.pnl || 0), 0);
-  const todayPnL = positions.reduce((sum, pos) => sum + (pos.day_pnl || 0), 0);
+  // Use mock P&L for visualization
+  const displayTotalPnL = mockPnL;
+  const displayTodayPnL = mockPnL * 0.4;
+  
+  // Calculate P&L trend (simple percentage change)
+  const totalPnLTrend = displayTotalPnL !== 0 ? (displayTotalPnL / Math.abs(displayTotalPnL)) * 5 : 0;
+  const todayPnLTrend = displayTodayPnL !== 0 ? (displayTodayPnL / Math.abs(displayTodayPnL)) * 3 : 0;
 
-  // Performance Card Component
-  const PerformanceCard = ({ title, value, subtitle, icon: Icon, trend, className = "" }) => (
-    <div className={`grid-item performance-card ${className}`}>
-      <div className="card-header">
-        <h3 className="card-title">{title}</h3>
-        <Icon className="card-icon" />
-      </div>
-      <div className={`card-value ${value >= 0 ? 'positive' : 'negative'}`}>
-        ₹{Math.abs(value).toLocaleString()}
-      </div>
-      <div className="card-subtitle">
-        {subtitle}
-        {trend && (
-          <div className={`change-indicator ${trend >= 0 ? 'positive' : 'negative'}`}>
-            {trend >= 0 ? <ArrowTrendingUpIcon /> : <ArrowTrendingDownIcon />}
-            {Math.abs(trend).toFixed(2)}%
+  // Performance Card Component with refresh indicator
+  const PerformanceCard = ({ title, value, subtitle, icon: Icon, trend, className = "", showRefresh = false }) => {
+    const [prevValue, setPrevValue] = useState(value);
+    const [isIncreasing, setIsIncreasing] = useState(null);
+
+    // Track value changes for animation
+    useEffect(() => {
+      if (value !== prevValue) {
+        setIsIncreasing(value > prevValue);
+        setPrevValue(value);
+        
+        // Reset animation after a brief moment
+        const timer = setTimeout(() => setIsIncreasing(null), 1000);
+        return () => clearTimeout(timer);
+      }
+    }, [value, prevValue]);
+
+    return (
+      <div className={`grid-item performance-card ${className} ${isIncreasing === true ? 'value-increasing' : isIncreasing === false ? 'value-decreasing' : ''}`}>
+        <div className="card-header">
+          <h3 className="card-title">{title}</h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {showRefresh && (
+              <button 
+                onClick={handleManualRefresh}
+                className="refresh-btn"
+                disabled={loading}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-tertiary)',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  padding: '4px',
+                  borderRadius: '4px',
+                  transition: 'color 0.2s'
+                }}
+                onMouseOver={(e) => !loading && (e.target.style.color = 'var(--brand-primary)')}
+                onMouseOut={(e) => (e.target.style.color = 'var(--text-tertiary)')}
+              >
+                <svg 
+                  width="16" 
+                  height="16" 
+                  viewBox="0 0 24 24" 
+                  fill="none" 
+                  stroke="currentColor"
+                  className={loading ? 'spinning' : ''}
+                  style={{
+                    animation: loading ? 'spin 1s linear infinite' : 'none'
+                  }}
+                >
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <polyline points="1 20 1 14 7 14"></polyline>
+                  <path d="m20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
+                </svg>
+              </button>
+            )}
+            <Icon className="card-icon" />
           </div>
-        )}
+        </div>
+        <div className={`card-value ${value >= 0 ? 'positive' : 'negative'}`}>
+          ₹{Math.abs(value).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+          {isIncreasing !== null && (
+            <span className={`value-change-indicator ${isIncreasing ? 'increasing' : 'decreasing'}`}>
+              {isIncreasing ? '↗' : '↘'}
+            </span>
+          )}
+        </div>
+        <div className="card-subtitle">
+          {subtitle}
+          {trend !== undefined && (
+            <div className={`change-indicator ${trend >= 0 ? 'positive' : 'negative'}`}>
+              {trend >= 0 ? <ArrowTrendingUpIcon /> : <ArrowTrendingDownIcon />}
+              {Math.abs(trend).toFixed(2)}%
+            </div>
+          )}
+          <div style={{ 
+            fontSize: 'var(--font-size-xs)', 
+            color: 'var(--text-disabled)',
+            marginTop: '0.25rem'
+          }}>
+            {showRefresh ? (
+              <>
+                P&L: {lastPnlRefresh.toLocaleTimeString()}
+                {pnlLoading && <span style={{ color: 'var(--brand-primary)' }}> ●</span>}
+              </>
+            ) : (
+              `Updated: ${lastRefresh.toLocaleTimeString()}`
+            )}
+          </div>
+        </div>
       </div>
-    </div>
-  );
-
-  // Connection Status Indicator
-  const ConnectionStatus = () => (
-    <div className={`connection-status ${connectionStatus}`}>
-      <span className="status-indicator"></span>
-      <span className="status-text">
-        {connectionStatus === 'connected' ? 'Connected' : 
-         connectionStatus === 'connecting' ? 'Connecting...' : 
-         connectionStatus === 'disconnected' ? 'Disconnected' : 
-         connectionStatus === 'authentication_failed' ? 'Auth Failed' : 
-         connectionStatus === 'error' ? 'Connection Error' : 
-         connectionStatus === 'failed' ? 'Connection Failed' : 'Unknown'}
-      </span>
-    </div>
-  );
+    );
+  };
 
   // Quick Stats Component
   const QuickStats = () => (
     <div className="grid-item grid-3x1">
       <div className="table-header">
         <h3 className="table-title">Quick Stats</h3>
-        <ConnectionStatus />
       </div>
       <div className="stats-grid">
         <div className="stat-item">
@@ -218,30 +273,36 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
               </tr>
             ) : positions.length > 0 ? (
               positions.map((position, index) => {
-                const hasRealTimeUpdates = position.instrument_token && 
-                  realTimeData[position.instrument_token];
+                const realTimePrice = realTimeData[position.instrument_token]?.ltp || position.last_price;
+                const isRealTimeUpdate = realTimeData[position.instrument_token]?.ltp;
                 
                 return (
-                  <tr key={index} className={hasRealTimeUpdates ? 'has-updates' : ''}>
+                  <tr key={index} className={isRealTimeUpdate ? 'real-time-update' : ''}>
                     <td style={{ fontWeight: 'var(--font-semibold)' }}>
                       {position.tradingsymbol}
+                      {isRealTimeUpdate && (
+                        <span style={{ 
+                          marginLeft: '0.5rem', 
+                          color: 'var(--brand-primary)', 
+                          fontSize: 'var(--font-size-xs)' 
+                        }}>
+                          ●
+                        </span>
+                      )}
                     </td>
                     <td>{position.quantity}</td>
                     <td>₹{position.average_price?.toFixed(2) || '0.00'}</td>
-                    <td className={hasRealTimeUpdates ? 'highlight' : ''}>
-                      ₹{position.last_price?.toFixed(2) || '0.00'}
+                    <td style={{ 
+                      color: isRealTimeUpdate ? 'var(--brand-primary)' : 'inherit',
+                      fontWeight: isRealTimeUpdate ? 'var(--font-semibold)' : 'inherit'
+                    }}>
+                      ₹{realTimePrice?.toFixed(2) || '0.00'}
                     </td>
-                    <td className={`${position.pnl >= 0 ? 'positive' : 'negative'} ${hasRealTimeUpdates ? 'highlight' : ''}`}>
-                      ₹{position.pnl?.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      }) || '0.00'}
+                    <td className={position.pnl >= 0 ? 'positive' : 'negative'}>
+                      ₹{position.pnl?.toLocaleString('en-IN', { maximumFractionDigits: 2 }) || '0'}
                     </td>
                     <td className={position.day_pnl >= 0 ? 'positive' : 'negative'}>
-                      ₹{position.day_pnl?.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                      }) || '0.00'}
+                      ₹{position.day_pnl?.toLocaleString('en-IN', { maximumFractionDigits: 2 }) || '0'}
                     </td>
                     <td>
                       <button className="table-btn" style={{ padding: '0.25rem 0.5rem' }}>
@@ -367,18 +428,20 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       {/* Performance Cards Row */}
       <PerformanceCard 
         title="Total P&L"
-        value={totalPnL}
+        value={displayTotalPnL}
         subtitle="All Time"
         icon={CurrencyRupeeIcon}
+        trend={totalPnLTrend}
         className="grid-3x1 featured"
+        showRefresh={true}
       />
       
       <PerformanceCard 
         title="Today's P&L"
-        value={todayPnL}
+        value={displayTodayPnL}
         subtitle="Current Session"
         icon={ArrowTrendingUpIcon}
-        trend={todayPnL}
+        trend={todayPnLTrend}
         className="grid-3x1"
       />
       

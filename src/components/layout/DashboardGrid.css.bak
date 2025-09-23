@@ -37,90 +37,6 @@
   font-feature-settings: 'tnum';
 }
 
-/* Connection Status Indicator */
-.connection-status {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: var(--border-radius-full);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-medium);
-  background: var(--surface-background);
-  border: 1px solid var(--surface-border);
-}
-
-.connection-status .status-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  transition: background-color 0.3s ease;
-}
-
-.connection-status .status-text {
-  white-space: nowrap;
-}
-
-.connection-status.connected .status-indicator {
-  background-color: var(--profit-primary);
-  box-shadow: 0 0 5px var(--profit-primary);
-}
-
-.connection-status.connecting .status-indicator {
-  background-color: var(--warning);
-  box-shadow: 0 0 5px var(--warning);
-  animation: pulse 1.5s infinite;
-}
-
-.connection-status.disconnected .status-indicator,
-.connection-status.authentication_failed .status-indicator,
-.connection-status.error .status-indicator,
-.connection-status.failed .status-indicator {
-  background-color: var(--loss-primary);
-  box-shadow: 0 0 5px var(--loss-primary);
-}
-
-.connection-status.connected {
-  color: var(--profit-primary);
-}
-
-.connection-status.connecting {
-  color: var(--warning);
-}
-
-.connection-status.disconnected,
-.connection-status.authentication_failed,
-.connection-status.error,
-.connection-status.failed {
-  color: var(--loss-primary);
-}
-
-@keyframes pulse {
-  0% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0.6;
-  }
-}
-
-/* Real-time data highlighting */
-.has-updates .highlight {
-  animation: highlight-update 1s ease;
-}
-
-@keyframes highlight-update {
-  0% {
-    background-color: rgba(var(--brand-primary-rgb), 0.2);
-  }
-  100% {
-    background-color: transparent;
-  }
-}
-
 /* Order and Status Styling */
 .order-type {
   padding: 0.25rem 0.5rem;
@@ -203,9 +119,5 @@
   
   .stat-value {
     font-size: var(--font-size-base);
-  }
-  
-  .connection-status {
-    padding: 0.15rem 0.5rem;
   }
 }

@@ -106,32 +106,14 @@ async function setupWebSocket() {
             ws.send(JSON.stringify({ type: 'pong' }));
             break;
           case 'ticks':
-            console.log(`Received ${data.data?.length || 0} ticks`);
-            if (data.data && Array.isArray(data.data)) {
-              tickSubscribers.forEach(callback => {
-                try {
-                  callback(data.data);
-                } catch (callbackError) {
-                  console.error('Error in tick subscriber callback:', callbackError);
-                }
-              });
-            }
+            console.log(`Received ${data.data.length} ticks`);
+            tickSubscribers.forEach(callback => callback(data.data));
             break;
           case 'quotes':
             if (data.data) {
               console.log(`Received quotes for ${Object.keys(data.data).length} instruments`);
-              tickSubscribers.forEach(callback => {
-                try {
-                  callback(data.data);
-                } catch (callbackError) {
-                  console.error('Error in tick subscriber callback:', callbackError);
-                }
-              });
+              tickSubscribers.forEach(callback => callback(data.data));
             }
-            break;
-          case 'error':
-            console.error('WebSocket error received:', data.message);
-            updateConnectionStatus('error');
             break;
           case 'connection':
             console.log('WebSocket connection status update:', data.status);
@@ -204,15 +186,10 @@ function subscribeToInstruments(tokens) {
   tokens.forEach(token => instrumentTokens.add(token));
   
   if (ws && ws.readyState === WebSocket.OPEN) {
-    try {
-      ws.send(JSON.stringify({
-        type: 'subscribe',
-        tokens: Array.from(instrumentTokens)
-      }));
-    } catch (error) {
-      console.error('Error sending subscription message:', error);
-      // Don't throw, just log the error to avoid breaking the UI
-    }
+    ws.send(JSON.stringify({
+      type: 'subscribe',
+      tokens: Array.from(instrumentTokens)
+    }));
   } else {
     console.warn('WebSocket not connected, tokens will be subscribed when connection is established');
   }
