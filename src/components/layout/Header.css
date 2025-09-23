@@ -239,6 +239,10 @@
 .account-info {
   display: flex;
   flex-direction: column;
+  padding: 0.75rem 1rem;
+  background: var(--surface-elevated);
+  border-radius: var(--border-radius-lg);
+  border: 1px solid var(--surface-border);
 }
 
 .user-name {

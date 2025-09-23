@@ -18,6 +18,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   const [orders, setOrders] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
   const [realTimeData, setRealTimeData] = useState({});
+  const [margins, setMargins] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
@@ -39,16 +40,18 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       try {
         setLoading(true);
         
-        // Fetch positions and orders
-        const [positionsData, ordersData] = await Promise.all([
+        // Fetch positions, orders, and margins
+        const [positionsData, ordersData, marginsData] = await Promise.all([
           TradingService.getPositions(),
-          TradingService.getOrders()
+          TradingService.getOrders(),
+          TradingService.getMargins()
         ]);
         
         // Extract positions from the response
         const positionsList = positionsData?.net || [];
         setPositions(positionsList);
         setOrders(ordersData || []);
+        setMargins(marginsData || null);
         
         // If we have positions, ensure we subscribe to their instrument tokens
         if (positionsList.length > 0) {
@@ -173,11 +176,15 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
         </div>
         <div className="stat-item">
           <div className="stat-label">Available Margin</div>
-          <div className="stat-value">₹{userInfo?.margins?.available?.cash?.toLocaleString() || '0'}</div>
+          <div className="stat-value">₹{((margins?.equity?.available?.cash || 0) + (margins?.equity?.available?.collateral || 0)).toLocaleString()}</div>
+        </div>
+        <div className="stat-item">
+          <div className="stat-label">Available Cash</div>
+          <div className="stat-value">₹{margins?.equity?.available?.cash?.toLocaleString() || '0'}</div>
         </div>
         <div className="stat-item">
           <div className="stat-label">Used Margin</div>
-          <div className="stat-value">₹{userInfo?.margins?.utilised?.debits?.toLocaleString() || '0'}</div>
+          <div className="stat-value">₹{margins?.equity?.utilised?.debits?.toLocaleString() || '0'}</div>
         </div>
       </div>
     </div>
@@ -204,18 +211,21 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
           <thead>
             <tr>
               <th>Symbol</th>
+              <th>Product</th>
+              <th>Exchange</th>
               <th>Qty</th>
               <th>Avg Price</th>
               <th>LTP</th>
               <th>P&L</th>
               <th>Day P&L</th>
+              <th>M2M</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan="7" style={{ textAlign: 'center', padding: '2rem' }}>
+                <td colSpan="10" style={{ textAlign: 'center', padding: '2rem' }}>
                   <div className="loading-skeleton" style={{ height: '20px', width: '100%' }}></div>
                 </td>
               </tr>
@@ -229,6 +239,12 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
                     <td style={{ fontWeight: 'var(--font-semibold)' }}>
                       {position.tradingsymbol}
                     </td>
+                    <td>
+                      <span className={`product-badge ${position.product?.toLowerCase()}`}>
+                        {position.product}
+                      </span>
+                    </td>
+                    <td>{position.exchange}</td>
                     <td>{position.quantity}</td>
                     <td>₹{position.average_price?.toFixed(2) || '0.00'}</td>
                     <td className={hasRealTimeUpdates ? 'highlight' : ''}>
@@ -246,6 +262,12 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
                         maximumFractionDigits: 2
                       }) || '0.00'}
                     </td>
+                    <td className={position.m2m >= 0 ? 'positive' : 'negative'}>
+                      ₹{position.m2m?.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                      }) || '0.00'}
+                    </td>
                     <td>
                       <button className="table-btn" style={{ padding: '0.25rem 0.5rem' }}>
                         <EyeIcon style={{ width: '14px', height: '14px' }} />
@@ -256,7 +278,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
               })
             ) : (
               <tr>
-                <td colSpan="7" className="empty-state" style={{ padding: '3rem' }}>
+                <td colSpan="10" className="empty-state" style={{ padding: '3rem' }}>
                   <ChartBarIcon className="empty-state-icon" />
                   <div className="empty-state-title">No Active Positions</div>
                   <div className="empty-state-description">
@@ -386,13 +408,26 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
         className="grid-3x1"
       />
       
-      <PerformanceCard 
-        title="Available Margin"
-        value={userInfo?.margins?.available?.cash || 0}
-        subtitle="Buying Power"
-        icon={CurrencyRupeeIcon}
-        className="grid-3x1"
-      />
+      <div className="grid-item grid-3x1">
+        <div className="card-header">
+          <h3 className="card-title">Available Margin</h3>
+          <CurrencyRupeeIcon className="card-icon" />
+        </div>
+        <div className="margin-breakdown">
+          <div className="margin-item">
+            <div className="margin-label">Available Margin</div>
+            <div className="margin-value">₹{((margins?.equity?.available?.cash || 0) + (margins?.equity?.available?.collateral || 0)).toLocaleString()}</div>
+          </div>
+          <div className="margin-item">
+            <div className="margin-label">Available Cash</div>
+            <div className="margin-value">₹{margins?.equity?.available?.cash?.toLocaleString() || '0'}</div>
+          </div>
+          <div className="margin-item">
+            <div className="margin-label">Used Margin</div>
+            <div className="margin-value">₹{margins?.equity?.utilised?.debits?.toLocaleString() || '0'}</div>
+          </div>
+        </div>
+      </div>
 
       {/* Positions Table - Full Width */}
       <PositionsTable />

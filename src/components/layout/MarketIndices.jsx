@@ -26,9 +26,12 @@ const MarketIndices = ({ className = "" }) => {
 
     const fetchIndices = async () => {
       try {
+        console.log('[MarketIndices] Fetching market indices...');
         const data = await tradingService.getMarketIndices();
+        console.log('[MarketIndices] Received data:', data);
         setIndices(data);
         setLoading(false);
+        setError(null);
         setLastUpdated(new Date());
         
         // Check which indices have updated
@@ -52,7 +55,7 @@ const MarketIndices = ({ className = "" }) => {
         });
       } catch (err) {
         console.error('Error fetching market indices:', err);
-        setError('Unable to fetch market data');
+        setError('Unable to fetch market data. Please check your connection and login status.');
         setLoading(false);
       }
     };
@@ -127,7 +130,7 @@ const MarketIndices = ({ className = "" }) => {
   return (
     <div className={`grid-item market-indices-card ${className}`}>
       <div className="card-header">
-        <h3 className="card-title">Market Indices</h3>
+        <h3 className="card-title">Instruments</h3>
         <ChartPieIcon className="card-icon" />
       </div>
       {renderIndices()}

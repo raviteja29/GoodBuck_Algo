@@ -310,62 +310,23 @@ app.get('/api/quotes', async (req, res) => {
         return res.status(401).json({ error: 'Authentication failed. Please login again.' });
       }
       
-      // For other errors, return mock data with proper structure
-      const emptyQuotes = {};
-      tokenArray.forEach(token => {
-        // Set proper previous close to make change calculations accurate
-        const lastPrice = token === 256265 ? 23456.78 : token === 260105 ? 49234.56 : 13.45;
-        const prevClose = token === 256265 ? 23400.0 : token === 260105 ? 49100.0 : 13.20;
-        
-        emptyQuotes[token] = {
-          instrument_token: token,
-          last_price: lastPrice,
-          ohlc: { 
-            open: prevClose,
-            high: token === 256265 ? 23500.0 : token === 260105 ? 49300.0 : 13.60,
-            low: token === 256265 ? 23350.0 : token === 260105 ? 49000.0 : 13.10,
-            close: prevClose  // Use this for change calculation
-          },
-          volume: Math.floor(Math.random() * 1000000),
-          buy_quantity: 0,
-          sell_quantity: 0,
-          error: 'Live data unavailable'
-        };
+      // For other errors, return the actual error instead of mock data
+      console.error('[QUOTES] Kite API error - returning error response');
+      return res.status(500).json({ 
+        error: 'Market data temporarily unavailable', 
+        details: kiteError.message,
+        error_type: kiteError.error_type 
       });
-      console.log('[QUOTES] Returning mock data due to API error');
-      res.json(emptyQuotes);
     }
   } catch (err) {
     console.error('[QUOTES] Route error:', err.message || err);
     console.error('[QUOTES] Stack trace:', err.stack);
     
-    // Return mock data instead of 500 error
-    const { tokens } = req.query;
-    if (tokens) {
-      const tokenArray = tokens.split(',').map(t => parseInt(t, 10));
-      const mockQuotes = {};
-      tokenArray.forEach(token => {
-        const lastPrice = token === 256265 ? 23456.78 : token === 260105 ? 49234.56 : 13.45;
-        const prevClose = token === 256265 ? 23400.0 : token === 260105 ? 49100.0 : 13.20;
-        
-        mockQuotes[token] = {
-          instrument_token: token,
-          last_price: lastPrice,
-          ohlc: { 
-            open: prevClose,
-            high: token === 256265 ? 23500.0 : token === 260105 ? 49300.0 : 13.60,
-            low: token === 256265 ? 23350.0 : token === 260105 ? 49000.0 : 13.10,
-            close: prevClose  // Use this for change calculation
-          },
-          volume: Math.floor(Math.random() * 1000000),
-          error: 'Service temporarily unavailable'
-        };
-      });
-      console.log('[QUOTES] Returning fallback mock data due to route error');
-      return res.json(mockQuotes);
-    }
-    
-    res.status(500).json({ error: 'Internal server error' });
+    // Return proper error response instead of mock data
+    res.status(500).json({ 
+      error: 'Market data service temporarily unavailable',
+      details: err.message 
+    });
   }
 });
 

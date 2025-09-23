@@ -918,6 +918,8 @@ class TradingService {
         // Request quotes for all tokens at once
         const tokensParam = tokens.join(',');
         console.log(`[TradingService] Requesting quotes for tokens: ${tokensParam}`);
+        console.log(`[TradingService] Making request to: http://localhost:5000/api/quotes?tokens=${tokensParam}`);
+        console.log(`[TradingService] Using headers:`, this.getAuthHeaders());
         
         const response = await fetch(`http://localhost:5000/api/quotes?tokens=${tokensParam}`, {
           method: 'GET',
@@ -925,8 +927,13 @@ class TradingService {
           headers: this.getAuthHeaders()
         });
         
+        console.log(`[TradingService] Response status: ${response.status}`);
+        console.log(`[TradingService] Response ok: ${response.ok}`);
+        
         if (!response.ok) {
-          throw new Error(`Failed to fetch quotes: ${response.status}`);
+          const errorText = await response.text();
+          console.error(`[TradingService] API Error Response: ${errorText}`);
+          throw new Error(`Failed to fetch quotes: ${response.status} - ${errorText}`);
         }
         
         const quotesData = await response.json();
@@ -972,21 +979,24 @@ class TradingService {
     } catch (error) {
       console.error('[TradingService] Error in getMarketIndices:', error);
       
-      // Return mock data as fallback with the format expected by MarketIndices component
-      console.log('[TradingService] Using fallback mock indices data');
+      // Check websocket cached data first, then throw error if none available
+      console.log('[TradingService] Checking for cached data from websocket');
       
-      // Use websocket cached data if available
       const result = {};
-      
-      for (const [key, index] of Object.entries({
+      const indices = {
         nifty: { name: 'NIFTY 50', token: 256265 },
         banknifty: { name: 'BANK NIFTY', token: 260105 },
         indiavix: { name: 'INDIA VIX', token: 264969 }
-      })) {
+      };
+      
+      let hasAnyData = false;
+      
+      for (const [key, index] of Object.entries(indices)) {
         // Check if we have cached data from websocket
         const cachedData = lastQuotes.get(index.token);
         
         if (cachedData && cachedData.last_price) {
+          hasAnyData = true;
           // Calculate change percentage if previous close is available
           const changePercent = cachedData.ohlc && cachedData.ohlc.close 
             ? ((cachedData.last_price - cachedData.ohlc.close) / cachedData.ohlc.close * 100).toFixed(2)
@@ -1003,16 +1013,22 @@ class TradingService {
             changePercent: `${changePercent}%`
           };
         } else {
-          // No cached data, use static fallback
-          result[key] = { 
-            value: key === 'nifty' ? '25432.78' : key === 'banknifty' ? '48756.32' : '14.35',
-            change: key === 'nifty' ? '+0.75' : key === 'banknifty' ? '-0.32' : '+2.15',
-            changePercent: key === 'nifty' ? '+0.75%' : key === 'banknifty' ? '-0.32%' : '+2.15%'
+          // No cached data available
+          result[key] = {
+            value: '—',
+            change: '0.00',
+            changePercent: '0.00%'
           };
         }
       }
       
-      return result;
+      if (hasAnyData) {
+        console.log('[TradingService] Using cached websocket data');
+        return result;
+      } else {
+        console.log('[TradingService] No cached data available, re-throwing error');
+        throw error; // Let component handle the error state
+      }
     }
   }
 }

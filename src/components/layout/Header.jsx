@@ -130,17 +130,9 @@ const Header = ({ userInfo, onLogout, onToggleSidebar, sidebarCollapsed }) => {
 
       <div className="header-right">
         {/* Account Info */}
-        <div className="account-section">
-          <div className="account-balance">
-            <span className="balance-label">Available Margin</span>
-            <span className="balance-amount">
-              ₹{userInfo?.margins?.available?.cash?.toLocaleString() || '0'}
-            </span>
-          </div>
-          <div className="account-info">
-            <span className="user-name">{userInfo?.user_name || 'User'}</span>
-            <span className="user-id">{userInfo?.user_id || 'ID'}</span>
-          </div>
+        <div className="account-info">
+          <span className="user-name">{userInfo?.user_name || 'User'}</span>
+          <span className="user-id">{userInfo?.user_id || 'ID'}</span>
         </div>
 
         {/* Action Buttons */}
