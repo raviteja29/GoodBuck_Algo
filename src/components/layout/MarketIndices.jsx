@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChartPieIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon } from '@heroicons/react/24/outline';
+import { ChartPieIcon, ArrowTrendingUpIcon, ArrowTrendingDownIcon, SparklesIcon } from '@heroicons/react/24/outline';
 import tradingService from '../../services/TradingService';
 import './MarketIndices.css';
 
@@ -82,6 +82,47 @@ const MarketIndices = ({ className = "" }) => {
     });
   };
 
+  // Mini trend chart component
+  const MiniTrendChart = ({ isPositive, changePercent }) => {
+    const points = isPositive ? "2,12 8,4 14,8 20,2" : "2,2 8,8 14,4 20,12";
+    const color = isPositive ? "#00ff88" : "#ff4444";
+    
+    return (
+      <svg width="24" height="16" className="mini-chart">
+        <polyline
+          points={points}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="20" cy={isPositive ? "2" : "12"} r="1.5" fill={color} />
+      </svg>
+    );
+  };
+
+  // Performance indicator component
+  const PerformanceIndicator = ({ changePercent }) => {
+    const change = parseFloat(changePercent);
+    const isPositive = change > 0;
+    const intensity = Math.min(Math.abs(change), 3) / 3; // Cap at 3% for full intensity
+    
+    return (
+      <div className={`performance-indicator ${isPositive ? 'positive' : 'negative'}`}>
+        <div 
+          className="performance-bar" 
+          style={{ 
+            width: `${intensity * 100}%`,
+            background: isPositive 
+              ? `linear-gradient(90deg, rgba(0,255,136,0.3) 0%, rgba(0,255,136,${0.1 + intensity * 0.4}) 100%)`
+              : `linear-gradient(90deg, rgba(255,68,68,0.3) 0%, rgba(255,68,68,${0.1 + intensity * 0.4}) 100%)`
+          }}
+        />
+      </div>
+    );
+  };
+
   const renderIndices = () => {
     if (loading) {
       return <div className="loading-state">Loading market data...</div>;
@@ -105,23 +146,48 @@ const MarketIndices = ({ className = "" }) => {
 
   const renderIndexItem = (name, data, isUpdated) => {
     const changeValue = parseFloat(data.change);
+    const changePercent = parseFloat(data.changePercent);
     const isPositive = changeValue > 0;
     const isNeutral = changeValue === 0;
     const valueClass = isPositive ? 'positive' : (isNeutral ? '' : 'negative');
     
+    // Get appropriate icon based on index
+    const getIndexIcon = (indexName) => {
+      if (indexName.includes('NIFTY')) return '📊';
+      if (indexName.includes('BANK')) return '🏦';
+      if (indexName.includes('VIX')) return '📈';
+      return '💹';
+    };
+    
     return (
-      <div className={`market-index-item ${isUpdated ? 'updated' : ''}`} key={name}>
-        <div className="index-name">{name}</div>
-        <div className={`index-value ${valueClass}`}>
-          {formatValue(data.value)}
-          <span className="index-change">
+      <div className={`market-index-item ${isUpdated ? 'updated' : ''} ${valueClass}`} key={name}>
+        <div className="index-header">
+          <div className="index-name-section">
+            <span className="index-icon">{getIndexIcon(name)}</span>
+            <div className="index-details">
+              <div className="index-name">{name}</div>
+              <PerformanceIndicator changePercent={data.changePercent} />
+            </div>
+          </div>
+          <MiniTrendChart isPositive={isPositive} changePercent={changePercent} />
+        </div>
+        
+        <div className="index-values">
+          <div className={`index-value ${valueClass}`}>
+            {formatValue(data.value)}
+          </div>
+          <div className={`index-change ${valueClass}`}>
             {isPositive ? (
               <ArrowTrendingUpIcon className="trend-icon" />
-            ) : isNeutral ? null : (
+            ) : isNeutral ? (
+              <SparklesIcon className="trend-icon neutral" />
+            ) : (
               <ArrowTrendingDownIcon className="trend-icon" />
             )}
-            {isPositive ? '+' : ''}{formatValue(data.change)} ({data.changePercent})
-          </span>
+            <span className="change-text">
+              {isPositive ? '+' : ''}{formatValue(data.change)} ({data.changePercent})
+            </span>
+          </div>
         </div>
       </div>
     );
@@ -129,9 +195,15 @@ const MarketIndices = ({ className = "" }) => {
 
   return (
     <div className={`grid-item market-indices-card ${className}`}>
-      <div className="card-header">
-        <h3 className="card-title">Instruments</h3>
-        <ChartPieIcon className="card-icon" />
+      <div className="card-header premium-header">
+        <div className="header-content">
+          <h3 className="card-title">Market Pulse</h3>
+          <div className="header-subtitle">Live indices tracking</div>
+        </div>
+        <div className="header-icon-container">
+          <ChartPieIcon className="card-icon" />
+          <div className="icon-glow"></div>
+        </div>
       </div>
       {renderIndices()}
     </div>
