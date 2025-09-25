@@ -168,36 +168,6 @@ app.get('/api/profile', async (req, res) => {
   }
 });
 
-// Quotes endpoint - for multiple instruments
-app.get('/api/quotes', async (req, res) => {
-  try {
-    const { tokens } = req.query;
-    if (!tokens) {
-      return res.status(400).json({ error: 'Tokens parameter is required' });
-    }
-    
-    const tokenArray = tokens.split(',').map(t => parseInt(t, 10));
-    console.log(`[Server] Fetching quotes for tokens: ${tokenArray.join(',')}`);
-    
-    // Get quotes for each token and build a response object
-    const result = {};
-    for (const token of tokenArray) {
-      try {
-        const quote = await KiteService.getQuote(token);
-        result[token] = quote;
-      } catch (error) {
-        console.error(`Error fetching quote for token ${token}:`, error);
-        result[token] = { error: error.message };
-      }
-    }
-    
-    res.json(result);
-  } catch (error) {
-    console.error('Error fetching quotes:', error);
-    res.status(500).json({ error: 'Failed to fetch quotes' });
-  }
-});
-
 // Margins endpoint
 app.get('/api/margins', async (req, res) => {
   try {
@@ -323,6 +293,26 @@ app.post('/api/auth/token', (req, res) => {
   } catch (error) {
     console.error('Error setting access token:', error);
     res.status(500).json({ error: 'Failed to set access token' });
+  }
+});
+
+// Diagnostic endpoint to check permissions
+app.get('/api/diagnostics/permissions', async (req, res) => {
+  try {
+    console.log('[DIAGNOSTICS] Running permission check...');
+    const profile = await KiteService.checkPermissions();
+    res.json({ 
+      success: true, 
+      profile: profile,
+      message: 'Check console logs for detailed permission test results'
+    });
+  } catch (error) {
+    console.error('[DIAGNOSTICS] Permission check failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      details: 'Check console logs for more information'
+    });
   }
 });
 

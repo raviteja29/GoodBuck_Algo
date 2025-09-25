@@ -16,7 +16,7 @@ const connectionStatusListeners = new Set();
 let lastQuotes = new Map();
 
 // Kite API key (replace with your actual API key or move to environment variables)
-const apiKey = 'gv7qaefirlizzfmw';
+const apiKey = 'mt23bk4vqz8uryv2';
 
 /**
  * Update connection status and notify listeners

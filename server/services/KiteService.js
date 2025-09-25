@@ -100,69 +100,132 @@ class KiteService {
       return;
     }
     
-    console.log(`[KiteService] Received ${ticks.length} ticks from Kite:`);
+    console.log(`[KiteService] ✅ RECEIVED ${ticks.length} LIVE TICKS from Kite API!`);
     
-    // Log sample tick for debugging
+    // Log sample tick for debugging - but limit the data size
     if (ticks.length > 0) {
-      console.log('[KiteService] Sample tick:', JSON.stringify(ticks[0], null, 2));
+      const sampleTick = {
+        instrument_token: ticks[0].instrument_token,
+        last_price: ticks[0].last_price,
+        volume: ticks[0].volume,
+        timestamp: ticks[0].timestamp,
+        mode: ticks[0].mode
+      };
+      console.log('[KiteService] Sample tick (limited data):', JSON.stringify(sampleTick, null, 2));
     }
 
+    // Store ticks in cache
+    let updatedTokens = [];
     ticks.forEach(tick => {
-      this.lastQuotes.set(tick.instrument_token, {
-        last_price: tick.last_price,
-        volume: tick.volume,
-        ohlc: {
-          open: tick.ohlc?.open,
-          high: tick.ohlc?.high,
-          low: tick.ohlc?.low,
-          close: tick.ohlc?.close
-        },
-        change: tick.change,
-        timestamp: new Date()
-      });
+      if (tick && tick.instrument_token) {
+        this.lastQuotes.set(tick.instrument_token, {
+          last_price: tick.last_price,
+          volume: tick.volume,
+          ohlc: {
+            open: tick.ohlc?.open,
+            high: tick.ohlc?.high,
+            low: tick.ohlc?.low,
+            close: tick.ohlc?.close
+          },
+          change: tick.change,
+          timestamp: new Date()
+        });
+        updatedTokens.push(tick.instrument_token);
+      }
     });
+
+    console.log(`[KiteService] Updated quotes for tokens: ${updatedTokens.join(', ')}`);
+    console.log(`[KiteService] Broadcasting to ${this.wsClients.size} WebSocket clients`);
 
     // Broadcast to all connected clients
     const tickData = JSON.stringify({ type: 'ticks', data: ticks });
+    let broadcastCount = 0;
     this.wsClients.forEach(client => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(tickData);
+        try {
+          client.send(tickData);
+          broadcastCount++;
+        } catch (sendError) {
+          console.error('[KiteService] Error sending tick data to client:', sendError);
+        }
       }
     });
+    
+    console.log(`[KiteService] Successfully broadcasted to ${broadcastCount} clients`);
   }
 
   handleConnect() {
-    console.log('[KiteService] Ticker connected successfully to Kite WebSocket server');
+    console.log('[KiteService] ✅ Ticker connected successfully to Kite WebSocket server');
+    console.log('[KiteService] Connection details:', {
+      tickerConnected: this.ticker?.connected,
+      wsReadyState: this.ticker?.ws?.readyState,
+      subscriptionCount: this.instrumentTokens.size
+    });
     
     // Check if we have existing subscriptions and resubscribe
     const tokens = Array.from(this.instrumentTokens);
     console.log(`[KiteService] Subscription status: Already subscribed to ${tokens.length} tokens`);
     
     if (tokens.length > 0) {
-      try {
-        console.log(`[KiteService] Subscribing to token(s):`, tokens.join(','));
-        this.ticker.subscribe(tokens);
-        try {
-          console.log('[KiteService] Setting real-time mode for tokens');
-          this.ticker.setMode(this.ticker.MODEREAL, tokens);
-        } catch (modeError) {
-          console.error('[KiteService] Error setting ticker mode:', modeError);
-          // Continue even if setting mode fails
-        }
-      } catch (subscribeError) {
-        console.error('[KiteService] Error subscribing to tokens:', subscribeError);
+      console.log(`[KiteService] Tokens to resubscribe: ${tokens.join(', ')}`);
+      
+      // Wait a moment for the connection to stabilize
+      setTimeout(() => {
+        console.log('[KiteService] Resubscribing after connection stabilization...');
         
-        // Try to subscribe one at a time to identify problematic tokens
-        tokens.forEach(token => {
-          try {
-            console.log(`[KiteService] Attempting to subscribe to individual token: ${token}`);
-            this.ticker.subscribe([token]);
-            console.log(`[KiteService] Successfully subscribed to token: ${token}`);
-          } catch (individualError) {
-            console.error(`[KiteService] Failed to subscribe to token ${token}:`, individualError);
-          }
-        });
-      }
+        try {
+          console.log(`[KiteService] Subscribing to token(s):`, tokens.join(','));
+          this.ticker.subscribe(tokens);
+          
+          setTimeout(() => {
+            try {
+              console.log('[KiteService] Setting real-time mode for tokens');
+              this.ticker.setMode(this.ticker.MODEREAL, tokens);
+              console.log(`[KiteService] ✅ Successfully set MODEREAL mode for all tokens`);
+            } catch (modeError) {
+              console.error('[KiteService] Error setting ticker mode:', modeError);
+              console.error('[KiteService] Mode error details:', {
+                message: modeError.message,
+                code: modeError.code,
+                data: modeError.data
+              });
+              
+              // Try setting mode individually
+              tokens.forEach(token => {
+                try {
+                  this.ticker.setMode(this.ticker.MODEREAL, [token]);
+                  console.log(`[KiteService] Successfully set MODEREAL for individual token: ${token}`);
+                } catch (indivModeError) {
+                  console.error(`[KiteService] Failed to set MODEREAL for token ${token}:`, indivModeError);
+                }
+              });
+            }
+          }, 1000); // Wait 1 second after subscribe before setting mode
+          
+        } catch (subscribeError) {
+          console.error('[KiteService] Error subscribing to tokens:', subscribeError);
+          console.error('[KiteService] Subscribe error details:', {
+            message: subscribeError.message,
+            code: subscribeError.code,
+            status: subscribeError.status,
+            data: subscribeError.data,
+            error_type: subscribeError.error_type
+          });
+          
+          // Try to subscribe one at a time to identify problematic tokens
+          tokens.forEach(token => {
+            try {
+              console.log(`[KiteService] Attempting to subscribe to individual token: ${token}`);
+              this.ticker.subscribe([token]);
+              console.log(`[KiteService] Successfully subscribed to token: ${token}`);
+            } catch (individualError) {
+              console.error(`[KiteService] Failed to subscribe to token ${token}:`, individualError);
+            }
+          });
+        }
+      }, 2000); // Wait 2 seconds after connection before resubscribing
+    } else {
+      console.log('[KiteService] No tokens to resubscribe to');
     }
     
     console.log('[KiteService] Ticker connected (with SSL certificate bypass)');
@@ -205,24 +268,84 @@ class KiteService {
 
   subscribeTokens(tokens) {
     tokens.forEach(token => this.instrumentTokens.add(token));
+    
+    // Enhanced logging for debugging
+    console.log(`[KiteService] subscribeTokens called with tokens: ${tokens.join(', ')}`);
+    console.log(`[KiteService] Total instrumentTokens now: ${Array.from(this.instrumentTokens).join(', ')}`);
+    console.log(`[KiteService] Ticker status: connected=${this.ticker?.connected}, ticker exists=${!!this.ticker}`);
+    
     if (this.ticker && this.ticker.connected) {
+      const allTokens = Array.from(this.instrumentTokens);
       try {
-        console.log(`[KiteService] Attempting to subscribe to tokens: ${Array.from(this.instrumentTokens).join(', ')}`);
-        this.ticker.subscribe(Array.from(this.instrumentTokens));
-        try {
-          this.ticker.setMode(this.ticker.MODEREAL, Array.from(this.instrumentTokens));
-        } catch (modeError) {
-          console.error('[KiteService] Error setting ticker mode:', modeError);
-          // Continue even if setting mode fails
+        console.log(`[KiteService] Attempting to subscribe to ${allTokens.length} tokens: ${allTokens.join(', ')}`);
+        
+        // Try subscribing to tokens one by one to identify problematic ones
+        const failedTokens = [];
+        const successTokens = [];
+        
+        for (const token of allTokens) {
+          try {
+            console.log(`[KiteService] Subscribing to individual token: ${token}`);
+            this.ticker.subscribe([token]);
+            successTokens.push(token);
+            console.log(`[KiteService] Successfully subscribed to token: ${token}`);
+          } catch (individualError) {
+            console.error(`[KiteService] Failed to subscribe to token ${token}:`, individualError);
+            failedTokens.push({ token, error: individualError.message });
+          }
         }
+        
+        // Try setting mode for successful tokens
+        if (successTokens.length > 0) {
+          try {
+            console.log(`[KiteService] Setting MODEREAL for ${successTokens.length} successful tokens`);
+            this.ticker.setMode(this.ticker.MODEREAL, successTokens);
+            console.log(`[KiteService] Successfully set MODEREAL mode for tokens: ${successTokens.join(', ')}`);
+          } catch (modeError) {
+            console.error('[KiteService] Error setting ticker mode:', modeError);
+            
+            // Try setting mode individually
+            for (const token of successTokens) {
+              try {
+                this.ticker.setMode(this.ticker.MODEREAL, [token]);
+                console.log(`[KiteService] Successfully set MODEREAL for individual token: ${token}`);
+              } catch (indivModeError) {
+                console.error(`[KiteService] Failed to set MODEREAL for token ${token}:`, indivModeError);
+              }
+            }
+          }
+        }
+        
+        // Report results
+        if (failedTokens.length > 0) {
+          console.log(`[KiteService] Failed to subscribe to ${failedTokens.length} tokens:`, failedTokens);
+        }
+        if (successTokens.length > 0) {
+          console.log(`[KiteService] Successfully subscribed to ${successTokens.length} tokens`);
+        }
+        
       } catch (error) {
         console.error('[KiteService] Error subscribing to tokens:', error);
+        console.error('[KiteService] Error details:', {
+          message: error.message,
+          code: error.code,
+          status: error.status,
+          data: error.data,
+          error_type: error.error_type
+        });
         
         // Handle permission errors gracefully
         if (error.message && error.message.includes('permission')) {
           console.log('[KiteService] Permission issue detected. Using cached quotes only.');
         }
       }
+    } else {
+      console.warn('[KiteService] Cannot subscribe - ticker not connected. Ticker connected:', this.ticker?.connected);
+      console.warn('[KiteService] Ticker state details:', {
+        tickerExists: !!this.ticker,
+        connected: this.ticker?.connected,
+        readyState: this.ticker?.ws?.readyState
+      });
     }
   }
 
