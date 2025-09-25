@@ -16,6 +16,13 @@ const MarketIndices = ({ className = "" }) => {
   const timeoutRef = useRef(null);
   const previousValues = useRef({});
 
+  // Market indices token mapping
+  const indicesTokens = {
+    256265: 'nifty',    // NIFTY 50
+    260105: 'banknifty', // BANK NIFTY  
+    264969: 'indiavix'   // INDIA VIX
+  };
+
   useEffect(() => {
     // Store initial values
     previousValues.current = {
@@ -24,49 +31,98 @@ const MarketIndices = ({ className = "" }) => {
       indiavix: indices.indiavix.value
     };
 
+    // Initial data fetch
     const fetchIndices = async () => {
       try {
-        console.log('[MarketIndices] Fetching market indices...');
+        console.log('[MarketIndices] Initial fetch of market indices...');
         const data = await tradingService.getMarketIndices();
-        console.log('[MarketIndices] Received data:', data);
+        console.log('[MarketIndices] Received initial data:', data);
         setIndices(data);
         setLoading(false);
         setError(null);
         setLastUpdated(new Date());
         
-        // Check which indices have updated
+        // Update previous values
         Object.keys(data).forEach(key => {
-          if (data[key].value !== previousValues.current[key]) {
-            setUpdatedIndex(key);
-            
-            // Clear previous timeout if exists
-            if (timeoutRef.current) {
-              clearTimeout(timeoutRef.current);
-            }
-            
-            // Set timeout to clear the updated state
-            timeoutRef.current = setTimeout(() => {
-              setUpdatedIndex(null);
-            }, 1000);
-            
-            // Update previous values
-            previousValues.current[key] = data[key].value;
-          }
+          previousValues.current[key] = data[key].value;
         });
       } catch (err) {
-        console.error('Error fetching market indices:', err);
+        console.error('Error fetching initial market indices:', err);
         setError('Unable to fetch market data. Please check your connection and login status.');
         setLoading(false);
       }
     };
 
     fetchIndices();
+
+    // Subscribe to real-time market data for instant updates
+    console.log('[MarketIndices] Setting up real-time subscriptions...');
     
-    // Set up interval to refresh data every 5 seconds
-    const intervalId = setInterval(fetchIndices, 5000);
-    
+    // Subscribe to the index tokens for real-time updates
+    const tokens = Object.keys(indicesTokens).map(Number);
+    tradingService.subscribeToInstruments(tokens);
+
+    // Subscribe to real-time ticks
+    const unsubscribe = tradingService.subscribeToTicks(ticks => {
+      console.log('[MarketIndices] Received real-time ticks:', ticks.length);
+      
+      if (!ticks || !Array.isArray(ticks) || ticks.length === 0) return;
+
+      let hasUpdates = false;
+      const updates = {};
+
+      ticks.forEach(tick => {
+        if (!tick || !tick.instrument_token) return;
+        
+        const indexKey = indicesTokens[tick.instrument_token];
+        if (!indexKey) return;
+
+        // Calculate change percentage
+        const currentPrice = tick.last_price;
+        const previousClose = tick.ohlc?.close || currentPrice;
+        const change = currentPrice - previousClose;
+        const changePercent = previousClose !== 0 ? (change / previousClose * 100) : 0;
+
+        const newData = {
+          value: currentPrice.toString(),
+          change: change.toFixed(2),
+          changePercent: `${changePercent > 0 ? '+' : ''}${changePercent.toFixed(2)}%`
+        };
+
+        // Check if this is an actual update
+        if (newData.value !== previousValues.current[indexKey]) {
+          updates[indexKey] = newData;
+          hasUpdates = true;
+          
+          // Set updated indicator
+          setUpdatedIndex(indexKey);
+          
+          // Clear previous timeout
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+          }
+          
+          // Clear updated indicator after 1 second
+          timeoutRef.current = setTimeout(() => {
+            setUpdatedIndex(null);
+          }, 1000);
+          
+          // Update previous values
+          previousValues.current[indexKey] = newData.value;
+        }
+      });
+
+      if (hasUpdates) {
+        console.log('[MarketIndices] Applying real-time updates:', updates);
+        setIndices(prev => ({ ...prev, ...updates }));
+        setLastUpdated(new Date());
+        setError(null);
+      }
+    });
+
     return () => {
-      clearInterval(intervalId);
+      console.log('[MarketIndices] Cleaning up subscriptions...');
+      unsubscribe();
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }
@@ -138,7 +194,7 @@ const MarketIndices = ({ className = "" }) => {
         {renderIndexItem('BANK NIFTY', indices.banknifty, updatedIndex === 'banknifty')}
         {renderIndexItem('INDIA VIX', indices.indiavix, updatedIndex === 'indiavix')}
         <div className="last-updated">
-          Last updated: {lastUpdated.toLocaleTimeString()}
+          Live updates • {lastUpdated.toLocaleTimeString()}
         </div>
       </div>
     );
@@ -198,7 +254,6 @@ const MarketIndices = ({ className = "" }) => {
       <div className="card-header premium-header">
         <div className="header-content">
           <h3 className="card-title">Market Pulse</h3>
-          <div className="header-subtitle">Live indices tracking</div>
         </div>
         <div className="header-icon-container">
           <ChartPieIcon className="card-icon" />

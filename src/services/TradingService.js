@@ -573,6 +573,29 @@ class TradingService {
   }
 
   /**
+   * Get holdings
+   */
+  async getHoldings() {
+    try {
+      const response = await fetch('http://localhost:5000/api/holdings', {
+        method: 'GET',
+        credentials: 'include',
+        headers: this.getAuthHeaders(),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch holdings');
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error('[getHoldings] Error:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Place an order
    */
   async placeOrder(orderParams) {

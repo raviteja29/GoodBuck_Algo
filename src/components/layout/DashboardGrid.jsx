@@ -17,6 +17,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
+  const [holdings, setHoldings] = useState([]);
   const [realTimeData, setRealTimeData] = useState({});
   const [margins, setMargins] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -40,7 +41,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       try {
         setLoading(true);
         
-        // Fetch positions, orders, and margins
+        // Fetch positions, orders, and margins (core functionality)
         const [positionsData, ordersData, marginsData] = await Promise.all([
           TradingService.getPositions(),
           TradingService.getOrders(),
@@ -52,6 +53,17 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
         setPositions(positionsList);
         setOrders(ordersData || []);
         setMargins(marginsData || null);
+        
+        // Fetch holdings separately (non-critical)
+        try {
+          console.log('[DashboardGrid] Fetching holdings...');
+          const holdingsData = await TradingService.getHoldings();
+          console.log('[DashboardGrid] Holdings data received:', holdingsData);
+          setHoldings(holdingsData || []);
+        } catch (holdingsError) {
+          console.warn('[DashboardGrid] Failed to fetch holdings:', holdingsError);
+          setHoldings([]); // Set empty array if holdings fetch fails
+        }
         
         // If we have positions, ensure we subscribe to their instrument tokens
         if (positionsList.length > 0) {
@@ -391,7 +403,6 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       <div className="table-header premium-table-header">
         <div className="table-title-section">
           <h3 className="table-title">Portfolio Positions</h3>
-          <div className="table-subtitle">Real-time position tracking</div>
         </div>
         <div className="table-actions">
           <button className="table-btn secondary">
@@ -603,7 +614,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       
       <div className="grid-item grid-3x1">
         <div className="card-header">
-          <h3 className="card-title">Positions Summary</h3>
+          <h3 className="card-title">Positions & Holdings Summary</h3>
           <ChartBarIcon className="card-icon" />
         </div>
         <div className="stats-grid">
@@ -614,6 +625,14 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
           <div className="stat-item">
             <div className="stat-label">Closed Positions</div>
             <div className="stat-value">{positions.filter(p => p.quantity === 0).length}</div>
+          </div>
+          <div className="stat-item">
+            <div className="stat-label">Holdings</div>
+            <div className="stat-value">{holdings?.length || 0}</div>
+          </div>
+          <div className="stat-item">
+            <div className="stat-label">Holdings P&L</div>
+            <div className="stat-value">₹{(holdings?.reduce((sum, holding) => sum + (holding?.pnl || 0), 0) || 0).toLocaleString()}</div>
           </div>
         </div>
       </div>

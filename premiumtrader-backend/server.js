@@ -178,6 +178,23 @@ app.get('/api/positions', async (req, res) => {
   }
 });
 
+// Proxy route for holdings (GET all holdings)
+app.get('/api/holdings', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (!access_token) {
+      return res.status(401).json({ error: 'Access token required' });
+    }
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token);
+    const holdings = await kc.getHoldings();
+    res.json(holdings);
+  } catch (err) {
+    console.error('Holdings fetch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Proxy route for orders (GET all orders)
 app.get('/api/orders', async (req, res) => {
   try {

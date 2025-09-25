@@ -190,6 +190,17 @@ app.get('/api/positions', async (req, res) => {
   }
 });
 
+// Holdings endpoint
+app.get('/api/holdings', async (req, res) => {
+  try {
+    const holdings = await KiteService.getHoldings();
+    res.json(holdings);
+  } catch (error) {
+    console.error('Error fetching holdings:', error);
+    res.status(500).json({ error: 'Failed to fetch holdings' });
+  }
+});
+
 // Orders endpoint
 app.get('/api/orders', async (req, res) => {
   try {
