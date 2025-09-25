@@ -474,7 +474,9 @@ class KiteService {
 
   async getMargins() {
     try {
-      return await this.kite.getMargins();
+      const margins = await this.kite.getMargins();
+      console.log('[KiteService] Raw margins data from Kite API:', JSON.stringify(margins, null, 2));
+      return margins;
     } catch (error) {
       console.error('Error fetching margins:', error);
       throw error;
@@ -513,6 +515,51 @@ class KiteService {
       return await this.kite.getHoldings();
     } catch (error) {
       console.error('Error fetching holdings:', error);
+      throw error;
+    }
+  }
+
+  async getInstrumentHighLow(instrumentToken, fromDate, toDate) {
+    try {
+      console.log(`[KiteService] Fetching historical data for token ${instrumentToken} from ${fromDate} to ${toDate}`);
+      
+      const historicalData = await this.kite.getHistoricalData(
+        instrumentToken,
+        'day',
+        fromDate,
+        toDate
+      );
+      
+      if (!historicalData || historicalData.length === 0) {
+        throw new Error('No historical data found for the selected date range');
+      }
+      
+      // Calculate the high and low from the historical data
+      let high = Number.MIN_SAFE_INTEGER;
+      let low = Number.MAX_SAFE_INTEGER;
+      
+      historicalData.forEach(candle => {
+        if (candle.high > high) {
+          high = candle.high;
+        }
+        if (candle.low < low) {
+          low = candle.low;
+        }
+      });
+      
+      console.log(`[KiteService] Historical data analysis complete - High: ${high}, Low: ${low}`);
+      
+      return {
+        high,
+        low,
+        dataPoints: historicalData.length,
+        dateRange: {
+          from: fromDate,
+          to: toDate
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching historical high/low data:', error);
       throw error;
     }
   }

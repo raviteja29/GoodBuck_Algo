@@ -12,6 +12,8 @@ import {
 } from '@heroicons/react/24/outline';
 import TradingService from '../../services/TradingService';
 import MarketIndices from './MarketIndices';
+import Strategies from '../Strategies';
+import Analytics from '../Analytics';
 
 const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   const [positions, setPositions] = useState([]);
@@ -22,6 +24,46 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   const [margins, setMargins] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
+
+  // Helper functions to extract margin values from different possible API structures
+  const getAvailableMargin = (margins) => {
+    if (!margins) return 0;
+    
+    // Try different possible structures
+    if (margins.equity?.available) {
+      return (margins.equity.available.cash || 0) + (margins.equity.available.collateral || 0);
+    }
+    
+    // Alternative structure: margins.available
+    if (margins.available) {
+      return (margins.available.cash || 0) + (margins.available.collateral || 0);
+    }
+    
+    // Direct cash value
+    if (margins.cash) return margins.cash;
+    
+    return 0;
+  };
+
+  const getAvailableCash = (margins) => {
+    if (!margins) return 0;
+    
+    if (margins.equity?.available?.cash) return margins.equity.available.cash;
+    if (margins.available?.cash) return margins.available.cash;
+    if (margins.cash) return margins.cash;
+    
+    return 0;
+  };
+
+  const getUsedMargin = (margins) => {
+    if (!margins) return 0;
+    
+    if (margins.equity?.utilised?.debits) return margins.equity.utilised.debits;
+    if (margins.utilised?.debits) return margins.utilised.debits;
+    if (margins.used) return margins.used;
+    
+    return 0;
+  };
 
   // Function to update positions with real-time data
   const updatePositionsWithRealTimeData = useCallback((ticks) => {
@@ -48,9 +90,26 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
           TradingService.getMargins()
         ]);
         
+        console.log('[DashboardGrid] Margins data received:', marginsData);
+        console.log('[DashboardGrid] Margins structure:', JSON.stringify(marginsData, null, 2));
+        
+        // Log calculated margin values
+        if (marginsData) {
+          console.log('[DashboardGrid] Calculated margin values:', {
+            availableMargin: getAvailableMargin(marginsData),
+            availableCash: getAvailableCash(marginsData),
+            usedMargin: getUsedMargin(marginsData)
+          });
+        }
+        
         // Extract positions from the response
         const positionsList = positionsData?.net || [];
+        console.log('[DashboardGrid] Positions data received:', positionsData);
+        console.log('[DashboardGrid] Extracted positions list:', positionsList);
+        console.log('[DashboardGrid] Sample position object:', positionsList[0]);
         setPositions(positionsList);
+        setOrders(ordersData || []);
+        setMargins(marginsData || null);
         setOrders(ordersData || []);
         setMargins(marginsData || null);
         
@@ -130,8 +189,34 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   }, [updatePositionsWithRealTimeData]);
 
   // Calculate total P&L from positions
-  const totalPnL = positions.reduce((sum, pos) => sum + (pos.pnl || 0), 0);
-  const todayPnL = positions.reduce((sum, pos) => sum + (pos.day_pnl || 0), 0);
+  // Try different P&L fields that Kite API might use
+  const totalPnL = positions.reduce((sum, pos) => {
+    const pnl = pos.pnl || pos.unrealised || pos.m2m || 0;
+    return sum + pnl;
+  }, 0);
+  const todayPnL = positions.reduce((sum, pos) => {
+    const dayPnl = pos.day_pnl || pos.realised || 0;
+    return sum + dayPnl;
+  }, 0);
+  
+  // Debug P&L calculation
+  if (positions.length > 0) {
+    console.log('[DashboardGrid] P&L Calculation Debug:');
+    console.log('Positions count:', positions.length);
+    positions.forEach((pos, index) => {
+      console.log(`Position ${index}:`, {
+        symbol: pos.tradingsymbol,
+        pnl: pos.pnl,
+        day_pnl: pos.day_pnl,
+        unrealised: pos.unrealised,
+        realised: pos.realised,
+        m2m: pos.m2m,
+        quantity: pos.quantity
+      });
+    });
+    console.log('Total PnL:', totalPnL);
+    console.log('Today PnL:', todayPnL);
+  }
 
   // Performance Card Component
   const PerformanceCard = ({ title, value, subtitle, icon: Icon, trend, className = "" }) => (
@@ -180,7 +265,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       <div className="stats-grid">
         <div className="stat-item">
           <div className="stat-label">Active Positions</div>
-          <div className="stat-value">{positions.length}</div>
+          <div className="stat-value">{positions.filter(p => p.quantity !== 0).length}</div>
         </div>
         <div className="stat-item">
           <div className="stat-label">Pending Orders</div>
@@ -188,15 +273,15 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
         </div>
         <div className="stat-item">
           <div className="stat-label">Available Margin</div>
-          <div className="stat-value">₹{((margins?.equity?.available?.cash || 0) + (margins?.equity?.available?.collateral || 0)).toLocaleString()}</div>
+          <div className="stat-value">₹{getAvailableMargin(margins).toLocaleString()}</div>
         </div>
         <div className="stat-item">
           <div className="stat-label">Available Cash</div>
-          <div className="stat-value">₹{margins?.equity?.available?.cash?.toLocaleString() || '0'}</div>
+          <div className="stat-value">₹{getAvailableCash(margins).toLocaleString()}</div>
         </div>
         <div className="stat-item">
           <div className="stat-label">Used Margin</div>
-          <div className="stat-value">₹{margins?.equity?.utilised?.debits?.toLocaleString() || '0'}</div>
+          <div className="stat-value">₹{getUsedMargin(margins).toLocaleString()}</div>
         </div>
       </div>
     </div>
@@ -257,8 +342,8 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
 
   // Margin utilization component
   const MarginUtilization = ({ margins }) => {
-    const totalMargin = (margins?.equity?.available?.cash || 0) + (margins?.equity?.available?.collateral || 0);
-    const usedMargin = margins?.equity?.utilised?.debits || 0;
+    const totalMargin = getAvailableMargin(margins);
+    const usedMargin = getUsedMargin(margins);
     const utilizationPercentage = totalMargin > 0 ? (usedMargin / totalMargin) * 100 : 0;
     
     const getUtilizationColor = (percentage) => {
@@ -305,19 +390,19 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
     const marginItems = [
       {
         label: 'Total Available',
-        value: (margins?.equity?.available?.cash || 0) + (margins?.equity?.available?.collateral || 0),
+        value: getAvailableMargin(margins),
         icon: '💰',
         color: 'var(--brand-primary)'
       },
       {
         label: 'Cash',
-        value: margins?.equity?.available?.cash || 0,
+        value: getAvailableCash(margins),
         icon: '💵',
         color: 'var(--profit-primary)'
       },
       {
         label: 'Used Margin',
-        value: margins?.equity?.utilised?.debits || 0,
+        value: getUsedMargin(margins),
         icon: '📊',
         color: 'var(--loss-primary)'
       }
@@ -464,10 +549,10 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
                       {hasRealTimeUpdates && <div className="live-indicator">●</div>}
                     </td>
                     <td>
-                      <PnLIndicator value={position.pnl} />
+                      <PnLIndicator value={position.pnl || position.unrealised || position.m2m || 0} />
                     </td>
                     <td>
-                      <PnLIndicator value={position.day_pnl} isDay={true} />
+                      <PnLIndicator value={position.day_pnl || position.realised || 0} isDay={true} />
                     </td>
                     <td className={position.m2m >= 0 ? 'positive' : 'negative'}>
                       ₹{position.m2m?.toLocaleString(undefined, {
@@ -584,6 +669,14 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
     </div>
   );
 
+  if (activeSection === 'strategies') {
+    return <Strategies />;
+  }
+
+  if (activeSection === 'analytics') {
+    return <Analytics />;
+  }
+
   if (activeSection !== 'dashboard') {
     return (
       <div className="dashboard-grid">
@@ -632,7 +725,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
           </div>
           <div className="stat-item">
             <div className="stat-label">Holdings P&L</div>
-            <div className="stat-value">₹{(holdings?.reduce((sum, holding) => sum + (holding?.pnl || 0), 0) || 0).toLocaleString()}</div>
+            <div className="stat-value">₹{(holdings?.reduce((sum, holding) => sum + (holding?.pnl || holding?.unrealised || holding?.m2m || 0), 0) || 0).toLocaleString()}</div>
           </div>
         </div>
       </div>
@@ -645,15 +738,15 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
         <div className="margin-breakdown">
           <div className="margin-item">
             <div className="margin-label">Available Margin</div>
-            <div className="margin-value">₹{((margins?.equity?.available?.cash || 0) + (margins?.equity?.available?.collateral || 0)).toLocaleString()}</div>
+            <div className="margin-value">₹{getAvailableMargin(margins).toLocaleString()}</div>
           </div>
           <div className="margin-item">
             <div className="margin-label">Available Cash</div>
-            <div className="margin-value">₹{margins?.equity?.available?.cash?.toLocaleString() || '0'}</div>
+            <div className="margin-value">₹{getAvailableCash(margins).toLocaleString()}</div>
           </div>
           <div className="margin-item">
             <div className="margin-label">Used Margin</div>
-            <div className="margin-value">₹{margins?.equity?.utilised?.debits?.toLocaleString() || '0'}</div>
+            <div className="margin-value">₹{getUsedMargin(margins).toLocaleString()}</div>
           </div>
         </div>
       </div>

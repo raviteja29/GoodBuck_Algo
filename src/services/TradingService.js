@@ -619,6 +619,11 @@ class TradingService {
 
   /**
    * Get historical data
+   * @param {number|string} instrumentToken - The instrument token
+   * @param {string} fromDate - Start date in YYYY-MM-DD or YYYY-MM-DD HH:MM:SS format
+   * @param {string} toDate - End date in YYYY-MM-DD or YYYY-MM-DD HH:MM:SS format  
+   * @param {string} interval - Candle interval (minute, day, 3minute, 5minute, etc.)
+   * @returns {Promise<Object>} Historical data with candles array
    */
   async getHistoricalData(instrumentToken, fromDate, toDate, interval) {
     const response = await fetch(`http://localhost:5000/api/historical?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}&interval=${interval}`, {
@@ -844,6 +849,38 @@ class TradingService {
       return quotes;
     } catch (error) {
       console.error(`[TradingService] Error fetching quotes: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get historical high and low for an instrument in a date range
+   * @param {number|string} instrumentToken - The instrument token
+   * @param {string} fromDate - Start date in YYYY-MM-DD or YYYY-MM-DD HH:MM:SS format
+   * @param {string} toDate - End date in YYYY-MM-DD or YYYY-MM-DD HH:MM:SS format
+   * @returns {Promise<Object>} Object with high, low, dataPoints, and dateRange
+   */
+  async getInstrumentHighLow(instrumentToken, fromDate, toDate) {
+    try {
+      console.log(`[TradingService] Fetching historical high/low for instrument ${instrumentToken} from ${fromDate} to ${toDate}`);
+      
+      const response = await fetch(`http://localhost:5000/api/instruments/historical-high-low?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: this.getAuthHeaders(),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('[getInstrumentHighLow] Error:', errorData);
+        throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch historical high/low data');
+      }
+      
+      const data = await response.json();
+      console.log(`[TradingService] Received historical high/low data:`, data);
+      return data;
+    } catch (error) {
+      console.error(`[TradingService] Error fetching historical high/low: ${error.message}`);
       throw error;
     }
   }

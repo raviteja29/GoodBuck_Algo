@@ -201,6 +201,33 @@ app.get('/api/holdings', async (req, res) => {
   }
 });
 
+// Historical high/low endpoint
+app.get('/api/instruments/historical-high-low', async (req, res) => {
+  try {
+    const { instrumentToken, fromDate, toDate } = req.query;
+    
+    if (!instrumentToken) {
+      return res.status(400).json({ error: 'instrumentToken parameter is required' });
+    }
+    
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ error: 'fromDate and toDate parameters are required' });
+    }
+    
+    // Validate date format (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(fromDate) || !dateRegex.test(toDate)) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+    }
+    
+    const highLowData = await KiteService.getInstrumentHighLow(instrumentToken, fromDate, toDate);
+    res.json(highLowData);
+  } catch (error) {
+    console.error('Error fetching historical high/low data:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch historical high/low data' });
+  }
+});
+
 // Orders endpoint
 app.get('/api/orders', async (req, res) => {
   try {
