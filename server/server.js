@@ -21,21 +21,96 @@ app.use(express.json());
 // Initialize WebSocket server
 const wss = new WebSocketServer({ noServer: true });
 
-wss.on('connection', (ws) => {
-  console.log('New WebSocket connection');
-  KiteService.addWebSocketClient(ws);
+console.log("WebSocket server initialized");
 
+wss.on('connection', (ws, request) => {
+  const clientIp = request.socket.remoteAddress;
+  console.log(`New WebSocket connection: ${request.url}`);
+  console.log(`WebSocket client (${clientIp}) connected`);
+  
+  // Flag to track if the client has authenticated
+  let isAuthenticated = false;
+  
+  // Set a timeout for authentication
+  const authTimeout = setTimeout(() => {
+    if (!isAuthenticated) {
+      console.log(`WebSocket client (${clientIp}) failed to authenticate within timeout period`);
+      ws.close(1008, 'Authentication timeout');
+    }
+  }, 10000); // 10 seconds to authenticate
+  
   ws.on('message', (message) => {
+    console.log(`WebSocket client (${clientIp}) message: ${message}`);
     try {
       const data = JSON.parse(message);
+      
+      // Handle authentication
+      if (data.type === 'auth') {
+        // For now, accept any authentication attempt
+        console.log(`WebSocket client (${clientIp}) authenticated successfully`);
+        isAuthenticated = true;
+        clearTimeout(authTimeout);
+        
+        // Add the authenticated client to KiteService
+        KiteService.addWebSocketClient(ws);
+        
+        // Send authentication success response
+        ws.send(JSON.stringify({
+          type: 'auth_result',
+          success: true
+        }));
+        
+        // Track connected clients
+        const connectedClients = wss.clients.size;
+        console.log(`Connected clients: ${connectedClients}`);
+        return;
+      }
+      
+      // For all other message types, require authentication
+      if (!isAuthenticated) {
+        console.log(`Unauthenticated client (${clientIp}) attempted to send message: ${message}`);
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: 'Not authenticated'
+        }));
+        return;
+      }
+      
+      // Handle other message types for authenticated clients
       if (data.type === 'subscribe' && Array.isArray(data.tokens)) {
-        KiteService.subscribeTokens(data.tokens);
+        console.log(`[KiteService] Subscribing to token(s): ${data.tokens.join(',')}`);
+        try {
+          KiteService.subscribeTokens(data.tokens);
+          // Send confirmation to client
+          ws.send(JSON.stringify({
+            type: 'subscribed',
+            tokens: data.tokens
+          }));
+          console.log(`ws-client-${clientIp} subscribed to instrument tokens: ${data.tokens.join(',')}`);
+        } catch (error) {
+          console.error('[Server] Error subscribing to tokens:', error);
+          // Send error message to client
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: error.message || 'Failed to subscribe to tokens'
+          }));
+        }
       } else if (data.type === 'unsubscribe' && Array.isArray(data.tokens)) {
         KiteService.unsubscribeTokens(data.tokens);
+      } else if (data.type === 'pong') {
+        // Just acknowledge ping/pong for keepalive
+      } else {
+        console.log(`Unknown message type: ${data.type}`);
       }
     } catch (error) {
       console.error('Error handling WebSocket message:', error);
     }
+  });
+
+  ws.on('close', () => {
+    console.log(`WebSocket client (${clientIp}) disconnected`);
+    KiteService.removeWebSocketClient(ws);
+    console.log(`Connected clients: ${wss.clients.size}`);
   });
 });
 
@@ -112,6 +187,44 @@ app.get('/api/positions', async (req, res) => {
   } catch (error) {
     console.error('Error fetching positions:', error);
     res.status(500).json({ error: 'Failed to fetch positions' });
+  }
+});
+
+// Holdings endpoint
+app.get('/api/holdings', async (req, res) => {
+  try {
+    const holdings = await KiteService.getHoldings();
+    res.json(holdings);
+  } catch (error) {
+    console.error('Error fetching holdings:', error);
+    res.status(500).json({ error: 'Failed to fetch holdings' });
+  }
+});
+
+// Historical high/low endpoint
+app.get('/api/instruments/historical-high-low', async (req, res) => {
+  try {
+    const { instrumentToken, fromDate, toDate } = req.query;
+    
+    if (!instrumentToken) {
+      return res.status(400).json({ error: 'instrumentToken parameter is required' });
+    }
+    
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ error: 'fromDate and toDate parameters are required' });
+    }
+    
+    // Validate date format (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(fromDate) || !dateRegex.test(toDate)) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+    }
+    
+    const highLowData = await KiteService.getInstrumentHighLow(instrumentToken, fromDate, toDate);
+    res.json(highLowData);
+  } catch (error) {
+    console.error('Error fetching historical high/low data:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch historical high/low data' });
   }
 });
 
@@ -218,6 +331,26 @@ app.post('/api/auth/token', (req, res) => {
   } catch (error) {
     console.error('Error setting access token:', error);
     res.status(500).json({ error: 'Failed to set access token' });
+  }
+});
+
+// Diagnostic endpoint to check permissions
+app.get('/api/diagnostics/permissions', async (req, res) => {
+  try {
+    console.log('[DIAGNOSTICS] Running permission check...');
+    const profile = await KiteService.checkPermissions();
+    res.json({ 
+      success: true, 
+      profile: profile,
+      message: 'Check console logs for detailed permission test results'
+    });
+  } catch (error) {
+    console.error('[DIAGNOSTICS] Permission check failed:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      details: 'Check console logs for more information'
+    });
   }
 });
 

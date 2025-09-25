@@ -4,6 +4,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import Login from './components/Login';
 import AuthCallback from './components/AuthCallback';
 import Dashboard from './components/layout/Dashboard';
+import WebSocketDebugger from './components/WebSocketDebugger';
 import AuthService from './services/AuthService';
 import TradingService from './services/TradingService';
 
@@ -15,6 +16,7 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [userInfo, setUserInfo] = useState(null);
+  const [showDebugger, setShowDebugger] = useState(true); // Enable debugger by default
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -24,9 +26,18 @@ function App() {
       try {
         if (AuthService.isAuthenticated()) {
           const userInfo = AuthService.getUserInfo();
-          const profile = await TradingService.getProfile();
           
-          setUserInfo({ ...userInfo, ...profile });
+          // Initialize WebSocket connection after authentication
+          await TradingService.setupWebSocket();
+          
+          try {
+            const profile = await TradingService.getProfile();
+            setUserInfo({ ...userInfo, ...profile });
+          } catch (profileError) {
+            console.error('Failed to load profile:', profileError);
+            setUserInfo(userInfo);
+          }
+          
           setIsAuthenticated(true);
           
           // Redirect to dashboard if on login page
@@ -48,12 +59,21 @@ function App() {
 
   const handleLoginSuccess = async (authResponse) => {
     try {
-      const profile = await TradingService.getProfile();
-      setUserInfo({ ...authResponse, ...profile });
+      // Initialize WebSocket connection after successful login
+      await TradingService.setupWebSocket();
+      
+      try {
+        const profile = await TradingService.getProfile();
+        setUserInfo({ ...authResponse, ...profile });
+      } catch (profileError) {
+        console.error('Failed to load user profile:', profileError);
+        setUserInfo(authResponse);
+      }
+      
       setIsAuthenticated(true);
       navigate('/dashboard');
     } catch (error) {
-      console.error('Failed to load user profile:', error);
+      console.error('Failed to setup after login:', error);
       setIsAuthenticated(true); // Still allow login
       navigate('/dashboard');
     }
@@ -71,6 +91,19 @@ function App() {
     navigate('/');
   };
 
+  // Toggle debugger with keyboard shortcut (Ctrl+Shift+D)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+        e.preventDefault();
+        setShowDebugger(prev => !prev);
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   if (isLoading) {
     return (
       <div className="loading-container">
@@ -81,37 +114,42 @@ function App() {
   }
 
   return (
-    <Routes>
-      <Route 
-        path="/" 
-        element={
-          isAuthenticated ? 
-          <Dashboard userInfo={userInfo} onLogout={handleLogout} /> : 
-          <Login onLoginSuccess={handleLoginSuccess} />
-        } 
-      />
-      <Route 
-        path="/login" 
-        element={<Login onLoginSuccess={handleLoginSuccess} />} 
-      />
-      <Route 
-        path="/callback" 
-        element={
-          <AuthCallback 
-            onAuthSuccess={handleLoginSuccess}
-            onAuthError={handleLoginError}
-          />
-        } 
-      />
-      <Route 
-        path="/dashboard" 
-        element={
-          isAuthenticated ? 
-          <Dashboard userInfo={userInfo} onLogout={handleLogout} /> : 
-          <Login onLoginSuccess={handleLoginSuccess} />
-        } 
-      />
-    </Routes>
+    <>
+      <Routes>
+        <Route 
+          path="/" 
+          element={
+            isAuthenticated ? 
+            <Dashboard userInfo={userInfo} onLogout={handleLogout} /> : 
+            <Login onLoginSuccess={handleLoginSuccess} />
+          } 
+        />
+        <Route 
+          path="/login" 
+          element={<Login onLoginSuccess={handleLoginSuccess} />} 
+        />
+        <Route 
+          path="/callback" 
+          element={
+            <AuthCallback 
+              onAuthSuccess={handleLoginSuccess}
+              onAuthError={handleLoginError}
+            />
+          } 
+        />
+        <Route 
+          path="/dashboard" 
+          element={
+            isAuthenticated ? 
+            <Dashboard userInfo={userInfo} onLogout={handleLogout} /> : 
+            <Login onLoginSuccess={handleLoginSuccess} />
+          } 
+        />
+      </Routes>
+      
+      {/* WebSocket Debugger - only shown when authenticated */}
+      {isAuthenticated && showDebugger && <WebSocketDebugger />}
+    </>
   );
 }
 

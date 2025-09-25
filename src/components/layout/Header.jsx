@@ -13,39 +13,44 @@ import './Header.css';
 
 const Header = ({ userInfo, onLogout, onToggleSidebar, sidebarCollapsed }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [marketStatus, setMarketStatus] = useState('CLOSED');
+  const [marketInfo, setMarketInfo] = useState({ status: 'CLOSED', isOpen: false });
   const [notifications] = useState(3); // Mock notification count
 
-  // Update time every second
+  // Update time and market status every second
   useEffect(() => {
-    const timer = setInterval(() => {
+    const updateTimeAndMarket = () => {
       setCurrentTime(new Date());
-    }, 1000);
+      
+      // Local market status calculation without API calls
+      const now = new Date();
+      const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
+      const currentTime = currentHour * 100 + currentMinute;
+      
+      let status, isOpen, message;
+      
+      // Indian market hours: 9:15 AM to 3:30 PM
+      if (currentTime >= 915 && currentTime <= 1530) {
+        status = 'OPEN';
+        isOpen = true;
+        message = 'Market is open for trading';
+      } else if (currentTime >= 900 && currentTime < 915) {
+        status = 'PRE-MARKET';
+        isOpen = false;
+        message = 'Pre-market session';
+      } else {
+        status = 'CLOSED';
+        isOpen = false;
+        message = 'Market is closed';
+      }
+      
+      setMarketInfo({ status, isOpen, message });
+    };
+    
+    updateTimeAndMarket(); // Initial update
+    const timer = setInterval(updateTimeAndMarket, 1000);
     return () => clearInterval(timer);
   }, []);
-
-  // Determine market status based on Indian market hours
-  useEffect(() => {
-    const now = new Date();
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const currentTime = hours * 60 + minutes;
-    
-    const preMarketStart = 9 * 60; // 9:00 AM
-    const marketOpen = 9 * 60 + 15; // 9:15 AM
-    const marketClose = 15 * 60 + 30; // 3:30 PM
-    const postMarketEnd = 16 * 60; // 4:00 PM
-    
-    if (currentTime >= preMarketStart && currentTime < marketOpen) {
-      setMarketStatus('PRE-MARKET');
-    } else if (currentTime >= marketOpen && currentTime < marketClose) {
-      setMarketStatus('OPEN');
-    } else if (currentTime >= marketClose && currentTime < postMarketEnd) {
-      setMarketStatus('POST-MARKET');
-    } else {
-      setMarketStatus('CLOSED');
-    }
-  }, [currentTime]);
 
   const formatTime = (date) => {
     return date.toLocaleTimeString('en-IN', {
@@ -57,10 +62,11 @@ const Header = ({ userInfo, onLogout, onToggleSidebar, sidebarCollapsed }) => {
   };
 
   const getMarketStatusColor = () => {
-    switch (marketStatus) {
+    switch (marketInfo.status) {
       case 'OPEN': return 'var(--market-open)';
       case 'PRE-MARKET': 
-      case 'POST-MARKET': return 'var(--market-pre)';
+      case 'AFTER HOURS': return 'var(--market-pre)';
+      case 'WEEKEND':
       case 'CLOSED': return 'var(--market-closed)';
       default: return 'var(--text-tertiary)';
     }
@@ -94,7 +100,7 @@ const Header = ({ userInfo, onLogout, onToggleSidebar, sidebarCollapsed }) => {
           </div>
           <div className="brand-text">
             <h1 className="brand-name">GoodBuck</h1>
-            <span className="brand-tagline">Professional Trading</span>
+            <span className="brand-tagline">Algo trader</span>
           </div>
         </div>
 
@@ -102,10 +108,10 @@ const Header = ({ userInfo, onLogout, onToggleSidebar, sidebarCollapsed }) => {
         <div className="market-status">
           <div className="status-indicator">
             <div 
-              className={`status-dot ${marketStatus === 'OPEN' ? 'pulsing' : ''}`}
+              className={`status-dot ${marketInfo.isOpen ? 'pulsing' : ''}`}
               style={{ backgroundColor: getMarketStatusColor() }}
             />
-            <span className="status-text">{marketStatus}</span>
+            <span className="status-text">{marketInfo.status}</span>
           </div>
           <div className="market-time">
             <span className="time-label">IST</span>
@@ -130,17 +136,9 @@ const Header = ({ userInfo, onLogout, onToggleSidebar, sidebarCollapsed }) => {
 
       <div className="header-right">
         {/* Account Info */}
-        <div className="account-section">
-          <div className="account-balance">
-            <span className="balance-label">Available Margin</span>
-            <span className="balance-amount">
-              ₹{userInfo?.margins?.available?.cash?.toLocaleString() || '0'}
-            </span>
-          </div>
-          <div className="account-info">
-            <span className="user-name">{userInfo?.user_name || 'User'}</span>
-            <span className="user-id">{userInfo?.user_id || 'ID'}</span>
-          </div>
+        <div className="account-info">
+          <span className="user-name">{userInfo?.user_name || 'User'}</span>
+          <span className="user-id">{userInfo?.user_id || 'ID'}</span>
         </div>
 
         {/* Action Buttons */}

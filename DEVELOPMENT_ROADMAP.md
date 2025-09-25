@@ -217,7 +217,7 @@
 ---
 
 ## 🚀 **PHASE 6: ADVANCED FEATURES (Week 12-14)**
-*Focus: Professional Trading Tools*
+*Focus: Algo trader Tools*
 
 ### Step 6.1: Paper Trading Mode
 **Complexity:** Intermediate | **Impact:** Medium | **Time:** 4-5 days

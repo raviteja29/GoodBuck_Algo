@@ -7,6 +7,7 @@ import { KiteConnect } from 'kiteconnect';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
 // In-memory cache for used request_tokens
 const usedTokens = new Set();
@@ -177,6 +178,23 @@ app.get('/api/positions', async (req, res) => {
   }
 });
 
+// Proxy route for holdings (GET all holdings)
+app.get('/api/holdings', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (!access_token) {
+      return res.status(401).json({ error: 'Access token required' });
+    }
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token);
+    const holdings = await kc.getHoldings();
+    res.json(holdings);
+  } catch (err) {
+    console.error('Holdings fetch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Proxy route for orders (GET all orders)
 app.get('/api/orders', async (req, res) => {
   try {
@@ -212,25 +230,103 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-// Proxy route for historical data
-app.get('/api/historical', async (req, res) => {
+// Proxy route for historical data - following Kite Connect API specification
+// Route: /instruments/historical/:instrument_token/:interval
+app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
   try {
     const access_token = getAccessToken(req);
     if (!access_token) {
       console.error('[HISTORICAL] No access token provided');
       return res.status(401).json({ error: 'Access token required' });
     }
-    const { instrumentToken, fromDate, toDate, interval } = req.query;
-    console.log('[HISTORICAL] Query params:', { instrumentToken, fromDate, toDate, interval });
-    if (!instrumentToken || !fromDate || !toDate || !interval) {
-      console.error('[HISTORICAL] Missing required query parameters');
-      return res.status(400).json({ error: 'Missing required query parameters' });
+    
+    // URI parameters (as per Kite Connect documentation)
+    const { instrumentToken, interval } = req.params;
+    
+    // Request parameters (as per Kite Connect documentation)
+    const { from, to, continuous, oi } = req.query;
+    
+    console.log('[HISTORICAL] URI params:', { instrumentToken, interval });
+    console.log('[HISTORICAL] Query params:', { from, to, continuous, oi });
+    
+    if (!instrumentToken || !interval || !from || !to) {
+      console.error('[HISTORICAL] Missing required parameters');
+      return res.status(400).json({ 
+        error: 'Missing required parameters. instrumentToken and interval are required in URI, from and to are required in query' 
+      });
     }
+
+    // Validate interval parameter against allowed values
+    const allowedIntervals = ['minute', 'day', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute'];
+    if (!allowedIntervals.includes(interval)) {
+      console.error('[HISTORICAL] Invalid interval:', interval);
+      return res.status(400).json({ 
+        error: `Invalid interval. Allowed values: ${allowedIntervals.join(', ')}` 
+      });
+    }
+
+    // Validate date format - accept both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS
+    const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const dateTimeRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+    
+    const isFromDateValid = dateOnlyRegex.test(from) || dateTimeRegex.test(from);
+    const isToDateValid = dateOnlyRegex.test(to) || dateTimeRegex.test(to);
+    
+    if (!isFromDateValid || !isToDateValid) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS' });
+    }
+
+    // Convert dates to datetime format expected by Kite API (yyyy-mm-dd hh:mm:ss)
+    let fromDateTime, toDateTime;
+    
+    // Check if input is already in datetime format
+    if (from.includes(' ')) {
+      fromDateTime = from;
+      toDateTime = to;
+    } else {
+      // Convert from YYYY-MM-DD format to market hours
+      fromDateTime = `${from} 09:15:00`; // Market opening time
+      toDateTime = `${to} 15:30:00`; // Market closing time
+    }
+    
+    console.log(`[HISTORICAL] Converted to datetime format: ${fromDateTime} to ${toDateTime}`);
+    console.log(`[HISTORICAL] Additional params: continuous=${continuous}, oi=${oi}`);
+    
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
     kc.setAccessToken(access_token);
+    
     try {
-      const data = await kc.getHistoricalData(instrumentToken, interval, fromDate, toDate);
-      console.log('[HISTORICAL] Data fetched:', Array.isArray(data.candles) ? `Candles: ${data.candles.length}` : data);
+      // Prepare parameters for getHistoricalData method
+      const params = {
+        from: fromDateTime,
+        to: toDateTime
+      };
+      
+      // Add continuous parameter if provided (for futures contracts)
+      if (continuous !== undefined && continuous !== null) {
+        params.continuous = continuous === '1' || continuous === 'true';
+        console.log(`[HISTORICAL] Continuous data requested: ${params.continuous}`);
+      }
+      
+      // Add OI parameter if provided (for Open Interest data)
+      if (oi !== undefined && oi !== null) {
+        params.oi = oi === '1' || oi === 'true';
+        console.log(`[HISTORICAL] OI data requested: ${params.oi}`);
+      }
+      
+      console.log(`[HISTORICAL] Calling getHistoricalData with params:`, params);
+      
+      // Call KiteConnect method with all parameters
+      const data = await kc.getHistoricalData(instrumentToken, interval, params.from, params.to, params.continuous, params.oi);
+      
+      console.log('[HISTORICAL] Data fetched:', {
+        hasData: !!data,
+        hasCandlesArray: Array.isArray(data.candles),
+        candlesCount: data.candles ? data.candles.length : 0,
+        sampleCandle: data.candles && data.candles[0] ? data.candles[0] : null,
+        includesOI: params.oi && data.candles && data.candles[0] ? data.candles[0].length === 7 : false
+      });
+      
       res.json(data);
     } catch (apiErr) {
       console.error('[HISTORICAL] Error from KiteConnect:', apiErr);
@@ -241,6 +337,418 @@ app.get('/api/historical', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Backward compatibility route for existing frontend code using query parameters
+app.get('/api/historical', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (!access_token) {
+      console.error('[HISTORICAL-COMPAT] No access token provided');
+      return res.status(401).json({ error: 'Access token required' });
+    }
+    
+    const { instrumentToken, fromDate, toDate, interval, continuous, oi } = req.query;
+    
+    console.log('[HISTORICAL-COMPAT] Legacy route accessed');
+    console.log('[HISTORICAL-COMPAT] Query params:', { instrumentToken, fromDate, toDate, interval, continuous, oi });
+    
+    if (!instrumentToken || !interval || !fromDate || !toDate) {
+      console.error('[HISTORICAL-COMPAT] Missing required query parameters');
+      return res.status(400).json({ error: 'Missing required query parameters: instrumentToken, interval, fromDate, toDate' });
+    }
+    
+    // Validate interval parameter against allowed values
+    const allowedIntervals = ['minute', 'day', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute'];
+    if (!allowedIntervals.includes(interval)) {
+      console.error('[HISTORICAL-COMPAT] Invalid interval:', interval);
+      return res.status(400).json({ 
+        error: `Invalid interval. Allowed values: ${allowedIntervals.join(', ')}` 
+      });
+    }
+
+    // Validate date format - accept both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS
+    const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const dateTimeRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+    
+    const isFromDateValid = dateOnlyRegex.test(fromDate) || dateTimeRegex.test(fromDate);
+    const isToDateValid = dateOnlyRegex.test(toDate) || dateTimeRegex.test(toDate);
+    
+    if (!isFromDateValid || !isToDateValid) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS' });
+    }
+
+    // Convert dates to datetime format expected by Kite API (yyyy-mm-dd hh:mm:ss)
+    let fromDateTime, toDateTime;
+    
+    // Check if input is already in datetime format
+    if (fromDate.includes(' ')) {
+      fromDateTime = fromDate;
+      toDateTime = toDate;
+    } else {
+      // Convert from YYYY-MM-DD format to market hours
+      fromDateTime = `${fromDate} 09:15:00`; // Market opening time
+      toDateTime = `${toDate} 15:30:00`; // Market closing time
+    }
+    
+    console.log(`[HISTORICAL-COMPAT] Converted to datetime format: ${fromDateTime} to ${toDateTime}`);
+    console.log(`[HISTORICAL-COMPAT] Additional params: continuous=${continuous}, oi=${oi}`);
+    
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token);
+    
+    try {
+      // Prepare parameters for getHistoricalData method
+      const params = {
+        from: fromDateTime,
+        to: toDateTime
+      };
+      
+      // Add continuous parameter if provided (for futures contracts)
+      if (continuous !== undefined && continuous !== null) {
+        params.continuous = continuous === '1' || continuous === 'true';
+        console.log(`[HISTORICAL-COMPAT] Continuous data requested: ${params.continuous}`);
+      }
+      
+      // Add OI parameter if provided (for Open Interest data)
+      if (oi !== undefined && oi !== null) {
+        params.oi = oi === '1' || oi === 'true';
+        console.log(`[HISTORICAL-COMPAT] OI data requested: ${params.oi}`);
+      }
+      
+      console.log(`[HISTORICAL-COMPAT] Calling getHistoricalData with params:`, params);
+      
+      // Call KiteConnect method with all parameters
+      const data = await kc.getHistoricalData(instrumentToken, interval, params.from, params.to, params.continuous, params.oi);
+      
+      console.log('[HISTORICAL-COMPAT] Data fetched:', {
+        hasData: !!data,
+        hasCandlesArray: Array.isArray(data.candles),
+        candlesCount: data.candles ? data.candles.length : 0,
+        sampleCandle: data.candles && data.candles[0] ? data.candles[0] : null,
+        includesOI: params.oi && data.candles && data.candles[0] ? data.candles[0].length === 7 : false
+      });
+      
+      res.json(data);
+    } catch (apiErr) {
+      console.error('[HISTORICAL-COMPAT] Error from KiteConnect:', apiErr);
+      res.status(500).json({ error: apiErr.message, details: apiErr });
+    }
+  } catch (err) {
+    console.error('[HISTORICAL-COMPAT] Route error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Historical high/low endpoint  
+app.get('/api/instruments/historical-high-low', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (!access_token) {
+      console.error('[HISTORICAL-HIGH-LOW] No access token provided');
+      return res.status(401).json({ error: 'Access token required' });
+    }
+    
+    const { instrumentToken, fromDate, toDate } = req.query;
+    console.log('[HISTORICAL-HIGH-LOW] Query params:', { instrumentToken, fromDate, toDate });
+    
+    if (!instrumentToken) {
+      return res.status(400).json({ error: 'instrumentToken parameter is required' });
+    }
+    
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ error: 'fromDate and toDate parameters are required' });
+    }
+    
+    // Validate date format - accept both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS
+    const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const dateTimeRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+    
+    const isFromDateValid = dateOnlyRegex.test(fromDate) || dateTimeRegex.test(fromDate);
+    const isToDateValid = dateOnlyRegex.test(toDate) || dateTimeRegex.test(toDate);
+    
+    if (!isFromDateValid || !isToDateValid) {
+      return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS' });
+    }
+    
+    console.log(`[HISTORICAL-HIGH-LOW] Date validation passed for ${fromDate} to ${toDate}`);
+    
+    // Convert to datetime format expected by Kite API if needed
+    let fromDateTime, toDateTime;
+    
+    // Check if dates already include time, otherwise add market hours
+    if (fromDate.includes(' ')) {
+      fromDateTime = fromDate;
+    } else {
+      fromDateTime = `${fromDate} 09:15:00`; // Market opening time
+    }
+    
+    if (toDate.includes(' ')) {
+      toDateTime = toDate;
+    } else {
+      toDateTime = `${toDate} 15:30:00`; // Market closing time
+    }
+    
+    console.log(`[HISTORICAL-HIGH-LOW] Converted to datetime format: ${fromDateTime} to ${toDateTime}`);
+    
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token);
+    
+    try {
+      console.log(`[HISTORICAL-HIGH-LOW] Fetching historical data for token ${instrumentToken} from ${fromDateTime} to ${toDateTime}`);
+      console.log(`[HISTORICAL-HIGH-LOW] KiteConnect instance created with API key: ${process.env.KITE_API_KEY ? 'Present' : 'Missing'}`);
+      console.log(`[HISTORICAL-HIGH-LOW] Access token set: ${access_token ? 'Present' : 'Missing'}`);
+      
+      // Instead of using 'day' interval, use 'minute' interval to get intraday data
+      // Then calculate OHLC for each day from 9:15 AM to 3:30 PM
+      console.log(`[HISTORICAL-HIGH-LOW] Fetching minute-level data to calculate daily OHLC from market hours`);
+      
+      const historicalData = await kc.getHistoricalData(instrumentToken, 'minute', fromDateTime, toDateTime);
+      
+      console.log(`[HISTORICAL-HIGH-LOW] Raw minute-level data received:`, {
+        hasData: !!historicalData,
+        hasCandles: !!(historicalData && historicalData.candles),
+        candlesLength: historicalData && historicalData.candles ? historicalData.candles.length : 0,
+        sampleCandle: historicalData && historicalData.candles && historicalData.candles[0] ? historicalData.candles[0] : null,
+        requestedRange: `${fromDateTime} to ${toDateTime}`,
+        instrumentToken: instrumentToken,
+        dataType: Array.isArray(historicalData) ? 'direct_array' : 'candles_object'
+      });
+      
+      // Handle both formats: candles array or direct array of objects
+      let dataArray = null;
+      if (historicalData && historicalData.candles && Array.isArray(historicalData.candles)) {
+        dataArray = historicalData.candles;
+      } else if (historicalData && Array.isArray(historicalData)) {
+        dataArray = historicalData;
+      }
+      
+      if (!dataArray || dataArray.length === 0) {
+        console.warn(`[HISTORICAL-HIGH-LOW] No data available for the requested range ${fromDateTime} to ${toDateTime}`);
+        
+        // Provide more specific error message based on the date range
+        const startDate = new Date(fromDate);
+        const endDate = new Date(toDate);
+        const today = new Date();
+        
+        // Check if trying to access future dates
+        if (startDate > today || endDate > today) {
+          throw new Error(`Cannot fetch data for future dates. Please select dates from the past.`);
+        }
+        
+        // Check if the range is only weekends
+        let hasWeekdays = false;
+        for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+          const dayOfWeek = d.getDay();
+          if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday (0) or Saturday (6)
+            hasWeekdays = true;
+            break;
+          }
+        }
+        
+        if (!hasWeekdays) {
+          throw new Error(`The selected date range (${fromDate} to ${toDate}) contains only weekends. Please select a range that includes weekdays.`);
+        }
+        
+        // Generic message for other cases (holidays, etc.)
+        throw new Error(`No trading data available for the selected date range (${fromDate} to ${toDate}). This could be due to market holidays. Please try a different date range.`);
+      }
+      
+      // Calculate daily OHLC from minute-level data for market hours (9:15 AM to 3:30 PM)
+      let overallHigh = Number.MIN_SAFE_INTEGER;
+      let overallLow = Number.MAX_SAFE_INTEGER;
+      
+      console.log(`[HISTORICAL-HIGH-LOW] Processing ${dataArray.length} minute-level data points for date range ${fromDate} to ${toDate}:`);
+      
+      // Group minute data by date to calculate daily OHLC
+      const dailyData = {};
+      
+      dataArray.forEach((dataPoint, index) => {
+        let timestamp, open, high, low, close, volume;
+        
+        // Handle both formats: array format [timestamp, open, high, low, close, volume] or object format
+        if (Array.isArray(dataPoint)) {
+          timestamp = dataPoint[0];
+          open = dataPoint[1];
+          high = dataPoint[2];
+          low = dataPoint[3];
+          close = dataPoint[4];
+          volume = dataPoint[5];
+        } else if (typeof dataPoint === 'object' && dataPoint !== null) {
+          timestamp = dataPoint.date || dataPoint.timestamp;
+          open = dataPoint.open;
+          high = dataPoint.high;
+          low = dataPoint.low;
+          close = dataPoint.close;
+          volume = dataPoint.volume;
+        }
+        
+        const date = new Date(timestamp).toISOString().split('T')[0];
+        const time = new Date(timestamp).toTimeString().split(' ')[0];
+        
+        // Initialize daily data if not exists
+        if (!dailyData[date]) {
+          dailyData[date] = {
+            date: date,
+            open: null,
+            high: Number.MIN_SAFE_INTEGER,
+            low: Number.MAX_SAFE_INTEGER,
+            close: null,
+            minuteCount: 0,
+            firstTime: null,
+            lastTime: null
+          };
+        }
+        
+        // Set open price (first minute of the day)
+        if (dailyData[date].open === null || !dailyData[date].firstTime || time < dailyData[date].firstTime) {
+          dailyData[date].open = open;
+          dailyData[date].firstTime = time;
+        }
+        
+        // Set close price (last minute of the day)
+        if (dailyData[date].close === null || !dailyData[date].lastTime || time > dailyData[date].lastTime) {
+          dailyData[date].close = close;
+          dailyData[date].lastTime = time;
+        }
+        
+        // Update high and low
+        if (high > dailyData[date].high) {
+          dailyData[date].high = high;
+        }
+        if (low < dailyData[date].low) {
+          dailyData[date].low = low;
+        }
+        
+        dailyData[date].minuteCount++;
+        
+        // Update overall high and low
+        if (high > overallHigh) {
+          overallHigh = high;
+        }
+        if (low < overallLow) {
+          overallLow = low;
+        }
+      });
+      
+      // Log each day's OHLC calculated from minute data
+      const sortedDates = Object.keys(dailyData).sort();
+      sortedDates.forEach((date, index) => {
+        const dayData = dailyData[date];
+        console.log(`[HISTORICAL-HIGH-LOW] Day ${index + 1} (${date}): Open=${dayData.open}, High=${dayData.high}, Low=${dayData.low}, Close=${dayData.close}, Minutes=${dayData.minuteCount}, TimeRange=${dayData.firstTime}-${dayData.lastTime}`);
+      });
+      
+      console.log(`[HISTORICAL-HIGH-LOW] Analysis complete - Overall High: ${overallHigh}, Overall Low: ${overallLow} across ${sortedDates.length} trading days`);
+      
+      const result = {
+        high: overallHigh,
+        low: overallLow,
+        dataPoints: sortedDates.length,
+        minuteDataPoints: dataArray.length,
+        dailyBreakdown: dailyData,
+        dateRange: {
+          from: fromDate,
+          to: toDate
+        }
+      };
+      
+      res.json(result);
+    } catch (apiErr) {
+      console.error('[HISTORICAL-HIGH-LOW] Error from KiteConnect:', apiErr);
+      res.status(500).json({ error: apiErr.message, details: apiErr });
+    }
+  } catch (err) {
+    console.error('[HISTORICAL-HIGH-LOW] Route error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add quotes endpoint for multiple instruments
+app.get('/api/quotes', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    console.log(`[QUOTES] Access token exists: ${!!access_token}`);
+    
+    if (!access_token) {
+      return res.status(401).json({ error: 'Access token required' });
+    }
+    
+    const { tokens } = req.query;
+    if (!tokens) {
+      return res.status(400).json({ error: 'Tokens parameter is required' });
+    }
+    
+    const tokenArray = tokens.split(',').map(t => parseInt(t, 10));
+    console.log(`[QUOTES] Fetching quotes for tokens: ${tokenArray.join(',')}`);
+    
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token);
+    
+    console.log(`[QUOTES] Using API Key: ${process.env.KITE_API_KEY ? 'Present' : 'Missing'}`);
+    console.log(`[QUOTES] Access token length: ${access_token ? access_token.length : 0}`);
+    
+    try {
+      // Get quotes for the requested tokens
+      console.log(`[QUOTES] Calling kc.getQuote with tokens: ${tokenArray}`);
+      const quotes = await kc.getQuote(tokenArray);
+      console.log('[QUOTES] Successfully fetched quotes:', Object.keys(quotes).length, 'quotes');
+      res.json(quotes);
+    } catch (kiteError) {
+      console.error('[QUOTES] Kite API error details:');
+      console.error('Error message:', kiteError.message);
+      console.error('Error status:', kiteError.status);
+      console.error('Error code:', kiteError.code);
+      console.error('Full error:', kiteError);
+      
+      // If permission error, try alternative approach with individual calls
+      if (kiteError.error_type === 'PermissionException') {
+        console.log('[QUOTES] Permission error detected. Trying individual quote fetches...');
+        try {
+          const individualQuotes = {};
+          for (const token of tokenArray) {
+            try {
+              console.log(`[QUOTES] Fetching individual quote for token: ${token}`);
+              const singleQuote = await kc.getQuote([token]);
+              individualQuotes[token] = singleQuote[token];
+            } catch (individualError) {
+              console.error(`[QUOTES] Failed to fetch individual quote for ${token}:`, individualError.message);
+            }
+          }
+          
+          if (Object.keys(individualQuotes).length > 0) {
+            console.log('[QUOTES] Successfully fetched some individual quotes');
+            return res.json(individualQuotes);
+          }
+        } catch (individualError) {
+          console.error('[QUOTES] Individual quote approach also failed:', individualError.message);
+        }
+      }
+      
+      // Check if it's an authentication error
+      if (kiteError.message && (kiteError.message.includes('token') || kiteError.message.includes('auth'))) {
+        console.error('[QUOTES] Authentication error - token may be expired');
+        return res.status(401).json({ error: 'Authentication failed. Please login again.' });
+      }
+      
+      // For other errors, return the actual error instead of mock data
+      console.error('[QUOTES] Kite API error - returning error response');
+      return res.status(500).json({ 
+        error: 'Market data temporarily unavailable', 
+        details: kiteError.message,
+        error_type: kiteError.error_type 
+      });
+    }
+  } catch (err) {
+    console.error('[QUOTES] Route error:', err.message || err);
+    console.error('[QUOTES] Stack trace:', err.stack);
+    
+    // Return proper error response instead of mock data
+    res.status(500).json({ 
+      error: 'Market data service temporarily unavailable',
+      details: err.message 
+    });
+  }
+});
+
 // Add search endpoint for instruments
 app.get('/api/instruments/search', async (req, res) => {
   try {
@@ -397,6 +905,99 @@ app.get('/api/instruments/details', async (req, res) => {
 // Create HTTP server
 const port = process.env.PORT || 5000;
 const server = createServer(app);
+
+/**
+ * Order webhook endpoint - receives real-time order updates from Zerodha
+ * Format documented at: https://kite.trade/docs/connect/v3/postbacks/
+ */
+app.post('/api/webhook/orders', (req, res) => {
+  console.log('Order webhook received');
+  
+  try {
+    // Check for Kite API version header
+    const kiteVersion = req.headers['x-kite-version'];
+    if (kiteVersion) {
+      console.log(`Kite API Version: ${kiteVersion}`);
+    }
+    
+    // Verify the request is from Zerodha using checksum validation
+    // when X-Kite-Signature header is present
+    const signature = req.headers['x-kite-signature'];
+    if (signature) {
+      const apiSecret = process.env.KITE_API_SECRET;
+      if (!apiSecret) {
+        console.error('Cannot verify webhook: KITE_API_SECRET not configured');
+        return res.status(500).json({ status: 'error', message: 'Server configuration error' });
+      }
+      
+      // Create checksum from request body using API secret
+      const body = JSON.stringify(req.body);
+      const calculatedSignature = crypto
+        .createHmac('sha256', apiSecret)
+        .update(body)
+        .digest('hex');
+      
+      // Compare the calculated signature with the one provided by Zerodha
+      if (signature !== calculatedSignature) {
+        console.error('Webhook signature verification failed');
+        console.log('Received signature:', signature);
+        console.log('Calculated signature:', calculatedSignature);
+        return res.status(403).json({ status: 'error', message: 'Invalid signature' });
+      }
+      
+      console.log('Webhook signature verified successfully');
+    } else {
+      console.warn('No X-Kite-Signature header found - webhook verification skipped');
+    }
+    
+    // The postback payload is an array of order objects according to Zerodha docs
+    const orderUpdates = req.body;
+    
+    // Validate the data structure
+    if (!Array.isArray(orderUpdates)) {
+      console.error('Invalid order webhook data received - expected array:', orderUpdates);
+      return res.status(400).json({ status: 'error', message: 'Invalid data format, expected array' });
+    }
+    
+    if (orderUpdates.length === 0) {
+      console.log('Empty order updates array received');
+      return res.status(200).json({ status: 'success', message: 'No updates to process' });
+    }
+    
+    console.log(`Processing ${orderUpdates.length} order updates`);
+    
+    // Process each order update
+    orderUpdates.forEach(orderData => {
+      // Validate essential fields according to Zerodha docs
+      if (!orderData || !orderData.order_id) {
+        console.error('Invalid order data in webhook:', orderData);
+        return; // Skip this item but continue processing others
+      }
+      
+      console.log(`Broadcasting order update for order_id: ${orderData.order_id}`);
+      
+      // Process the order update (broadcast to connected clients via WebSocket)
+      if (wss && wss.clients) {
+        const orderUpdateMessage = JSON.stringify({
+          type: 'order_update',
+          data: orderData
+        });
+        
+        wss.clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(orderUpdateMessage);
+          }
+        });
+      }
+    });
+    
+    // Return success to acknowledge receipt
+    return res.status(200).json({ status: 'success' });
+  } catch (error) {
+    console.error('Error processing order webhook:', error);
+    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+});
 
 // Initialize WebSocket server with path
 const wss = new WebSocketServer({ 
