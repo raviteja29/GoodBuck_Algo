@@ -151,7 +151,27 @@ const Analytics = () => {
   };
 
   const duration = getDateRangeDuration();
+  // ================= Strike Derivation Helpers =================
+  // Step size: 100 for BANK NIFTY related symbols, else 50
+  const getStrikeStep = (symbol) => /BANK/i.test(symbol || '') ? 100 : 50;
+  const roundUpTo = (val, step) => (typeof val === 'number') ? Math.ceil(val / step) * step : null;
+  const roundDownTo = (val, step) => (typeof val === 'number') ? Math.floor(val / step) * step : null;
 
+  // Normalize potential key name variations (defensive)
+  const normalizeHighLow = (data) => {
+    if (!data) return { high: null, low: null };
+    const highCandidates = ['high','highest','max'];
+    const lowCandidates = ['low','lowest','min'];
+    let high = null; let low = null;
+    for (const k of highCandidates) { if (data[k] != null) { high = data[k]; break; } }
+    for (const k of lowCandidates) { if (data[k] != null) { low = data[k]; break; } }
+    return { high, low };
+  };
+
+  const { high: normalizedHigh, low: normalizedLow } = normalizeHighLow(highLowData);
+  const strikeStep = getStrikeStep(selectedInstrument?.tradingsymbol);
+  const peStrike = normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null; // Put strike from High (round up)
+  const ceStrike = normalizedLow != null ? roundDownTo(normalizedLow, strikeStep) : null; // Call strike from Low (round down)
   return (
     <div className="analytics-section">
       {/* Header */}
@@ -161,241 +181,298 @@ const Analytics = () => {
             <ChartBarIcon className="title-icon" />
             Historical Analysis
           </h1>
-          <p className="section-subtitle">
-            Analyze high and low prices for selected instruments within date ranges
-          </p>
+          
         </div>
       </div>
 
-      {/* Configuration Panel */}
-      <div className="analysis-config">
-        <div className="config-card">
-          <h3 className="config-title">Analysis Configuration</h3>
-          
-          {/* Instrument Selection */}
-          <div className="config-row">
-            <div className="config-item">
-              <label className="config-label">
-                <MagnifyingGlassIcon className="label-icon" />
-                Select Instrument
-              </label>
-              <div className="instrument-selector">
-                {selectedInstrument ? (
-                  <div className="selected-instrument">
-                    <div className="instrument-info">
-                      <span className="instrument-symbol">{selectedInstrument.tradingsymbol}</span>
-                      <span className="instrument-name">{selectedInstrument.name}</span>
-                      <span className="instrument-exchange">{selectedInstrument.exchange}</span>
+      {/* Main Content Grid */}
+      <div className="analytics-main">
+        {/* Left Column - Configuration */}
+        <div className="config-column">
+          <div className="config-card">
+            <div className="config-card-inner">
+              <h3 className="config-title">Analysis Configuration</h3>
+              <div className="config-layout">
+                {/* Sidebar (Quick Select + Tips) */}
+                <aside className="config-sidebar">
+                  <div className="panel-group">
+                    <div className="panel-block">
+                      <h4 className="panel-label">Quick Select</h4>
+                      <div className="quick-select-buttons vertical tight">
+                        <button 
+                          className="quick-btn"
+                          onClick={() => handleInstrumentSelect({
+                            tradingsymbol: 'NIFTY 50',
+                            name: 'Nifty 50',
+                            exchange: 'NSE',
+                            instrument_token: '256265'
+                          })}
+                        >
+                          NIFTY 50
+                        </button>
+                        <button 
+                          className="quick-btn"
+                          onClick={() => handleInstrumentSelect({
+                            tradingsymbol: 'BANK NIFTY',
+                            name: 'Bank Nifty',
+                            exchange: 'NSE', 
+                            instrument_token: '260105'
+                          })}
+                        >
+                          BANK NIFTY
+                        </button>
+                      </div>
                     </div>
+                    <div className="panel-block tips-block">
+                      <div className="tips-header">
+                        <InformationCircleIcon className="tips-icon" />
+                        <span className="tips-title">Guidelines</span>
+                      </div>
+                      <ul className="tips-list">
+                        <li>Use dates ending ≥ 2 days ago</li>
+                        <li>Range ≤ 10 days for performance</li>
+                        <li>Weekends auto-excluded</li>
+                      </ul>
+                    </div>
+                  </div>
+                </aside>
+
+                {/* Main Form */}
+                <div className="config-main">
+                  {/* Instrument */}
+                  <div className="form-group instrument-group">
+                    <label className="config-label inline-label">
+                      <MagnifyingGlassIcon className="label-icon" />
+                      Instrument
+                    </label>
+                    <div className="instrument-selector compact">
+                      {selectedInstrument ? (
+                        <div className="selected-instrument compact">
+                          <div className="instrument-info">
+                            <span className="instrument-symbol">{selectedInstrument.tradingsymbol}</span>
+                            {selectedInstrument.name && selectedInstrument.name.trim().toLowerCase() !== selectedInstrument.tradingsymbol.trim().toLowerCase() && (
+                              <span className="instrument-name">{selectedInstrument.name}</span>
+                            )}
+                            <span className="instrument-exchange">{selectedInstrument.exchange}</span>
+                          </div>
+                          <button 
+                            className="change-instrument-btn ghost"
+                            aria-label="Change instrument"
+                            onClick={() => setShowInstrumentSearch(true)}
+                          >
+                            Change
+                          </button>
+                        </div>
+                      ) : (
+                        <button 
+                          className="select-instrument-btn"
+                          onClick={() => setShowInstrumentSearch(true)}
+                        >
+                          <MagnifyingGlassIcon className="btn-icon" />
+                          Choose Instrument
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Date Range */}
+                  <div className="form-group date-group">
+                    <div className="group-header">
+                      <span className="group-title">Date Range</span>
+                      {duration && (
+                        <span className="duration-chip" aria-live="polite">{duration} day{duration>1?'s':''}</span>
+                      )}
+                    </div>
+                    <div className="date-grid">
+                      <div className="date-cell">
+                        <label className="config-label small-label">
+                          <CalendarDaysIcon className="label-icon" /> From
+                        </label>
+                        <input
+                          type="date"
+                          value={fromDate}
+                          onChange={(e) => setFromDate(e.target.value)}
+                          className="date-input compact"
+                          max={(() => {
+                            const maxDate = new Date();
+                            maxDate.setDate(maxDate.getDate() - 2);
+                            return maxDate.toISOString().split('T')[0];
+                          })()} 
+                          aria-label="From date (must be earlier than To date)"
+                        />
+                      </div>
+                      <div className="date-cell">
+                        <label className="config-label small-label">
+                          <CalendarDaysIcon className="label-icon" /> To
+                        </label>
+                        <input
+                          type="date"
+                          value={toDate}
+                          onChange={(e) => setToDate(e.target.value)}
+                          className="date-input compact"
+                          min={fromDate}
+                          max={(() => {
+                            const maxDate = new Date();
+                            maxDate.setDate(maxDate.getDate() - 2);
+                            return maxDate.toISOString().split('T')[0];
+                          })()} 
+                          aria-label="To date (must be after From date)"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Inline Extended Tips (optional expansion could be future) */}
+                  <div className="inline-help" role="note">
+                    <p>Market hours applied automatically (09:15–15:30). Holidays excluded.</p>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="form-actions compact-actions">
                     <button 
-                      className="change-instrument-btn"
-                      onClick={() => setShowInstrumentSearch(true)}
+                      className="action-btn secondary subtle"
+                      onClick={handleClear}
+                      disabled={!selectedInstrument && !fromDate && !toDate}
                     >
-                      Change
+                      Clear
+                    </button>
+                    <button 
+                      className="action-btn primary"
+                      onClick={handleAnalyze}
+                      disabled={loading || !selectedInstrument || !fromDate || !toDate}
+                    >
+                      {loading ? 'Analyzing...' : 'Analyze'}
                     </button>
                   </div>
-                ) : (
-                  <button 
-                    className="select-instrument-btn"
-                    onClick={() => setShowInstrumentSearch(true)}
-                  >
-                    <MagnifyingGlassIcon className="btn-icon" />
-                    Select Instrument
-                  </button>
-                )}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Date Range Selection */}
-          <div className="config-row">
-            <div className="config-item">
-              <label className="config-label">
-                <CalendarDaysIcon className="label-icon" />
-                From Date
-              </label>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="date-input"
-                max={(() => {
-                  const maxDate = new Date();
-                  maxDate.setDate(maxDate.getDate() - 2); // At least 2 days ago
-                  return maxDate.toISOString().split('T')[0];
-                })()} 
-              />
+          {/* Error Display */}
+          {error && (
+            <div className="error-card">
+              <InformationCircleIcon className="error-icon" />
+              <div className="error-content">
+                <h4>Analysis Error</h4>
+                <p>{error}</p>
+              </div>
             </div>
-            
-            <div className="config-item">
-              <label className="config-label">
-                <CalendarDaysIcon className="label-icon" />
-                To Date
-              </label>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className="date-input"
-                min={fromDate} // Can't be earlier than from date
-                max={(() => {
-                  const maxDate = new Date();
-                  maxDate.setDate(maxDate.getDate() - 2); // At least 2 days ago
-                  return maxDate.toISOString().split('T')[0];
-                })()} 
-              />
-            </div>
-          </div>
+          )}
+        </div>
 
-          {/* Duration Info */}
-          {duration && (
-            <div className="config-row">
-              <div className="duration-info">
-                <ClockIcon className="duration-icon" />
-                <span>Analysis period: {duration} days</span>
+        {/* Right Column - Results */}
+        <div className="results-column">
+          {/* Loading State */}
+          {loading && (
+            <div className="loading-section">
+              <div className="loading-spinner"></div>
+              <p>Analyzing historical data...</p>
+            </div>
+          )}
+
+          {/* Results Display */}
+          {highLowData && (
+            <div className="results-section">
+              <h3 className="results-title">Analysis Results</h3>
+              
+              <div className="results-grid">
+                              {/* High Price Card */}
+              <div className="result-card high-card">
+                <div className="card-header">
+                  <h4 className="card-title">Index high</h4>
+                  <ArrowTrendingUpIcon className="card-icon high-icon" />
+                </div>
+                <div className="card-value high-value">
+                  ₹{normalizedHigh?.toLocaleString?.()}
+                </div>
+                
+                {peStrike && (
+                  <div className="strike-line pe-strike">
+                    <span className="strike-label">PE Strike</span>
+                    <span className="strike-value">₹{peStrike}</span>
+                  </div>
+                )}
+              </div>
+
+                {/* Low Price Card */}
+                <div className="result-card low-card">
+                  <div className="card-header">
+                    <h4 className="card-title">Lowest Price</h4>
+                    <ArrowTrendingDownIcon className="card-icon low-icon" />
+                  </div>
+                  <div className="card-value low-value">
+                    ₹{normalizedLow?.toLocaleString?.()}
+                  </div>
+                  
+                  {ceStrike && (
+                    <div className="strike-line ce-strike">
+                      <span className="strike-label">CE Strike</span>
+                      <span className="strike-value">₹{ceStrike}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Range Card */}
+                <div className="result-card range-card">
+                  <div className="card-header">
+                    <h4 className="card-title">Price Range</h4>
+                    <ChartBarIcon className="card-icon range-icon" />
+                  </div>
+                  <div className="card-value range-value">
+                    ₹{(highLowData.high - highLowData.low).toLocaleString()}
+                  </div>
+                  <div className="card-subtitle">
+                    {(((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)}% variation
+                  </div>
+                </div>
+
+                {/* Data Points Card */}
+                <div className="result-card data-card">
+                  <div className="card-header">
+                    <h4 className="card-title">Data Points</h4>
+                    <ClockIcon className="card-icon data-icon" />
+                  </div>
+                  <div className="card-value data-value">
+                    {highLowData.dataPoints}
+                  </div>
+                  <div className="card-subtitle">
+                    Trading days analyzed
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary Info */}
+              <div className="results-summary">
+                <div className="summary-card">
+                  <h4 className="summary-title">Analysis Summary</h4>
+                  <div className="summary-content">
+                    <p>
+                      <strong>{selectedInstrument.tradingsymbol}</strong> traded between{' '}
+                      <span className="low-highlight">₹{highLowData.low}</span> and{' '}
+                      <span className="high-highlight">₹{highLowData.high}</span> during the selected period.
+                    </p>
+                    <p>
+                      The price range represents a{' '}
+                      <strong>{(((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)}%</strong> variation
+                      over <strong>{duration} calendar days</strong> with <strong>{highLowData.dataPoints}</strong> trading sessions.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
           )}
 
-          {/* Date Selection Help */}
-          <div className="config-row">
-            <div className="info-message">
-              <InformationCircleIcon className="info-icon" />
-              <div className="info-text">
-                <p><strong>Date Selection Tips:</strong></p>
-                <ul>
-                  <li>Select dates at least 2 days ago for data availability</li>
-                  <li>Market hours will be applied automatically (9:15 AM to 3:30 PM)</li>
-                  <li>Weekends and holidays will be automatically ignored</li>
-                  <li>Keep date range within 10 days for optimal performance</li>
-                  <li>Analysis will show high/low for available trading days only</li>
-                </ul>
-              </div>
+          {/* Placeholder when no results */}
+          {!highLowData && !loading && !error && (
+            <div className="results-placeholder">
+              <ChartBarIcon className="placeholder-icon" />
+              <h3>Ready for Analysis</h3>
+              <p>Configure your analysis parameters and click "Analyze" to see results here.</p>
             </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="config-actions">
-            <button 
-              className="action-btn secondary"
-              onClick={handleClear}
-              disabled={!selectedInstrument && !fromDate && !toDate}
-            >
-              Clear
-            </button>
-            <button 
-              className="action-btn primary"
-              onClick={handleAnalyze}
-              disabled={loading || !selectedInstrument || !fromDate || !toDate}
-            >
-              {loading ? 'Analyzing...' : 'Analyze'}
-            </button>
-          </div>
+          )}
         </div>
       </div>
-
-      {/* Error Display */}
-      {error && (
-        <div className="error-card">
-          <InformationCircleIcon className="error-icon" />
-          <div className="error-content">
-            <h4>Analysis Error</h4>
-            <p>{error}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Results Display */}
-      {highLowData && (
-        <div className="results-section">
-          <h3 className="results-title">Analysis Results</h3>
-          
-          <div className="results-grid">
-            {/* High Price Card */}
-            <div className="result-card high-card">
-              <div className="card-header">
-                <h4 className="card-title">Highest Price</h4>
-                <ArrowTrendingUpIcon className="card-icon high-icon" />
-              </div>
-              <div className="card-value high-value">
-                ₹{highLowData.high.toLocaleString()}
-              </div>
-              <div className="card-subtitle">
-                Period High ({formatDate(highLowData.dateRange.from)} to {formatDate(highLowData.dateRange.to)})
-              </div>
-            </div>
-
-            {/* Low Price Card */}
-            <div className="result-card low-card">
-              <div className="card-header">
-                <h4 className="card-title">Lowest Price</h4>
-                <ArrowTrendingDownIcon className="card-icon low-icon" />
-              </div>
-              <div className="card-value low-value">
-                ₹{highLowData.low.toLocaleString()}
-              </div>
-              <div className="card-subtitle">
-                Period Low ({formatDate(highLowData.dateRange.from)} to {formatDate(highLowData.dateRange.to)})
-              </div>
-            </div>
-
-            {/* Range Card */}
-            <div className="result-card range-card">
-              <div className="card-header">
-                <h4 className="card-title">Price Range</h4>
-                <ChartBarIcon className="card-icon range-icon" />
-              </div>
-              <div className="card-value range-value">
-                ₹{(highLowData.high - highLowData.low).toLocaleString()}
-              </div>
-              <div className="card-subtitle">
-                {(((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)}% variation
-              </div>
-            </div>
-
-            {/* Data Points Card */}
-            <div className="result-card data-card">
-              <div className="card-header">
-                <h4 className="card-title">Data Points</h4>
-                <ClockIcon className="card-icon data-icon" />
-              </div>
-              <div className="card-value data-value">
-                {highLowData.dataPoints}
-              </div>
-              <div className="card-subtitle">
-                Trading days analyzed
-              </div>
-            </div>
-          </div>
-
-          {/* Summary Info */}
-          <div className="results-summary">
-            <div className="summary-card">
-              <h4 className="summary-title">Analysis Summary</h4>
-              <div className="summary-content">
-                <p>
-                  <strong>{selectedInstrument.tradingsymbol}</strong> traded between{' '}
-                  <span className="low-highlight">₹{highLowData.low}</span> and{' '}
-                  <span className="high-highlight">₹{highLowData.high}</span> during the selected period.
-                </p>
-                <p>
-                  The price range represents a{' '}
-                  <strong>{(((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)}%</strong> variation
-                  over <strong>{duration} calendar days</strong> with <strong>{highLowData.dataPoints}</strong> trading sessions.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Loading State */}
-      {loading && (
-        <div className="loading-section">
-          <div className="loading-spinner"></div>
-          <p>Analyzing historical data...</p>
-        </div>
-      )}
 
       {/* Instrument Search Modal */}
       {showInstrumentSearch && (
