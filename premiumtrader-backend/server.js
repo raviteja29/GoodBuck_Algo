@@ -19,6 +19,31 @@ console.log('Using API Secret:', process.env.KITE_API_SECRET ? '***secret redact
 
 const app = express();
 
+// In-memory instrument cache (15 min TTL)
+let instrumentCache = { data: null, timestamp: 0 };
+async function loadInstruments(force=false) {
+  const now = Date.now();
+  if (!force && instrumentCache.data && (now - instrumentCache.timestamp) < 15 * 60 * 1000) {
+    return instrumentCache.data;
+  }
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  // For endpoints requiring auth we will set token dynamically per request; basic list fetch may need access_token
+  if (globalLastAccessToken) kc.setAccessToken(globalLastAccessToken);
+  try {
+    console.log('[INSTRUMENTS] Refreshing instrument list from Kite');
+    const list = await kc.getInstruments();
+    instrumentCache = { data: list, timestamp: now };
+    return list;
+  } catch (e) {
+    console.error('[INSTRUMENTS] Failed to load instruments', e.message);
+    if (instrumentCache.data) return instrumentCache.data; // serve stale if available
+    throw e;
+  }
+}
+
+// Track last provided access token to reuse for instrument fetch caching
+let globalLastAccessToken = null;
+
 // 1) Enable CORS with explicit origin and credentials
 app.use(cors({
   origin: 'http://localhost:5173', // Update this to your frontend URL if different
@@ -61,7 +86,8 @@ app.post('/api/generate_session', async (req, res) => {
         user_name: sessionData.user_name,
         login_time: new Date().toISOString()
       });
-      return res.json(sessionData);
+  globalLastAccessToken = sessionData.access_token;
+  return res.json(sessionData);
     } catch (apiErr) {
       console.error('KiteConnect API Error:', apiErr);
       return res.status(400).json({ 
@@ -100,8 +126,8 @@ app.get('/api/profile', async (req, res) => {
       console.warn('[PROFILE] No access token provided, returning 401');
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token;
     try {
       const profile = await kc.getProfile();
       console.log('[PROFILE] Successfully fetched profile:', profile);
@@ -127,8 +153,8 @@ app.get('/api/margins', async (req, res) => {
       console.warn('[MARGINS] No access token provided, returning 401');
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token;
     try {
       console.log('[MARGINS] Sending request to KiteConnect getMargins API...');
       console.log('[MARGINS] Request headers:', {
@@ -168,8 +194,8 @@ app.get('/api/positions', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token;
     const positions = await kc.getPositions();
     res.json(positions);
   } catch (err) {
@@ -185,8 +211,8 @@ app.get('/api/holdings', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token;
     const holdings = await kc.getHoldings();
     res.json(holdings);
   } catch (err) {
@@ -202,8 +228,8 @@ app.get('/api/orders', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token;
     const orders = await kc.getOrders();
     res.json(orders);
   } catch (err) {
@@ -293,40 +319,17 @@ app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
     console.log(`[HISTORICAL] Additional params: continuous=${continuous}, oi=${oi}`);
     
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
-    
+    kc.setAccessToken(access_token); globalLastAccessToken = access_token;
+
     try {
-      // Prepare parameters for getHistoricalData method
-      const params = {
-        from: fromDateTime,
-        to: toDateTime
-      };
-      
-      // Add continuous parameter if provided (for futures contracts)
+      const params = { from: fromDateTime, to: toDateTime };
       if (continuous !== undefined && continuous !== null) {
         params.continuous = continuous === '1' || continuous === 'true';
-        console.log(`[HISTORICAL] Continuous data requested: ${params.continuous}`);
       }
-      
-      // Add OI parameter if provided (for Open Interest data)
       if (oi !== undefined && oi !== null) {
         params.oi = oi === '1' || oi === 'true';
-        console.log(`[HISTORICAL] OI data requested: ${params.oi}`);
       }
-      
-      console.log(`[HISTORICAL] Calling getHistoricalData with params:`, params);
-      
-      // Call KiteConnect method with all parameters
       const data = await kc.getHistoricalData(instrumentToken, interval, params.from, params.to, params.continuous, params.oi);
-      
-      console.log('[HISTORICAL] Data fetched:', {
-        hasData: !!data,
-        hasCandlesArray: Array.isArray(data.candles),
-        candlesCount: data.candles ? data.candles.length : 0,
-        sampleCandle: data.candles && data.candles[0] ? data.candles[0] : null,
-        includesOI: params.oi && data.candles && data.candles[0] ? data.candles[0].length === 7 : false
-      });
-      
       res.json(data);
     } catch (apiErr) {
       console.error('[HISTORICAL] Error from KiteConnect:', apiErr);
@@ -335,6 +338,58 @@ app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
   } catch (err) {
     console.error('[HISTORICAL] Route error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Search instruments (substring match on tradingsymbol or name)
+app.get('/api/instruments/search', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (access_token) { globalLastAccessToken = access_token; }
+    const { query, name } = req.query;
+    const q = (query || name || '').trim();
+    if (!q) return res.status(400).json({ error: 'query parameter required' });
+    const list = await loadInstruments();
+    const lower = q.toLowerCase();
+    const filtered = list.filter(i => {
+      if (!i || !i.tradingsymbol) return false;
+      const ts = i.tradingsymbol.toLowerCase();
+      const nameField = (i.name || '').toLowerCase();
+      return ts.includes(lower) || nameField.includes(lower);
+    });
+    res.json(filtered.slice(0,200));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Exact symbol fetch (mirrors expectation from frontend TradingService.getInstrumentsBySymbol)
+app.get('/api/instruments/symbol', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (access_token) { globalLastAccessToken = access_token; }
+    const { symbol } = req.query;
+    if (!symbol) return res.status(400).json({ error: 'symbol parameter required' });
+    const upper = symbol.toUpperCase();
+    const list = await loadInstruments();
+    const matches = list.filter(i => i.tradingsymbol === upper);
+    const enriched = matches.map(i => ({
+      instrument_token: i.instrument_token,
+      exchange_token: i.exchange_token,
+      tradingsymbol: i.tradingsymbol,
+      name: i.name,
+      last_price: 0,
+      expiry: i.expiry || null,
+      strike: i.strike || null,
+      tick_size: i.tick_size,
+      lot_size: i.lot_size || i.lotsize,
+      instrument_type: i.instrument_type,
+      segment: i.segment,
+      exchange: i.exchange
+    }));
+    res.json(enriched);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

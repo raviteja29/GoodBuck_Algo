@@ -117,15 +117,46 @@ wss.on('connection', (ws, request) => {
 // Routes
 app.get('/api/instruments/search', async (req, res) => {
   try {
-    const { name } = req.query;
-    if (!name) {
-      return res.status(400).json({ error: 'Name parameter is required' });
+    const { name, query } = req.query;
+    const searchKey = name || query; // allow either name or query for flexibility
+    if (!searchKey) {
+      return res.status(400).json({ error: 'Name or query parameter is required' });
     }
-    const instruments = await KiteService.searchInstruments(name);
+    const instruments = await KiteService.searchInstruments(searchKey);
     res.json(instruments);
   } catch (error) {
     console.error('Error searching instruments:', error);
     res.status(500).json({ error: 'Failed to search instruments' });
+  }
+});
+
+// Fetch instruments by exact tradingsymbol (frontend expects this)
+app.get('/api/instruments/symbol', async (req, res) => {
+  try {
+    const { symbol } = req.query;
+    if (!symbol) return res.status(400).json({ error: 'symbol parameter is required' });
+    const upper = symbol.toUpperCase();
+    const all = await KiteService.searchInstruments(upper.slice(0,8)); // narrow initial scan
+    const matches = all.filter(i => i.tradingsymbol === upper);
+    // Enrich with standardized fields expected by frontend (if present in instrument object)
+    const enriched = matches.map(i => ({
+      instrument_token: i.instrument_token,
+      exchange_token: i.exchange_token || null,
+      tradingsymbol: i.tradingsymbol,
+      name: i.name || i.tradingsymbol,
+      last_price: 0,
+      expiry: i.expiry || null,
+      strike: i.strike || null,
+      tick_size: i.tick_size || null,
+      lot_size: i.lot_size || i.lotsize || null,
+      instrument_type: i.instrument_type || i.segment,
+      segment: i.segment,
+      exchange: i.exchange
+    }));
+    res.json(enriched);
+  } catch (err) {
+    console.error('Error fetching instruments by symbol:', err);
+    res.status(500).json({ error: 'Failed to fetch instruments for symbol' });
   }
 });
 

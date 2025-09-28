@@ -17,6 +17,7 @@ class KiteService {
     this.instrumentTokens = new Set();
     this.lastQuotes = new Map();
     this.ticker = null;
+    this.instrumentCache = { data: null, timestamp: 0 };
   }
 
   setAccessToken(accessToken) {
@@ -358,7 +359,13 @@ class KiteService {
 
   async searchInstruments(query) {
     try {
-      const instruments = await this.kite.getInstruments();
+      const now = Date.now();
+      if (!this.instrumentCache.data || (now - this.instrumentCache.timestamp) > 15 * 60 * 1000) {
+        console.log('[KiteService] Refreshing instrument cache');
+        this.instrumentCache.data = await this.kite.getInstruments();
+        this.instrumentCache.timestamp = now;
+      }
+      const instruments = this.instrumentCache.data;
       return instruments.filter(inst => 
         inst.tradingsymbol.toLowerCase().includes(query.toLowerCase()) ||
         inst.name.toLowerCase().includes(query.toLowerCase())

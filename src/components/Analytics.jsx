@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ChartBarIcon, 
   CalendarDaysIcon, 
@@ -15,6 +15,22 @@ import './Analytics.css';
 const Analytics = () => {
   const [selectedInstrument, setSelectedInstrument] = useState(null);
   const [showInstrumentSearch, setShowInstrumentSearch] = useState(false);
+  // Option related state
+  const [optionExpiry, setOptionExpiry] = useState('current'); // 'current' | 'next'
+  const [peOptionToken, setPeOptionToken] = useState(null);
+  const [ceOptionToken, setCeOptionToken] = useState(null);
+  const [peFibLevels, setPeFibLevels] = useState(null); // {low, mid, high, ext}
+  const [ceFibLevels, setCeFibLevels] = useState(null);
+  const [peTimeframe, setPeTimeframe] = useState('15m');
+  const [ceTimeframe, setCeTimeframe] = useState('15m');
+  const [peHma, setPeHma] = useState({ '15m': null, '1h': null, '1d': null });
+  const [ceHma, setCeHma] = useState({ '15m': null, '1h': null, '1d': null });
+  const [peLtp, setPeLtp] = useState(null);
+  const [ceLtp, setCeLtp] = useState(null);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugInfo, setDebugInfo] = useState({ pe: { candidates: [], resolved: null }, ce: { candidates: [], resolved: null } });
+  const peSubscribed = useRef(false);
+  const ceSubscribed = useRef(false);
   
   // Set default dates to a week ago (more likely to have data)
   const getDefaultDates = () => {
@@ -172,6 +188,285 @@ const Analytics = () => {
   const strikeStep = getStrikeStep(selectedInstrument?.tradingsymbol);
   const peStrike = normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null; // Put strike from High (round up)
   const ceStrike = normalizedLow != null ? roundDownTo(normalizedLow, strikeStep) : null; // Call strike from Low (round down)
+
+  // ================= Option Helpers (Minimal) =================
+  const baseSymbolForUnderlying = (sym) => {
+    if (!sym) return null;
+    if (/BANK/i.test(sym)) return 'BANKNIFTY';
+    return 'NIFTY';
+  };
+
+  const getWeeklyExpiryDates = () => {
+    const today = new Date();
+    const current = new Date(today);
+    // Find upcoming Tuesday (day 2). If today is Tuesday, treat today as current week expiry.
+    while (current.getDay() !== 2) current.setDate(current.getDate() + 1);
+    const currentWeek = new Date(current);
+    const nextWeek = new Date(current);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    return { currentWeek, nextWeek };
+  };
+
+  const formatExpiryCode = (date) => {
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mmm = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
+    const yy = String(date.getFullYear()).slice(-2);
+    return `${dd}${mmm}${yy}`; // e.g. 26SEP24
+  };
+
+  const buildOptionSymbolCandidates = (underlyingSymbol, strike, type, expiryChoice) => {
+    if (!underlyingSymbol || !strike || !type) return [];
+    const base = baseSymbolForUnderlying(underlyingSymbol)?.replace(/\s+/g,'');
+    const strikeStr = String(strike).replace(/\.\d+/, '');
+    const { currentWeek, nextWeek } = getWeeklyExpiryDates();
+    const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
+    const dd = String(expiryDate.getDate()).padStart(2,'0');
+    const mmm = expiryDate.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
+    const yy = String(expiryDate.getFullYear()).slice(-2);
+    const monthNum = String(expiryDate.getMonth()+1).padStart(2,'0');
+    const yearFull = expiryDate.getFullYear();
+
+    // Candidate formats (descending likelihood):
+    // 1. Weekly full: BASE + DD + MMM + YY + strike + type  (NIFTY30SEP25 24500 CE => NIFTY30SEP2524500CE)
+    // 2. Weekly no year: BASE + DD + MMM + strike + type    (NIFTY30SEP24500CE)
+    // 3. Compact year first two digits + strike + type? (Legacy examples like NIFTY159500CE appear to be year(15)+strike+type NO month) -> BASE + YY + strike + type
+    // 4. Monthly style: BASE + MMM + YY + strike + type      (NIFTYSEP2524500CE)
+    // 5. Alt numeric date: BASE + DD + MM + YY + strike + type (NIFTY30092524500CE)
+    const candidates = [
+      `${base}${dd}${mmm}${yy}${strikeStr}${type}`,
+      `${base}${dd}${mmm}${strikeStr}${type}`,
+      `${base}${yy}${strikeStr}${type}`,
+      `${base}${mmm}${yy}${strikeStr}${type}`,
+      `${base}${dd}${monthNum}${yy}${strikeStr}${type}`
+    ];
+    if (mmm === 'SEP') {
+      // Some data sources may list September as SEPT
+      candidates.push(
+        `${base}${dd}SEPT${yy}${strikeStr}${type}`,
+        `${base}${dd}SEPT${strikeStr}${type}`,
+        `${base}SEPT${yy}${strikeStr}${type}`
+      );
+    }
+    return Array.from(new Set(candidates));
+  };
+
+  // Resolve option instrument tokens when strikes and instrument selected or expiry changes
+  useEffect(() => {
+    let cancelled = false;
+    async function resolveTokens() {
+  setPeOptionToken(null); setCeOptionToken(null);
+      setPeFibLevels(null); setCeFibLevels(null);
+      peSubscribed.current = false; ceSubscribed.current = false;
+  setPeLtp(null); setCeLtp(null);
+      if (!selectedInstrument || !peStrike || !ceStrike) return;
+      const under = selectedInstrument.tradingsymbol;
+      const peSymbols = buildOptionSymbolCandidates(under, peStrike, 'PE', optionExpiry);
+      const ceSymbols = buildOptionSymbolCandidates(under, ceStrike, 'CE', optionExpiry);
+      setDebugInfo(prev => ({
+        ...prev,
+        pe: { ...prev.pe, candidates: peSymbols, resolved: null },
+        ce: { ...prev.ce, candidates: ceSymbols, resolved: null }
+      }));
+      async function resolveOne(symbolList, setter, side) {
+        for (const sym of symbolList) {
+          if (cancelled) return;
+          try {
+            console.log(`[OptionResolve] Trying ${side} symbol candidate: ${sym}`);
+            let res = await TradingService.getInstrumentsBySymbol(sym);
+            if (!cancelled && Array.isArray(res) && res.length) {
+              const token = res[0].instrument_token || res[0].token;
+              console.log(`[OptionResolve] ${side} resolved via direct symbol: ${sym} -> token ${token}`);
+              setter(token);
+              setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct'} }}));
+              return;
+            }
+            // Fallback: broader search prefix of base + strike part
+            const basePrefix = sym.slice(0, Math.min(8, sym.length));
+            const searchRes = await TradingService.searchInstruments(basePrefix);
+            if (!cancelled && Array.isArray(searchRes)) {
+              const exact = searchRes.find(r => r.tradingsymbol === sym);
+              if (exact) {
+                const token = exact.instrument_token || exact.token;
+                console.log(`[OptionResolve] ${side} resolved via search exact: ${sym} -> token ${token}`);
+                setter(token);
+                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact'} }}));
+                return;
+              }
+              const strikeMatch = sym.match(/(\d{3,6})(CE|PE)$/);
+              const strikePart = String(strikeMatch?.[1] || '');
+              const typePart = strikeMatch?.[2] || (sym.endsWith('CE') ? 'CE' : sym.endsWith('PE') ? 'PE' : '');
+              const partial = searchRes.find(r => r.tradingsymbol?.includes(strikePart) && r.tradingsymbol?.endsWith(typePart));
+              if (partial) {
+                const token = partial.instrument_token || partial.token;
+                console.log(`[OptionResolve] ${side} resolved via search partial: ${partial.tradingsymbol} -> token ${token}`);
+                setter(token);
+                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial'} }}));
+                return;
+              }
+            }
+          } catch (err) {
+            console.warn(`[OptionResolve] Error for candidate ${sym}:`, err.message);
+          }
+        }
+        console.warn(`[OptionResolve] Failed to resolve any candidate for ${side}`);
+      }
+      await Promise.all([
+        resolveOne(peSymbols, setPeOptionToken, 'PE'),
+        resolveOne(ceSymbols, setCeOptionToken, 'CE')
+      ]);
+    }
+    resolveTokens();
+    return () => { cancelled = true; };
+  }, [selectedInstrument, peStrike, ceStrike, optionExpiry]);
+
+  // Static Fibonacci levels (per option token + date range). Cached so they don't change with live LTP.
+  const fibCacheRef = useRef({}); // key: token|fromDate|toDate
+  useEffect(() => {
+    let cancelled = false;
+    async function computeFib(token, setter) {
+      if (!token || !fromDate || !toDate) return;
+      const key = `${token}|${fromDate}|${toDate}`;
+      if (fibCacheRef.current[key]) { setter(fibCacheRef.current[key]); return; }
+      try {
+        const fromDateTime = `${fromDate} 09:15:00`;
+        const toDateTime = `${toDate} 15:30:00`;
+        const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, 'day');
+        const candles = data?.candles || [];
+        if (!candles.length) { if(!cancelled) setter(null); return; }
+        let low = Infinity, high = -Infinity;
+        candles.forEach(c => { if (c[3] < low) low = c[3]; if (c[2] > high) high = c[2]; });
+        if (low === Infinity || high === -Infinity) { if(!cancelled) setter(null); return; }
+        const diff = high - low;
+        const fibs = { 0: low, 0.5: low + diff * 0.5, 1: high, 1.618: low + diff * 1.618 };
+        fibCacheRef.current[key] = fibs;
+        if (!cancelled) setter(fibs);
+      } catch(e) {
+        console.warn('Fib fetch failed', e.message);
+      }
+    }
+    if (peOptionToken && !peFibLevels) computeFib(peOptionToken, setPeFibLevels);
+    if (ceOptionToken && !ceFibLevels) computeFib(ceOptionToken, setCeFibLevels);
+    return () => { cancelled = true; };
+  }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate]);
+
+  // LTP initial quote & polling fallback if ticks absent
+  const lastTickRef = useRef({ pe: null, ce: null });
+  const pollRef = useRef(null);
+  useEffect(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (!peOptionToken && !ceOptionToken) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        if (peOptionToken) {
+          const q = await TradingService.getQuote(peOptionToken);
+          if (!cancelled && q?.last_price != null) setPeLtp(q.last_price);
+        }
+        if (ceOptionToken) {
+          const q = await TradingService.getQuote(ceOptionToken);
+          if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
+        }
+      } catch(err) { console.warn('Initial option quote fetch failed', err.message); }
+      pollRef.current = setInterval(async () => {
+        const now = Date.now();
+        const needPe = peOptionToken && (!lastTickRef.current.pe || now - lastTickRef.current.pe > 20000);
+        const needCe = ceOptionToken && (!lastTickRef.current.ce || now - lastTickRef.current.ce > 20000);
+        if (!needPe && !needCe) return;
+        try {
+          if (needPe) {
+            const q = await TradingService.getQuote(peOptionToken);
+            if (!cancelled && q?.last_price != null) setPeLtp(q.last_price);
+          }
+          if (needCe) {
+            const q = await TradingService.getQuote(ceOptionToken);
+            if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
+          }
+        } catch(e){ console.warn('Polling option quote failed', e.message); }
+      }, 15000);
+    })();
+    return () => { cancelled = true; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current=null; } };
+  }, [peOptionToken, ceOptionToken]);
+
+  // Subscribe to real-time option ticks (once per token)
+  useEffect(() => {
+    const unsubscribers = [];
+    function handleTicks(ticks) {
+      if (!Array.isArray(ticks)) return;
+      ticks.forEach(t => {
+        if (t.instrument_token === peOptionToken && t.last_price != null) {
+          setPeLtp(t.last_price);
+          lastTickRef.current.pe = Date.now();
+        }
+        if (t.instrument_token === ceOptionToken && t.last_price != null) {
+          setCeLtp(t.last_price);
+          lastTickRef.current.ce = Date.now();
+        }
+      });
+    }
+    if (peOptionToken && !peSubscribed.current) {
+      TradingService.subscribeToInstruments([peOptionToken]);
+      const unsub = TradingService.subscribeToTicks(handleTicks); // reused handler
+      unsubscribers.push(unsub); peSubscribed.current = true;
+    }
+    if (ceOptionToken && !ceSubscribed.current) {
+      TradingService.subscribeToInstruments([ceOptionToken]);
+      const unsub = TradingService.subscribeToTicks(handleTicks);
+      unsubscribers.push(unsub); ceSubscribed.current = true;
+    }
+    return () => { unsubscribers.forEach(u => u && u()); };
+  }, [peOptionToken, ceOptionToken]);
+
+  // HMA computation helpers
+  const computeWMA = (arr, period, endIndex) => {
+    if (endIndex + 1 < period) return null;
+    let weightSum = period * (period + 1) / 2;
+    let wsum = 0; let w = 1;
+    for (let i = endIndex - period + 1; i <= endIndex; i++) {
+      wsum += arr[i] * w; w++;
+    }
+    return wsum / weightSum;
+  };
+
+  const computeHMA = (closes, period=50) => {
+    if (!closes || closes.length < period) return null;
+    const half = Math.floor(period / 2);
+    const sqrtP = Math.floor(Math.sqrt(period));
+    const diffSeries = [];
+    for (let i = period - 1; i < closes.length; i++) {
+      const wmaFull = computeWMA(closes, period, i);
+      const wmaHalf = computeWMA(closes, half, i);
+      if (wmaFull == null || wmaHalf == null) continue;
+      diffSeries.push(2 * wmaHalf - wmaFull);
+    }
+    if (diffSeries.length < sqrtP) return null;
+    // Apply WMA on diffSeries for last sqrtP values
+    let weightSum = sqrtP * (sqrtP + 1) / 2;
+    let wsum = 0; let w = 1;
+    for (let i = diffSeries.length - sqrtP; i < diffSeries.length; i++) {
+      wsum += diffSeries[i] * w; w++;
+    }
+    return wsum / weightSum;
+  };
+
+  const timeframeToInterval = { '15m': '15minute', '1h': '60minute', '1d': 'day' };
+
+  const fetchHMAIfNeeded = async (token, timeframe, stateObj, setStateObj) => {
+    if (!token) return;
+    if (stateObj[timeframe] != null) return; // already computed
+    try {
+      const fromDateTime = `${fromDate} 09:15:00`;
+      const toDateTime = `${toDate} 15:30:00`;
+      const interval = timeframeToInterval[timeframe];
+      const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, interval);
+      const candles = data?.candles || [];
+      const closes = candles.map(c => c[4]);
+      const hmaVal = computeHMA(closes, 50);
+      setStateObj(prev => ({ ...prev, [timeframe]: hmaVal }));
+    } catch (e) { console.warn('HMA fetch failed', e.message); }
+  };
+
+  useEffect(() => { if (peOptionToken) fetchHMAIfNeeded(peOptionToken, peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe]);
+  useEffect(() => { if (ceOptionToken) fetchHMAIfNeeded(ceOptionToken, ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe]);
   return (
     <div className="analytics-section">
       {/* Header */}
@@ -184,6 +479,27 @@ const Analytics = () => {
           
         </div>
       </div>
+      <div className="debug-toggle" onClick={() => setDebugOpen(o=>!o)}>{debugOpen ? 'Hide Option Debug' : 'Show Option Debug'}</div>
+      {debugOpen && (
+        <div className="option-debug-panel">
+          <h4>Option Resolution Debug</h4>
+          <div className="debug-row">
+            <div className="debug-block">
+              <h5>PE Candidates</h5>
+              <ul>{debugInfo.pe.candidates.map(c => <li key={c} className={debugInfo.pe.resolved?.symbol===c? 'resolved':''}>{c}</li>)}</ul>
+              <div className="resolved-line">Resolved: {debugInfo.pe.resolved ? `${debugInfo.pe.resolved.symbol} -> ${debugInfo.pe.resolved.token} (${debugInfo.pe.resolved.method})` : '—'}</div>
+              <div className="ltp-line">LTP: {peLtp != null ? peLtp : '—'}</div>
+            </div>
+            <div className="debug-block">
+              <h5>CE Candidates</h5>
+              <ul>{debugInfo.ce.candidates.map(c => <li key={c} className={debugInfo.ce.resolved?.symbol===c? 'resolved':''}>{c}</li>)}</ul>
+              <div className="resolved-line">Resolved: {debugInfo.ce.resolved ? `${debugInfo.ce.resolved.symbol} -> ${debugInfo.ce.resolved.token} (${debugInfo.ce.resolved.method})` : '—'}</div>
+              <div className="ltp-line">LTP: {ceLtp != null ? ceLtp : '—'}</div>
+            </div>
+          </div>
+          <div className="debug-notes">If no resolution, verify actual contract symbol via backend search endpoint. Strike or expiry formatting may differ.</div>
+        </div>
+      )}
 
       {/* Main Content Grid */}
       <div className="analytics-main">
@@ -277,6 +593,7 @@ const Analytics = () => {
 
                   {/* Date Range */}
                   <div className="form-group date-group">
+                    {/* Expiry selection moved into strike cards */}
                     <div className="group-header">
                       <span className="group-title">Date Range</span>
                       {duration && (
@@ -389,8 +706,43 @@ const Analytics = () => {
                 
                 {peStrike && (
                   <div className="strike-line pe-strike">
-                    <span className="strike-label">PE Strike</span>
-                    <span className="strike-value">₹{peStrike}</span>
+                    <div className="strike-header">
+                      <span className="strike-label">PE Strike</span>
+                      <span className="strike-value">₹{peStrike}</span>
+                    </div>
+                    <div className="strike-controls">
+                      <div className="strike-ltp">LTP: {peLtp != null ? `₹${peLtp.toFixed(2)}` : '--'}</div>
+                      <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
+                        <option value="current">Current Wk</option>
+                        <option value="next">Next Wk</option>
+                      </select>
+                    </div>
+                    <div className="fib-grid">
+                      <div className="fib-item">
+                        <div className="fib-label">0 (Low)</div>
+                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels.low.toFixed(2)}` : '--'}</div>
+                      </div>
+                      <div className="fib-item">
+                        <div className="fib-label">0.5 (Mid)</div>
+                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels.mid.toFixed(2)}` : '--'}</div>
+                      </div>
+                      <div className="fib-item">
+                        <div className="fib-label">1 (High)</div>
+                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels.high.toFixed(2)}` : '--'}</div>
+                      </div>
+                      <div className="fib-item">
+                        <div className="fib-label">1.618 (Ext)</div>
+                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels.ext.toFixed(2)}` : '--'}</div>
+                      </div>
+                    </div>
+                    <div className="hma-row">
+                      <select className="hma-select" value={peTimeframe} onChange={e=>setPeTimeframe(e.target.value)}>
+                        <option value="15m">15m</option>
+                        <option value="1h">1h</option>
+                        <option value="1d">1d</option>
+                      </select>
+                      <div className="hma-value">HMA50: {peHma[peTimeframe] != null ? peHma[peTimeframe].toFixed(2) : '--'}</div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -407,8 +759,43 @@ const Analytics = () => {
                   
                   {ceStrike && (
                     <div className="strike-line ce-strike">
-                      <span className="strike-label">CE Strike</span>
-                      <span className="strike-value">₹{ceStrike}</span>
+                      <div className="strike-header">
+                        <span className="strike-label">CE Strike</span>
+                        <span className="strike-value">₹{ceStrike}</span>
+                      </div>
+                      <div className="strike-controls">
+                        <div className="strike-ltp">LTP: {ceLtp != null ? `₹${ceLtp.toFixed(2)}` : '--'}</div>
+                        <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
+                          <option value="current">Current Wk</option>
+                          <option value="next">Next Wk</option>
+                        </select>
+                      </div>
+                      <div className="fib-grid">
+                        <div className="fib-item">
+                          <div className="fib-label">0 (Low)</div>
+                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.low.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">0.5 (Mid)</div>
+                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.mid.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">1 (High)</div>
+                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.high.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">1.618 (Ext)</div>
+                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.ext.toFixed(2)}` : '--'}</div>
+                        </div>
+                      </div>
+                      <div className="hma-row">
+                        <select className="hma-select" value={ceTimeframe} onChange={e=>setCeTimeframe(e.target.value)}>
+                          <option value="15m">15m</option>
+                          <option value="1h">1h</option>
+                          <option value="1d">1d</option>
+                        </select>
+                        <div className="hma-value">HMA50: {ceHma[ceTimeframe] != null ? ceHma[ceTimeframe].toFixed(2) : '--'}</div>
+                      </div>
                     </div>
                   )}
                 </div>

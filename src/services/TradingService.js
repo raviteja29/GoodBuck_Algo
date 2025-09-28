@@ -754,12 +754,36 @@ class TradingService {
         headers: this.getAuthHeaders(),
       });
       
-      if (!response.ok) {
+      let instruments = [];
+      if (response.ok) {
+        instruments = await response.json();
+      } else {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData && errorData.error ? errorData.error : `Failed to fetch instruments for symbol ${symbol}`);
+        console.warn(`[TradingService] Symbol endpoint failed (${response.status}) for ${symbol}:`, errorData);
       }
-      
-      const instruments = await response.json();
+
+      if (!Array.isArray(instruments) || instruments.length === 0) {
+        // Fallback: search
+        const basePrefix = symbol.slice(0, 8);
+        try {
+          console.log(`[TradingService] Fallback search for ${symbol} using prefix ${basePrefix}`);
+          const searchResults = await this.searchInstruments(basePrefix);
+          // Try exact match in search results
+          const exact = searchResults.find(r => r.tradingsymbol === symbol.toUpperCase());
+            if (exact) return [exact];
+          // Heuristic partial: same strike & type at end
+          const strikeMatch = symbol.match(/(\d{3,6})(CE|PE)$/);
+          const strikeDigits = strikeMatch?.[1]; const optType = strikeMatch?.[2];
+          if (strikeDigits && optType) {
+            const partial = searchResults.find(r => r.tradingsymbol?.endsWith(`${strikeDigits}${optType}`));
+            if (partial) return [partial];
+          }
+          return [];
+        } catch (searchErr) {
+          console.warn('[TradingService] Fallback search failed:', searchErr.message);
+          return [];
+        }
+      }
       return instruments;
     } catch (error) {
       console.error(`[TradingService] Error fetching instruments by symbol: ${error.message}`);
