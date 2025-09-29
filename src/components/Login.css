@@ -124,6 +124,78 @@
   margin: 0;
 }
 
+/* Broker selection and Breeze form additions */
+.broker-select-group {
+  margin-bottom: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.broker-select-group label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #aaa;
+  font-weight: 600;
+}
+
+.broker-select {
+  background: #111;
+  color: #fff;
+  border: 1px solid #333;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.broker-select:focus {
+  border-color: #00ccff;
+}
+
+.breeze-form {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid #222;
+  border-radius: 12px;
+  padding: 1rem 1.25rem 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.breeze-row {
+  margin-bottom: 0.75rem;
+}
+
+.breeze-row input {
+  width: 100%;
+  background: #0f0f0f;
+  border: 1px solid #2d2d2d;
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  font-size: 0.9rem;
+  color: #eee;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.breeze-row input:focus {
+  border-color: #00ff88;
+  background: #131313;
+}
+
+.breeze-row input::placeholder {
+  color: #555;
+}
+
+.breeze-form .breeze-row:last-child { margin-bottom: 0.25rem; }
+
+.login-info p + p {
+  margin-top: 0.5rem;
+}
+
+.login-info .error-text { color: tomato; }
+
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }

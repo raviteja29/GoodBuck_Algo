@@ -66,6 +66,13 @@ dotenv.config();
 
 console.log('Using API Key:', process.env.KITE_API_KEY);
 console.log('Using API Secret:', process.env.KITE_API_SECRET ? '***secret redacted***' : 'MISSING');
+// Breeze key sanity check (avoid accidental whitespace)
+if (process.env.BREEZE_API_KEY && /\s/.test(process.env.BREEZE_API_KEY)) {
+  console.warn('[BREEZE] BREEZE_API_KEY contains whitespace characters – this will cause "public key does not exist" errors. Current (trimmed) length:', process.env.BREEZE_API_KEY.trim().length);
+}
+if (process.env.BREEZE_SECRET_KEY && /\s/.test(process.env.BREEZE_SECRET_KEY)) {
+  console.warn('[BREEZE] BREEZE_SECRET_KEY contains whitespace characters – remove spaces in .env');
+}
 
 const app = express();
 
@@ -173,6 +180,106 @@ app.post('/api/generate_session', async (req, res) => {
       error: err.message,
       details: 'Error initializing KiteConnect or processing session'
     });
+  }
+});
+
+// Breeze login stub (placeholder) - replace with real ICICI Breeze API integration
+app.post('/api/breeze/login', async (req, res) => {
+  try {
+    const { apiKey, apiSecret, userId, password, twoFA } = req.body || {};
+    if (!apiKey || !apiSecret || !userId || !password || !twoFA) {
+      return res.status(400).json({ error: 'Missing required fields (apiKey, apiSecret, userId, password, twoFA)' });
+    }
+    // In production: perform Breeze auth request here and obtain real access token + user details.
+    const mockAccessToken = `breeze_${Buffer.from(userId + Date.now()).toString('base64').slice(0,32)}`;
+    return res.json({
+      broker: 'breeze',
+      access_token: mockAccessToken,
+      user_id: userId,
+      user_name: userId,
+      login_time: new Date().toISOString(),
+      note: 'Stub response - replace with real Breeze API integration'
+    });
+  } catch (e) {
+    console.error('[BREEZE LOGIN STUB] Error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Breeze redirect login URL (similar to Zerodha style) - frontend will redirect user here first
+app.get('/api/breeze/login-url', (req, res) => {
+  try {
+    let appKey = process.env.BREEZE_API_KEY;
+    if (!appKey) return res.status(500).json({ error: 'BREEZE_API_KEY not configured' });
+    const raw = appKey;
+    appKey = appKey.trim();
+    if (raw !== appKey) {
+      console.warn('[BREEZE] Stripped whitespace from BREEZE_API_KEY. Original length', raw.length, 'trimmed length', appKey.length);
+    }
+    if (/\s/.test(appKey)) {
+      return res.status(400).json({ error: 'BREEZE_API_KEY contains whitespace – fix .env (no spaces)' });
+    }
+    if (appKey.length < 10) {
+      return res.status(400).json({ error: 'BREEZE_API_KEY seems too short or invalid' });
+    }
+    const url = `https://api.icicidirect.com/apiuser/login?api_key=${encodeURIComponent(appKey)}`;
+    return res.json({ url });
+  } catch (e) {
+    console.error('[BREEZE] login-url error', e.message);
+    return res.status(500).json({ error: 'Failed to construct Breeze login URL' });
+  }
+});
+
+// Exchange an API_Session (returned as query param after Breeze login redirect) for a session token + minimal profile
+app.post('/api/breeze/generate_session', async (req, res) => {
+  try {
+    const { api_session } = req.body || {};
+    if (!api_session) return res.status(400).json({ error: 'api_session required' });
+    const appKey = process.env.BREEZE_API_KEY;
+    const secret = process.env.BREEZE_SECRET_KEY;
+    if (!appKey || !secret) return res.status(500).json({ error: 'Breeze credentials not configured' });
+
+    // Per docs: Use API_Session against CustomerDetails to get SessionToken & user info.
+    // Docs show GET with JSON body; we'll follow pattern using axios.
+    const axios = (await import('axios')).default;
+
+    const payload = { SessionToken: api_session, AppKey: appKey };
+    // Customer details endpoint
+    const url = 'https://api.icicidirect.com/breezeapi/api/v1/customerdetails';
+    let customerResp;
+    try {
+      customerResp = await axios.get(url, { headers: { 'Content-Type': 'application/json' }, data: JSON.stringify(payload) });
+    } catch (err) {
+      // Some servers ignore body in GET; attempt POST fallback
+      try {
+        customerResp = await axios.post(url, JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } });
+      } catch (err2) {
+        return res.status(502).json({ error: 'Failed to fetch customer details', details: err2.message });
+      }
+    }
+
+    const raw = customerResp.data || {};
+    const successBlock = raw.Success || {};
+    // The Breeze docs mention we derive session token by decoding base64 session_token or using SessionToken; capture both possibilities
+    const sessionToken = successBlock.session_token || successBlock.SessionToken || api_session;
+    const userId = successBlock.idirect_userid || successBlock.idirect_user_id || 'breeze_user';
+    const userName = successBlock.idirect_user_name || userId;
+
+    if (!sessionToken) {
+      return res.status(500).json({ error: 'No session token returned from Breeze API' });
+    }
+
+    // For parity with existing frontend expectations, align field names
+    return res.json({
+      broker: 'breeze',
+      access_token: sessionToken,
+      user_id: userId,
+      user_name: userName,
+      meta: { received: Object.keys(successBlock), status: raw.Status }
+    });
+  } catch (e) {
+    console.error('[BREEZE SESSION EXCHANGE] Error:', e.message);
+    return res.status(500).json({ error: 'Internal error exchanging Breeze session' });
   }
 });
 
