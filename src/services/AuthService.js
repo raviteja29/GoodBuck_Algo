@@ -1,5 +1,4 @@
 // src/services/AuthService.js
-import { KiteConnect } from 'kiteconnect';
 
 class AuthService {
   getAccessToken() {
