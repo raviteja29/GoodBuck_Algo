@@ -1371,9 +1371,9 @@ wss.on('connection', (ws, req) => {
 });
 
 // Start the server
-server.listen(port, () => {
-  console.log(`Backend server running on http://localhost:${port}`);
-  console.log(`WebSocket server running on ws://localhost:${port}`);
+server.listen(port, '0.0.0.0', () => {
+  console.log(`Backend server running on port ${port}`);
+  console.log(`WebSocket server running on port ${port}`);
   // Warm instrument cache in background (non-blocking)
   loadInstruments(false, 'warm-start').catch(e => console.warn('[INSTRUMENTS] Warm load failed:', e.message));
 });
