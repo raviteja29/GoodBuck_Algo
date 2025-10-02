@@ -268,6 +268,8 @@ const Analytics = () => {
         }
       }
       
+      console.log(`[OptionSearch] Generated expiry code: ${expiryCode} for date: ${selectedExpiryDate?.toDateString()}`);
+      
       // Build the exact symbol: NIFTY25O07{strike}{type}
       const expectedSymbol = `${searchUnderlying}${expiryCode}${strike}${optionType}`;
       console.log(`[OptionSearch] Looking for exact symbol: ${expectedSymbol}`);
