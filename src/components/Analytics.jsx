@@ -213,6 +213,13 @@ const Analytics = () => {
     return { currentWeek, nextWeek };
   };
 
+  const formatExpiryCode = (date) => {
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mmm = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
+    const yy = String(date.getFullYear()).slice(-2);
+    return `${dd}${mmm}${yy}`; // e.g. 26SEP24
+  };
+
   // Memo-like derived expiry info (recomputed each render – lightweight)
   const { currentWeek: _currWeek, nextWeek: _nextWeek } = getWeeklyExpiryDates();
   const selectedExpiryDate = optionExpiry === 'next' ? _nextWeek : _currWeek;
@@ -220,13 +227,6 @@ const Analytics = () => {
     ? selectedExpiryDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
     : '—';
   const expiryCode = selectedExpiryDate ? formatExpiryCode(selectedExpiryDate) : null;
-
-  const formatExpiryCode = (date) => {
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mmm = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
-    const yy = String(date.getFullYear()).slice(-2);
-    return `${dd}${mmm}${yy}`; // e.g. 26SEP24
-  };
 
   const buildOptionSymbolCandidates = (underlyingSymbol, strike, type, expiryChoice) => {
     if (!underlyingSymbol || !strike || !type) return [];
