@@ -7,7 +7,7 @@ class AuthService {
 
   async initializeBrokers() {
     try {
-      const response = await fetch('http://https://goodbuck-algo.onrender.com/api/brokers', {
+      const response = await fetch('https://goodbuck-algo.onrender.com/api/brokers', {
         method: 'GET',
         credentials: 'include'
       });
@@ -25,7 +25,7 @@ class AuthService {
 
   async setBroker(brokerId) {
     try {
-      const response = await fetch('http://https://goodbuck-algo.onrender.com/api/brokers/set', {
+      const response = await fetch('https://goodbuck-algo.onrender.com/api/brokers/set', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -91,7 +91,7 @@ class AuthService {
       throw new Error(`Unsupported broker: ${this.currentBroker}`);
     }
 
-    const response = await fetch('http://https://goodbuck-algo.onrender.com/api/generate_session', {
+    const response = await fetch('https://goodbuck-algo.onrender.com/api/generate_session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody)
