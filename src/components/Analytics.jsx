@@ -232,36 +232,46 @@ const Analytics = () => {
     if (!underlyingSymbol || !strike || !type) return [];
     const base = baseSymbolForUnderlying(underlyingSymbol)?.replace(/\s+/g,'');
     const strikeStr = String(strike).replace(/\.\d+/, '');
-  const { currentWeek, nextWeek } = getWeeklyExpiryDates();
-  const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
+    const { currentWeek, nextWeek } = getWeeklyExpiryDates();
+    const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
     const dd = String(expiryDate.getDate()).padStart(2,'0');
     const mmm = expiryDate.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
     const yy = String(expiryDate.getFullYear()).slice(-2);
     const monthNum = String(expiryDate.getMonth()+1).padStart(2,'0');
-    const yearFull = expiryDate.getFullYear();
 
-    // Candidate formats (descending likelihood):
-    // 1. Weekly full: BASE + DD + MMM + YY + strike + type  (NIFTY30SEP25 24500 CE => NIFTY30SEP2524500CE)
-    // 2. Weekly no year: BASE + DD + MMM + strike + type    (NIFTY30SEP24500CE)
-    // 3. Compact year first two digits + strike + type? (Legacy examples like NIFTY159500CE appear to be year(15)+strike+type NO month) -> BASE + YY + strike + type
-    // 4. Monthly style: BASE + MMM + YY + strike + type      (NIFTYSEP2524500CE)
-    // 5. Alt numeric date: BASE + DD + MM + YY + strike + type (NIFTY30092524500CE)
+    console.log(`[OptionSymbol] Building candidates for ${base} ${strikeStr}${type}, expiry: ${dd}${mmm}${yy}`);
+
+    // More comprehensive candidate formats based on common Indian option naming:
     const candidates = [
+      // Standard weekly format: NIFTY01OCT2525000CE
       `${base}${dd}${mmm}${yy}${strikeStr}${type}`,
+      // Without year: NIFTY01OCT25000CE  
       `${base}${dd}${mmm}${strikeStr}${type}`,
-      `${base}${yy}${strikeStr}${type}`,
+      // Monthly format: NIFTYOCT2525000CE
       `${base}${mmm}${yy}${strikeStr}${type}`,
-      `${base}${dd}${monthNum}${yy}${strikeStr}${type}`
+      // Numeric date: NIFTY01102525000CE
+      `${base}${dd}${monthNum}${yy}${strikeStr}${type}`,
+      // Simple format: NIFTY25000CE
+      `${base}${strikeStr}${type}`,
+      // With full year: NIFTY01OCT202525000CE
+      `${base}${dd}${mmm}${expiryDate.getFullYear()}${strikeStr}${type}`,
+      // Compact: NIFTY2525000CE (year first)
+      `${base}${yy}${strikeStr}${type}`,
+      // Space separated: NIFTY 01OCT25 25000 CE (then joined)
+      `${base}${dd}${mmm}${yy}${strikeStr}${type}`.replace(/\s+/g,'')
     ];
+
+    // Add September variations
     if (mmm === 'SEP') {
-      // Some data sources may list September as SEPT
       candidates.push(
         `${base}${dd}SEPT${yy}${strikeStr}${type}`,
         `${base}${dd}SEPT${strikeStr}${type}`,
         `${base}SEPT${yy}${strikeStr}${type}`
       );
     }
-    return Array.from(new Set(candidates));
+
+    console.log(`[OptionSymbol] Generated ${candidates.length} candidates:`, candidates);
+    return Array.from(new Set(candidates)); // Remove duplicates
   };
 
   // Resolve option instrument tokens when strikes and instrument selected or expiry changes
@@ -286,6 +296,8 @@ const Analytics = () => {
         ce: { ...prev.ce, candidates: ceSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } }
       }));
       async function resolveOne(symbolList, setter, side) {
+        console.log(`[OptionResolve] Resolving ${side} from ${symbolList.length} candidates`);
+        
         for (const sym of symbolList) {
           if (cancelled) return;
           try {
@@ -306,49 +318,77 @@ const Analytics = () => {
               }
               return;
             }
-            // Fallback: broader search prefix of base + strike part
-            const basePrefix = sym.slice(0, Math.min(8, sym.length));
-            const searchRes = await TradingService.searchInstruments(basePrefix);
-            if (!cancelled && Array.isArray(searchRes)) {
-              const exact = searchRes.find(r => r.tradingsymbol === sym);
-              if (exact) {
-                const token = exact.instrument_token || exact.token;
-                console.log(`[OptionResolve] ${side} resolved via search exact: ${sym} -> token ${token}`);
+          } catch (err) {
+            console.warn(`[OptionResolve] Direct symbol search failed for ${sym}:`, err.message);
+          }
+        }
+
+        // Enhanced fallback search with multiple strategies
+        console.log(`[OptionResolve] Direct symbol matching failed for ${side}, trying broader search...`);
+        
+        try {
+          // Strategy 1: Search by underlying + strike + type
+          const strikeDigits = symbolList[0]?.match(/(\d{3,6})(CE|PE)$/)?.[1];
+          const optType = side; // 'PE' or 'CE'
+          
+          if (strikeDigits) {
+            console.log(`[OptionResolve] Searching for ${under} contracts with strike ${strikeDigits} type ${optType}`);
+            
+            // Try searching with just the base symbol
+            const searchResults = await TradingService.searchInstruments(under);
+            console.log(`[OptionResolve] Found ${searchResults.length} instruments for ${under}`);
+            
+            if (Array.isArray(searchResults) && searchResults.length > 0) {
+              // Look for exact strike and type match
+              const exactMatch = searchResults.find(r => 
+                r.tradingsymbol?.includes(strikeDigits) && 
+                r.tradingsymbol?.includes(optType) &&
+                r.instrument_type === 'OPT'
+              );
+              
+              if (exactMatch) {
+                const token = exactMatch.instrument_token || exactMatch.token;
+                console.log(`[OptionResolve] ${side} resolved via enhanced search: ${exactMatch.tradingsymbol} -> token ${token}`);
                 setter(token);
                 try {
                   const q = await TradingService.getQuote(token);
                   if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
                   if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
-                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: exactMatch.tradingsymbol, token, method: 'enhanced-search', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
                 } catch(_) {
-                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: exactMatch.tradingsymbol, token, method: 'enhanced-search', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
                 }
                 return;
               }
-              const strikeMatch = sym.match(/(\d{3,6})(CE|PE)$/);
-              const strikePart = String(strikeMatch?.[1] || '');
-              const typePart = strikeMatch?.[2] || (sym.endsWith('CE') ? 'CE' : sym.endsWith('PE') ? 'PE' : '');
-              const partial = searchRes.find(r => r.tradingsymbol?.includes(strikePart) && r.tradingsymbol?.endsWith(typePart));
-              if (partial) {
-                const token = partial.instrument_token || partial.token;
-                console.log(`[OptionResolve] ${side} resolved via search partial: ${partial.tradingsymbol} -> token ${token}`);
+              
+              // Partial match fallback
+              const partialMatch = searchResults.find(r => 
+                r.tradingsymbol?.includes(strikeDigits) && 
+                r.tradingsymbol?.includes(optType)
+              );
+              
+              if (partialMatch) {
+                const token = partialMatch.instrument_token || partialMatch.token;
+                console.log(`[OptionResolve] ${side} resolved via partial match: ${partialMatch.tradingsymbol} -> token ${token}`);
                 setter(token);
                 try {
                   const q = await TradingService.getQuote(token);
                   if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
                   if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
-                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partialMatch.tradingsymbol, token, method: 'partial-match', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
                 } catch(_) {
-                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partialMatch.tradingsymbol, token, method: 'partial-match', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
                 }
                 return;
               }
             }
-          } catch (err) {
-            console.warn(`[OptionResolve] Error for candidate ${sym}:`, err.message);
           }
+        } catch (searchErr) {
+          console.warn(`[OptionResolve] Enhanced search failed for ${side}:`, searchErr.message);
         }
-        console.warn(`[OptionResolve] Failed to resolve any candidate for ${side}`);
+        
+        console.warn(`[OptionResolve] Failed to resolve any candidate for ${side}. Available symbols in debug panel.`);
+        setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { error: 'No matching instruments found', searchedFor: symbolList } }}));
       }
       await Promise.all([
         resolveOne(peSymbols, setPeOptionToken, 'PE'),
