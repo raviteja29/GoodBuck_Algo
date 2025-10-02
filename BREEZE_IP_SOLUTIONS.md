@@ -84,7 +84,7 @@ node server-new.js
 ```
 
 Then test from browser:
-- `http://localhost:5000` (should work)
+- `http://https://goodbuck-algo.onrender.com` (should work)
 - `http://192.168.68.52:5000` (should also work)
 
 ## ⚠️ **Important Notes**

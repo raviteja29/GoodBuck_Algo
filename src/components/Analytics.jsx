@@ -199,13 +199,27 @@ const Analytics = () => {
   const getWeeklyExpiryDates = () => {
     const today = new Date();
     const current = new Date(today);
-    // Find upcoming Tuesday (day 2). If today is Tuesday, treat today as current week expiry.
-    while (current.getDay() !== 2) current.setDate(current.getDate() + 1);
+    // Weekly expiry (post change) Tuesday; if today > Tuesday (i.e., Wed-Fri), currentWeek = next Tuesday
+    // If today is Tuesday before market close treat today as current; else roll.
+    if (current.getDay() > 2 || (current.getDay() === 2 && current.getHours() >= 16)) {
+      // Move to next Tuesday baseline
+      while (current.getDay() !== 2) current.setDate(current.getDate() + 1);
+    } else if (current.getDay() < 2) {
+      while (current.getDay() !== 2) current.setDate(current.getDate() + 1);
+    }
     const currentWeek = new Date(current);
     const nextWeek = new Date(current);
     nextWeek.setDate(nextWeek.getDate() + 7);
     return { currentWeek, nextWeek };
   };
+
+  // Memo-like derived expiry info (recomputed each render – lightweight)
+  const { currentWeek: _currWeek, nextWeek: _nextWeek } = getWeeklyExpiryDates();
+  const selectedExpiryDate = optionExpiry === 'next' ? _nextWeek : _currWeek;
+  const expiryDisplay = selectedExpiryDate
+    ? selectedExpiryDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '—';
+  const expiryCode = selectedExpiryDate ? formatExpiryCode(selectedExpiryDate) : null;
 
   const formatExpiryCode = (date) => {
     const dd = String(date.getDate()).padStart(2, '0');
@@ -218,8 +232,8 @@ const Analytics = () => {
     if (!underlyingSymbol || !strike || !type) return [];
     const base = baseSymbolForUnderlying(underlyingSymbol)?.replace(/\s+/g,'');
     const strikeStr = String(strike).replace(/\.\d+/, '');
-    const { currentWeek, nextWeek } = getWeeklyExpiryDates();
-    const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
+  const { currentWeek, nextWeek } = getWeeklyExpiryDates();
+  const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
     const dd = String(expiryDate.getDate()).padStart(2,'0');
     const mmm = expiryDate.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
     const yy = String(expiryDate.getFullYear()).slice(-2);
@@ -260,12 +274,16 @@ const Analytics = () => {
   setPeLtp(null); setCeLtp(null);
       if (!selectedInstrument || !peStrike || !ceStrike) return;
       const under = selectedInstrument.tradingsymbol;
-      const peSymbols = buildOptionSymbolCandidates(under, peStrike, 'PE', optionExpiry);
-      const ceSymbols = buildOptionSymbolCandidates(under, ceStrike, 'CE', optionExpiry);
+      // Capture expiry context for this resolution cycle
+      const { currentWeek, nextWeek } = getWeeklyExpiryDates();
+      const chosenExpiryDate = optionExpiry === 'next' ? nextWeek : currentWeek;
+      const chosenExpiryCode = chosenExpiryDate ? formatExpiryCode(chosenExpiryDate) : null;
+  const peSymbols = buildOptionSymbolCandidates(under, peStrike, 'PE', optionExpiry);
+  const ceSymbols = buildOptionSymbolCandidates(under, ceStrike, 'CE', optionExpiry);
       setDebugInfo(prev => ({
         ...prev,
-        pe: { ...prev.pe, candidates: peSymbols, resolved: null },
-        ce: { ...prev.ce, candidates: ceSymbols, resolved: null }
+        pe: { ...prev.pe, candidates: peSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } },
+        ce: { ...prev.ce, candidates: ceSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } }
       }));
       async function resolveOne(symbolList, setter, side) {
         for (const sym of symbolList) {
@@ -277,7 +295,15 @@ const Analytics = () => {
               const token = res[0].instrument_token || res[0].token;
               console.log(`[OptionResolve] ${side} resolved via direct symbol: ${sym} -> token ${token}`);
               setter(token);
-              setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct'} }}));
+              // Fetch initial LTP immediately
+              try {
+                const q = await TradingService.getQuote(token);
+                if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
+                if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
+                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+              } catch(_) {
+                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+              }
               return;
             }
             // Fallback: broader search prefix of base + strike part
@@ -289,7 +315,14 @@ const Analytics = () => {
                 const token = exact.instrument_token || exact.token;
                 console.log(`[OptionResolve] ${side} resolved via search exact: ${sym} -> token ${token}`);
                 setter(token);
-                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact'} }}));
+                try {
+                  const q = await TradingService.getQuote(token);
+                  if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
+                  if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                } catch(_) {
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                }
                 return;
               }
               const strikeMatch = sym.match(/(\d{3,6})(CE|PE)$/);
@@ -300,7 +333,14 @@ const Analytics = () => {
                 const token = partial.instrument_token || partial.token;
                 console.log(`[OptionResolve] ${side} resolved via search partial: ${partial.tradingsymbol} -> token ${token}`);
                 setter(token);
-                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial'} }}));
+                try {
+                  const q = await TradingService.getQuote(token);
+                  if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
+                  if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                } catch(_) {
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                }
                 return;
               }
             }
@@ -483,17 +523,20 @@ const Analytics = () => {
       {debugOpen && (
         <div className="option-debug-panel">
           <h4>Option Resolution Debug</h4>
+          <div className="expiry-meta">Expiry: {expiryDisplay} ({optionExpiry === 'next' ? 'Next Wk' : 'Current Wk'}) {expiryCode && <span className="expiry-code-chip">{expiryCode}</span>}</div>
           <div className="debug-row">
             <div className="debug-block">
               <h5>PE Candidates</h5>
               <ul>{debugInfo.pe.candidates.map(c => <li key={c} className={debugInfo.pe.resolved?.symbol===c? 'resolved':''}>{c}</li>)}</ul>
               <div className="resolved-line">Resolved: {debugInfo.pe.resolved ? `${debugInfo.pe.resolved.symbol} -> ${debugInfo.pe.resolved.token} (${debugInfo.pe.resolved.method})` : '—'}</div>
+              {debugInfo.pe.resolved?.expiry && <div className="expiry-line">Expiry Code: {debugInfo.pe.resolved.expiry.code}</div>}
               <div className="ltp-line">LTP: {peLtp != null ? peLtp : '—'}</div>
             </div>
             <div className="debug-block">
               <h5>CE Candidates</h5>
               <ul>{debugInfo.ce.candidates.map(c => <li key={c} className={debugInfo.ce.resolved?.symbol===c? 'resolved':''}>{c}</li>)}</ul>
               <div className="resolved-line">Resolved: {debugInfo.ce.resolved ? `${debugInfo.ce.resolved.symbol} -> ${debugInfo.ce.resolved.token} (${debugInfo.ce.resolved.method})` : '—'}</div>
+              {debugInfo.ce.resolved?.expiry && <div className="expiry-line">Expiry Code: {debugInfo.ce.resolved.expiry.code}</div>}
               <div className="ltp-line">LTP: {ceLtp != null ? ceLtp : '—'}</div>
             </div>
           </div>
@@ -712,10 +755,13 @@ const Analytics = () => {
                     </div>
                     <div className="strike-controls">
                       <div className="strike-ltp">LTP: {peLtp != null ? `₹${peLtp.toFixed(2)}` : '--'}</div>
-                      <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
-                        <option value="current">Current Wk</option>
-                        <option value="next">Next Wk</option>
-                      </select>
+                      <div className="expiry-select-wrap">
+                        <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
+                          <option value="current">Current Wk</option>
+                          <option value="next">Next Wk</option>
+                        </select>
+                        <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
+                      </div>
                     </div>
                     <div className="fib-grid">
                       <div className="fib-item">
@@ -765,10 +811,13 @@ const Analytics = () => {
                       </div>
                       <div className="strike-controls">
                         <div className="strike-ltp">LTP: {ceLtp != null ? `₹${ceLtp.toFixed(2)}` : '--'}</div>
-                        <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
-                          <option value="current">Current Wk</option>
-                          <option value="next">Next Wk</option>
-                        </select>
+                        <div className="expiry-select-wrap">
+                          <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
+                            <option value="current">Current Wk</option>
+                            <option value="next">Next Wk</option>
+                          </select>
+                          <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
+                        </div>
                       </div>
                       <div className="fib-grid">
                         <div className="fib-item">

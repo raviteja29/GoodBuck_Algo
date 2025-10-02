@@ -84,7 +84,7 @@ node server-new.js
 ```
 
 ### 3.2 Check Available Brokers
-Visit: `http://localhost:5000/api/brokers`
+Visit: `http://https://goodbuck-algo.onrender.com/api/brokers`
 
 You should see both brokers listed:
 ```json

@@ -68,7 +68,7 @@ Prerequisites:
 
 ## WebSocket (Realtime)
 
-Path: `ws://localhost:5000/ws?token=api_key:access_token`
+Path: `ws://https://goodbuck-algo.onrender.com/ws?token=api_key:access_token`
 
 Messages (client → server):
 ```json

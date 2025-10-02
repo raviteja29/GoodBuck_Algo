@@ -35,7 +35,7 @@ class AuthService {
 
   async generateSession(requestToken) {
     console.log('[AuthService] Starting session generation with requestToken:', requestToken);
-    const response = await fetch('http://localhost:5000/api/generate_session', {
+    const response = await fetch('http://https://goodbuck-algo.onrender.com/api/generate_session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ request_token: requestToken })
@@ -62,7 +62,7 @@ class AuthService {
 
   // Retrieve Breeze redirect login URL from backend (hides key)
   async getBreezeLoginUrl() {
-    const r = await fetch('http://localhost:5000/api/breeze/login-url');
+    const r = await fetch('http://https://goodbuck-algo.onrender.com/api/breeze/login-url');
     if (!r.ok) throw new Error('Failed to get Breeze login URL');
     const { url } = await r.json();
     return url;
@@ -70,7 +70,7 @@ class AuthService {
 
   // Exchange Breeze API_Session for access token
   async generateBreezeSession(apiSession) {
-    const response = await fetch('http://localhost:5000/api/breeze/generate_session', {
+    const response = await fetch('http://https://goodbuck-algo.onrender.com/api/breeze/generate_session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_session: apiSession })
