@@ -8,9 +8,15 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { KiteTicker } = require('kiteconnect');
+
+// ES module __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // In-memory cache for used request_tokens
 const usedTokens = new Set();
@@ -123,7 +129,9 @@ let globalLastAccessToken = null;
 
 // 1) Enable CORS with explicit origin and credentials
 app.use(cors({
-  origin: 'http://localhost:5173', // Update this to your frontend URL if different
+  origin: process.env.NODE_ENV === 'production' 
+    ? 'https://goodbuck-algo.onrender.com'
+    : 'http://localhost:5173',
   credentials: true
 }));
 
@@ -1177,6 +1185,18 @@ app.post('/api/webhook/orders', (req, res) => {
     console.error('Error processing order webhook:', error);
     return res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
+});
+
+// Serve static files from the React app build directory
+app.use(express.static(path.join(__dirname, '../dist')));
+
+// Catch-all handler: send back React's index.html file for any non-API routes
+app.get('*', (req, res) => {
+  // Don't serve index.html for API routes
+  if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 // Initialize WebSocket server with path
