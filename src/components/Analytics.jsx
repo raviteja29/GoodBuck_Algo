@@ -389,71 +389,58 @@ const Analytics = () => {
     return () => { cancelled = true; };
   }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate]);
 
-  // LTP initial quote & polling fallback if ticks absent
+  // Subscribe to real-time option data (same approach as dashboard)
   const lastTickRef = useRef({ pe: null, ce: null });
-  const pollRef = useRef(null);
-  useEffect(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    if (!peOptionToken && !ceOptionToken) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        if (peOptionToken) {
-          const q = await TradingService.getQuote(peOptionToken);
-          if (!cancelled && q?.last_price != null) setPeLtp(q.last_price);
-        }
-        if (ceOptionToken) {
-          const q = await TradingService.getQuote(ceOptionToken);
-          if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
-        }
-      } catch(err) { console.warn('Initial option quote fetch failed', err.message); }
-      pollRef.current = setInterval(async () => {
-        const now = Date.now();
-        const needPe = peOptionToken && (!lastTickRef.current.pe || now - lastTickRef.current.pe > 20000);
-        const needCe = ceOptionToken && (!lastTickRef.current.ce || now - lastTickRef.current.ce > 20000);
-        if (!needPe && !needCe) return;
-        try {
-          if (needPe) {
-            const q = await TradingService.getQuote(peOptionToken);
-            if (!cancelled && q?.last_price != null) setPeLtp(q.last_price);
-          }
-          if (needCe) {
-            const q = await TradingService.getQuote(ceOptionToken);
-            if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
-          }
-        } catch(e){ console.warn('Polling option quote failed', e.message); }
-      }, 15000);
-    })();
-    return () => { cancelled = true; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current=null; } };
-  }, [peOptionToken, ceOptionToken]);
 
-  // Subscribe to real-time option ticks (once per token)
+  // Subscribe to real-time option ticks (same as dashboard approach)
   useEffect(() => {
     const unsubscribers = [];
+    
+    // Real-time tick handler (same logic as dashboard)
     function handleTicks(ticks) {
       if (!Array.isArray(ticks)) return;
-      ticks.forEach(t => {
-        if (t.instrument_token === peOptionToken && t.last_price != null) {
-          setPeLtp(t.last_price);
+      console.log(`[Analytics] Received ${ticks.length} ticks`);
+      
+      ticks.forEach(tick => {
+        if (!tick || !tick.instrument_token) return;
+        
+        // Update PE option LTP
+        if (tick.instrument_token === peOptionToken && tick.last_price != null) {
+          console.log(`[Analytics] PE LTP update: ${tick.last_price}`);
+          setPeLtp(tick.last_price);
           lastTickRef.current.pe = Date.now();
         }
-        if (t.instrument_token === ceOptionToken && t.last_price != null) {
-          setCeLtp(t.last_price);
+        
+        // Update CE option LTP  
+        if (tick.instrument_token === ceOptionToken && tick.last_price != null) {
+          console.log(`[Analytics] CE LTP update: ${tick.last_price}`);
+          setCeLtp(tick.last_price);
           lastTickRef.current.ce = Date.now();
         }
       });
     }
+    
+    // Subscribe to instruments (same as dashboard)
+    const tokens = [];
     if (peOptionToken && !peSubscribed.current) {
-      TradingService.subscribeToInstruments([peOptionToken]);
-      const unsub = TradingService.subscribeToTicks(handleTicks); // reused handler
-      unsubscribers.push(unsub); peSubscribed.current = true;
+      tokens.push(peOptionToken);
+      peSubscribed.current = true;
     }
     if (ceOptionToken && !ceSubscribed.current) {
-      TradingService.subscribeToInstruments([ceOptionToken]);
-      const unsub = TradingService.subscribeToTicks(handleTicks);
-      unsubscribers.push(unsub); ceSubscribed.current = true;
+      tokens.push(ceOptionToken);
+      ceSubscribed.current = true;
     }
-    return () => { unsubscribers.forEach(u => u && u()); };
+    
+    if (tokens.length > 0) {
+      console.log(`[Analytics] Subscribing to option tokens:`, tokens);
+      TradingService.subscribeToInstruments(tokens);
+      const unsub = TradingService.subscribeToTicks(handleTicks);
+      unsubscribers.push(unsub);
+    }
+    
+    return () => { 
+      unsubscribers.forEach(u => u && u()); 
+    };
   }, [peOptionToken, ceOptionToken]);
 
   // HMA computation helpers
