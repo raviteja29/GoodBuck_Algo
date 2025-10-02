@@ -228,68 +228,120 @@ const Analytics = () => {
     : '—';
   const expiryCode = selectedExpiryDate ? formatExpiryCode(selectedExpiryDate) : null;
 
-  const buildOptionSymbolCandidates = (underlyingSymbol, strike, type, expiryChoice) => {
-    if (!underlyingSymbol || !strike || !type) return [];
-    const base = baseSymbolForUnderlying(underlyingSymbol)?.replace(/\s+/g,'');
-    const strikeStr = String(strike).replace(/\.\d+/, '');
-    const { currentWeek, nextWeek } = getWeeklyExpiryDates();
-    const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
-    const dd = String(expiryDate.getDate()).padStart(2,'0');
-    const mmm = expiryDate.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
-    const yy = String(expiryDate.getFullYear()).slice(-2);
-    const monthNum = String(expiryDate.getMonth()+1).padStart(2,'0');
-
-    console.log(`[OptionSymbol] Building candidates for ${base} ${strikeStr}${type}, expiry: ${dd}${mmm}${yy}`);
-
-    // More comprehensive candidate formats based on common Indian option naming:
-    const candidates = [
-      // Standard weekly format: NIFTY01OCT2525000CE
-      `${base}${dd}${mmm}${yy}${strikeStr}${type}`,
-      // Without year: NIFTY01OCT25000CE  
-      `${base}${dd}${mmm}${strikeStr}${type}`,
-      // Monthly format: NIFTYOCT2525000CE
-      `${base}${mmm}${yy}${strikeStr}${type}`,
-      // Numeric date: NIFTY01102525000CE
-      `${base}${dd}${monthNum}${yy}${strikeStr}${type}`,
-      // Simple format: NIFTY25000CE
-      `${base}${strikeStr}${type}`,
-      // With full year: NIFTY01OCT202525000CE
-      `${base}${dd}${mmm}${expiryDate.getFullYear()}${strikeStr}${type}`,
-      // Compact: NIFTY2525000CE (year first)
-      `${base}${yy}${strikeStr}${type}`,
-      // Space separated: NIFTY 01OCT25 25000 CE (then joined)
-      `${base}${dd}${mmm}${yy}${strikeStr}${type}`.replace(/\s+/g,'')
-    ];
-
-    // Add September variations
-    if (mmm === 'SEP') {
-      candidates.push(
-        `${base}${dd}SEPT${yy}${strikeStr}${type}`,
-        `${base}${dd}SEPT${strikeStr}${type}`,
-        `${base}SEPT${yy}${strikeStr}${type}`
-      );
+  // Simple approach: Use direct search like positions API does
+  const searchForOption = async (underlying, strike, optionType, expiryChoice) => {
+    try {
+      console.log(`[OptionSearch] Searching for ${underlying} ${strike}${optionType} options`);
+      
+      // Search broadly for the underlying instrument (same as positions API)
+      const searchResults = await TradingService.searchInstruments(underlying);
+      console.log(`[OptionSearch] Found ${searchResults.length} total instruments for ${underlying}`);
+      
+      if (!searchResults.length) return null;
+      
+      // Filter for option contracts with matching strike and type
+      const optionContracts = searchResults.filter(instrument => {
+        const symbol = instrument.tradingsymbol || '';
+        const isOption = instrument.instrument_type === 'OPT' || symbol.includes('CE') || symbol.includes('PE');
+        const hasStrike = symbol.includes(String(strike));
+        const hasType = symbol.includes(optionType);
+        
+        return isOption && hasStrike && hasType;
+      });
+      
+      console.log(`[OptionSearch] Found ${optionContracts.length} option contracts:`, 
+        optionContracts.map(c => c.tradingsymbol));
+      
+      if (optionContracts.length === 0) return null;
+      
+      // If multiple contracts found, try to pick the most relevant one
+      // Prefer weekly contracts that are closer to current date
+      const bestMatch = optionContracts.reduce((best, current) => {
+        // Simple heuristic: shorter symbol names are often weekly contracts
+        if (!best) return current;
+        return current.tradingsymbol.length < best.tradingsymbol.length ? current : best;
+      });
+      
+      console.log(`[OptionSearch] Selected best match:`, bestMatch.tradingsymbol);
+      return bestMatch;
+      
+    } catch (error) {
+      console.error(`[OptionSearch] Search failed:`, error);
+      return null;
     }
-
-    console.log(`[OptionSymbol] Generated ${candidates.length} candidates:`, candidates);
-    return Array.from(new Set(candidates)); // Remove duplicates
   };
 
   // Resolve option instrument tokens when strikes and instrument selected or expiry changes
   useEffect(() => {
     let cancelled = false;
     async function resolveTokens() {
-  setPeOptionToken(null); setCeOptionToken(null);
+      setPeOptionToken(null); setCeOptionToken(null);
       setPeFibLevels(null); setCeFibLevels(null);
       peSubscribed.current = false; ceSubscribed.current = false;
-  setPeLtp(null); setCeLtp(null);
+      setPeLtp(null); setCeLtp(null);
       if (!selectedInstrument || !peStrike || !ceStrike) return;
+      
       const under = selectedInstrument.tradingsymbol;
       // Capture expiry context for this resolution cycle
       const { currentWeek, nextWeek } = getWeeklyExpiryDates();
       const chosenExpiryDate = optionExpiry === 'next' ? nextWeek : currentWeek;
       const chosenExpiryCode = chosenExpiryDate ? formatExpiryCode(chosenExpiryDate) : null;
-  const peSymbols = buildOptionSymbolCandidates(under, peStrike, 'PE', optionExpiry);
-  const ceSymbols = buildOptionSymbolCandidates(under, ceStrike, 'CE', optionExpiry);
+      
+      setDebugInfo(prev => ({
+        ...prev,
+        pe: { ...prev.pe, candidates: [`Searching for ${under} ${peStrike}PE options...`], resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } },
+        ce: { ...prev.ce, candidates: [`Searching for ${under} ${ceStrike}CE options...`], resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } }
+      }));
+
+      // Use simple search approach (same as positions API)
+      try {
+        // Search for PE option
+        const peOption = await searchForOption(under, peStrike, 'PE', optionExpiry);
+        if (peOption) {
+          const token = peOption.instrument_token || peOption.token;
+          console.log(`[OptionResolve] PE resolved: ${peOption.tradingsymbol} -> token ${token}`);
+          setPeOptionToken(token);
+          
+          // Fetch initial LTP
+          try {
+            const q = await TradingService.getQuote(token);
+            if (q?.last_price != null) setPeLtp(q.last_price);
+            setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { symbol: peOption.tradingsymbol, token, method: 'direct-search', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+          } catch(_) {
+            setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { symbol: peOption.tradingsymbol, token, method: 'direct-search', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+          }
+        } else {
+          setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { error: 'No PE option found' } }}));
+        }
+
+        // Search for CE option  
+        const ceOption = await searchForOption(under, ceStrike, 'CE', optionExpiry);
+        if (ceOption) {
+          const token = ceOption.instrument_token || ceOption.token;
+          console.log(`[OptionResolve] CE resolved: ${ceOption.tradingsymbol} -> token ${token}`);
+          setCeOptionToken(token);
+          
+          // Fetch initial LTP
+          try {
+            const q = await TradingService.getQuote(token);
+            if (q?.last_price != null) setCeLtp(q.last_price);
+            setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { symbol: ceOption.tradingsymbol, token, method: 'direct-search', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+          } catch(_) {
+            setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { symbol: ceOption.tradingsymbol, token, method: 'direct-search', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+          }
+        } else {
+          setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { error: 'No CE option found' } }}));
+        }
+        
+      } catch (error) {
+        console.error('[OptionResolve] Resolution failed:', error);
+        setDebugInfo(prev => ({
+          ...prev,
+          pe: { ...prev.pe, resolved: { error: error.message } },
+          ce: { ...prev.ce, resolved: { error: error.message } }
+        }));
+      }
+    }
       setDebugInfo(prev => ({
         ...prev,
         pe: { ...prev.pe, candidates: peSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } },
