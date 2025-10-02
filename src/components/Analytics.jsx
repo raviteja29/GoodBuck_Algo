@@ -243,13 +243,29 @@ const Analytics = () => {
       const { currentWeek: _currWeek, nextWeek: _nextWeek } = getWeeklyExpiryDates();
       const selectedExpiryDate = expiryChoice === 'next' ? _nextWeek : _currWeek;
       
-      // Build expiry code in format like "25O07" for Oct 7, 2025
+      // Build expiry code based on Kite format
+      // Weekly: NIFTY25O07, NIFTY25O14, NIFTY25O20 (first letter + date)
+      // Monthly: NIFTY25OCT (full month for last week)
       let expiryCode = '';
       if (selectedExpiryDate) {
         const year = selectedExpiryDate.getFullYear().toString().slice(-2); // "25"
-        const month = selectedExpiryDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase().charAt(0); // "O" for Oct
-        const day = selectedExpiryDate.getDate().toString().padStart(2, '0'); // "07"
-        expiryCode = `${year}${month}${day}`;
+        const day = selectedExpiryDate.getDate();
+        const month = selectedExpiryDate.getMonth(); // 0-based, so October = 9
+        
+        // Check if this is the last week of the month (monthly expiry)
+        const lastDayOfMonth = new Date(selectedExpiryDate.getFullYear(), month + 1, 0).getDate();
+        const isLastWeek = day > lastDayOfMonth - 7;
+        
+        if (isLastWeek) {
+          // Monthly expiry: use full month name
+          const monthName = selectedExpiryDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
+          expiryCode = `${year}${monthName}`;
+        } else {
+          // Weekly expiry: use first letter of month + date
+          const monthLetter = selectedExpiryDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase().charAt(0);
+          const dayPadded = day.toString().padStart(2, '0');
+          expiryCode = `${year}${monthLetter}${dayPadded}`;
+        }
       }
       
       // Build the exact symbol: NIFTY25O07{strike}{type}
