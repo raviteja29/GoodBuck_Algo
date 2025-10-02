@@ -599,14 +599,7 @@ const Analytics = () => {
   useEffect(() => { if (peOptionToken) fetchHMAIfNeeded(peOptionToken, peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe]);
   useEffect(() => { if (ceOptionToken) fetchHMAIfNeeded(ceOptionToken, ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe]);
   
-  // Debug LTP changes
-  useEffect(() => {
-    console.log(`[Analytics Debug] PE LTP changed:`, peLtp);
-  }, [peLtp]);
-  
-  useEffect(() => {
-    console.log(`[Analytics Debug] CE LTP changed:`, ceLtp);
-  }, [ceLtp]);
+
 
   return (
     <div className="analytics-section">
@@ -855,7 +848,6 @@ const Analytics = () => {
                       <span className="strike-value">₹{peStrike}</span>
                     </div>
                     <div className="strike-controls">
-                      <div style={{fontSize: '10px', color: '#666'}}>Debug: peLtp={String(peLtp)} type={typeof peLtp}</div>
                       <div className="strike-ltp">LTP: {peLtp != null ? `₹${peLtp.toFixed(2)}` : '--'}</div>
                       <div className="expiry-select-wrap">
                         <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
@@ -912,7 +904,6 @@ const Analytics = () => {
                         <span className="strike-value">₹{ceStrike}</span>
                       </div>
                       <div className="strike-controls">
-                        <div style={{fontSize: '10px', color: '#666'}}>Debug: ceLtp={String(ceLtp)} type={typeof ceLtp}</div>
                         <div className="strike-ltp">LTP: {ceLtp != null ? `₹${ceLtp.toFixed(2)}` : '--'}</div>
                         <div className="expiry-select-wrap">
                           <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>

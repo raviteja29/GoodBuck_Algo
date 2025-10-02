@@ -1071,6 +1071,44 @@ app.get('/api/instruments/cache/status', (req, res) => {
   });
 });
 
+// Fresh instruments endpoint with daily caching
+app.get('/api/instruments/fresh', async (req, res) => {
+  try {
+    const { exchange } = req.query;
+    
+    console.log(`[/api/instruments/fresh] Fetching fresh instruments${exchange ? ` for ${exchange}` : ''}`);
+    
+    // Force fresh load to ensure we get the latest instruments
+    const instruments = await loadInstruments(true, 'fresh-request');
+    
+    if (!instruments || !Array.isArray(instruments)) {
+      return res.status(500).json({ error: 'Failed to load instruments data' });
+    }
+    
+    // Filter by exchange if specified
+    let filteredInstruments = instruments;
+    if (exchange) {
+      filteredInstruments = instruments.filter(inst => 
+        inst.exchange && inst.exchange.toUpperCase() === exchange.toUpperCase()
+      );
+      console.log(`[/api/instruments/fresh] Filtered ${filteredInstruments.length} instruments for ${exchange}`);
+    }
+    
+    // Sort by tradingsymbol for consistent results
+    filteredInstruments.sort((a, b) => (a.tradingsymbol || '').localeCompare(b.tradingsymbol || ''));
+    
+    console.log(`[/api/instruments/fresh] Returning ${filteredInstruments.length} instruments`);
+    res.json(filteredInstruments);
+    
+  } catch (error) {
+    console.error('[/api/instruments/fresh] Error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch fresh instruments',
+      details: error.message 
+    });
+  }
+});
+
 // Ticker status endpoint
 app.get('/api/ticker/status', (req, res) => {
   const now = Date.now();

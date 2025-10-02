@@ -15,6 +15,56 @@ const connectionStatusListeners = new Set();
 // Cache for quotes data
 let lastQuotes = new Map();
 
+// Instruments cache with daily refresh
+const instrumentsCache = {
+  data: null,
+  date: null,
+  exchanges: new Map(), // Cache per exchange
+  
+  // Check if cache is valid for today
+  isValid() {
+    const today = new Date().toDateString();
+    return this.date === today && this.data !== null;
+  },
+  
+  // Check if exchange-specific cache is valid
+  isExchangeValid(exchange) {
+    const today = new Date().toDateString();
+    const exchangeCache = this.exchanges.get(exchange);
+    return exchangeCache && exchangeCache.date === today && exchangeCache.data !== null;
+  },
+  
+  // Clear cache
+  clear() {
+    this.data = null;
+    this.date = null;
+    this.exchanges.clear();
+    console.log('[InstrumentsCache] Cache cleared');
+  },
+  
+  // Set cache data
+  set(data) {
+    this.data = data;
+    this.date = new Date().toDateString();
+    console.log(`[InstrumentsCache] Cached ${data?.length || 0} instruments for ${this.date}`);
+  },
+  
+  // Set exchange-specific cache
+  setExchange(exchange, data) {
+    this.exchanges.set(exchange, {
+      data: data,
+      date: new Date().toDateString()
+    });
+    console.log(`[InstrumentsCache] Cached ${data?.length || 0} instruments for ${exchange}`);
+  },
+  
+  // Get exchange-specific cache
+  getExchange(exchange) {
+    const exchangeCache = this.exchanges.get(exchange);
+    return exchangeCache?.data || null;
+  }
+};
+
 // Kite API key (replace with your actual API key or move to environment variables)
 const apiKey = 'mt23bk4vqz8uryv2';
 
@@ -429,6 +479,30 @@ class TradingService {
   }
 
   /**
+   * Clear instruments cache (e.g., for manual refresh or debugging)
+   */
+  clearInstrumentsCache() {
+    instrumentsCache.clear();
+    console.log('[TradingService] Instruments cache cleared manually');
+  }
+
+  /**
+   * Get cache status for debugging
+   */
+  getCacheStatus() {
+    return {
+      isValid: instrumentsCache.isValid(),
+      date: instrumentsCache.date,
+      itemCount: instrumentsCache.data?.length || 0,
+      exchanges: Array.from(instrumentsCache.exchanges.keys()).map(exchange => ({
+        exchange,
+        isValid: instrumentsCache.isExchangeValid(exchange),
+        itemCount: instrumentsCache.getExchange(exchange)?.length || 0
+      }))
+    };
+  }
+
+  /**
    * Subscribe to real-time ticks
    */
   subscribeToTicks(callback) {
@@ -629,27 +703,163 @@ class TradingService {
   }
 
   /**
-   * Search for instruments
+   * Get fresh instruments from Kite API with daily caching
+   * @returns {Promise<Array>} Array of all instruments
    */
-  async searchInstruments(query) {
+  async getFreshInstruments() {
     try {
-      console.log(`[TradingService] Searching for instruments: ${query}`);
+      // Check if we have valid cached data
+      if (instrumentsCache.isValid()) {
+        console.log(`[TradingService] Using cached instruments (${instrumentsCache.data.length} items)`);
+        return instrumentsCache.data;
+      }
       
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/search?query=${encodeURIComponent(query)}`, {
+      console.log('[TradingService] Fetching fresh instruments from Kite API');
+      
+      const response = await fetch('https://goodbuck-algo.onrender.com/api/instruments/fresh', {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
       
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error(`[TradingService] Search error:`, errorData);
-        throw new Error(errorData && errorData.error ? errorData.error : 'Failed to search instruments');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch fresh instruments');
       }
       
-      const results = await response.json();
-      console.log(`[TradingService] Found ${results.length} instruments`);
-      return results;
+      const instruments = await response.json();
+      console.log(`[TradingService] Fetched ${instruments.length} fresh instruments`);
+      
+      // Cache the data
+      instrumentsCache.set(instruments);
+      
+      return instruments;
+    } catch (error) {
+      console.error('[TradingService] Error fetching fresh instruments:', error);
+      
+      // If we have stale cached data, use it as fallback
+      if (instrumentsCache.data) {
+        console.warn('[TradingService] Using stale cached instruments as fallback');
+        return instrumentsCache.data;
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Get instruments filtered by exchange with caching
+   * @param {string} exchange - Exchange name (NSE, BSE, NFO, etc.)
+   * @returns {Promise<Array>} Array of instruments for the exchange
+   */
+  async getInstrumentsByExchange(exchange) {
+    try {
+      // Check if we have valid cached data for this exchange
+      if (instrumentsCache.isExchangeValid(exchange)) {
+        const cached = instrumentsCache.getExchange(exchange);
+        console.log(`[TradingService] Using cached instruments for ${exchange} (${cached.length} items)`);
+        return cached;
+      }
+      
+      console.log(`[TradingService] Fetching fresh instruments for ${exchange}`);
+      
+      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/fresh?exchange=${exchange}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: this.getAuthHeaders(),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData && errorData.error ? errorData.error : `Failed to fetch instruments for ${exchange}`);
+      }
+      
+      const instruments = await response.json();
+      console.log(`[TradingService] Fetched ${instruments.length} fresh instruments for ${exchange}`);
+      
+      // Cache the exchange-specific data
+      instrumentsCache.setExchange(exchange, instruments);
+      
+      return instruments;
+    } catch (error) {
+      console.error(`[TradingService] Error fetching instruments for ${exchange}:`, error);
+      
+      // If we have stale cached data for this exchange, use it as fallback
+      const staleData = instrumentsCache.getExchange(exchange);
+      if (staleData) {
+        console.warn(`[TradingService] Using stale cached instruments for ${exchange} as fallback`);
+        return staleData;
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Search for instruments with smart caching and filtering
+   */
+  async searchInstruments(query) {
+    try {
+      console.log(`[TradingService] Searching for instruments: ${query}`);
+      
+      // For specific patterns like "NIFTY25O07", use targeted search
+      const isOptionPattern = /^[A-Z]+\d{2}[A-Z]\d{2}/.test(query);
+      
+      if (isOptionPattern) {
+        // Extract the underlying and use NFO exchange for options
+        const underlying = query.match(/^([A-Z]+)/)?.[1];
+        console.log(`[TradingService] Detected option pattern, targeting NFO for underlying: ${underlying}`);
+        
+        try {
+          // Get NFO instruments (options exchange)
+          const nfoInstruments = await this.getInstrumentsByExchange('NFO');
+          
+          // Filter for the specific query pattern
+          const matches = nfoInstruments.filter(instrument => {
+            const symbol = instrument.tradingsymbol || '';
+            return symbol.includes(query) || symbol.startsWith(query);
+          });
+          
+          console.log(`[TradingService] Found ${matches.length} NFO matches for ${query}`);
+          return matches;
+        } catch (nfoError) {
+          console.warn('[TradingService] NFO search failed, falling back to general search');
+        }
+      }
+      
+      // For general queries, try the search endpoint first
+      try {
+        const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/search?query=${encodeURIComponent(query)}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: this.getAuthHeaders(),
+        });
+        
+        if (response.ok) {
+          const results = await response.json();
+          console.log(`[TradingService] Search endpoint found ${results.length} instruments for ${query}`);
+          return results;
+        }
+      } catch (searchError) {
+        console.warn('[TradingService] Search endpoint failed, falling back to cached search');
+      }
+      
+      // Fallback: search in cached instruments
+      const allInstruments = await this.getFreshInstruments();
+      const queryLower = query.toLowerCase();
+      
+      const matches = allInstruments.filter(instrument => {
+        const symbol = (instrument.tradingsymbol || '').toLowerCase();
+        const name = (instrument.name || '').toLowerCase();
+        
+        return symbol.includes(queryLower) || 
+               name.includes(queryLower) ||
+               symbol.startsWith(queryLower);
+      });
+      
+      console.log(`[TradingService] Cached search found ${matches.length} instruments for ${query}`);
+      return matches;
+      
     } catch (error) {
       console.error('Error searching instruments:', error);
       throw error;
