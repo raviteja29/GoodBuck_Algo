@@ -228,67 +228,71 @@ const Analytics = () => {
     : '—';
   const expiryCode = selectedExpiryDate ? formatExpiryCode(selectedExpiryDate) : null;
 
-  // Simple approach: Use direct search like positions API does
+  // Build exact option symbol based on Kite format: NIFTY25O07{strike}{type}
   const searchForOption = async (underlying, strike, optionType, expiryChoice) => {
     try {
-      // Map display names to option search terms
       const underlyingMap = {
         'NIFTY 50': 'NIFTY',
-        'BANKNIFTY': 'BANKNIFTY',
+        'BANKNIFTY': 'BANKNIFTY', 
         'FINNIFTY': 'FINNIFTY'
       };
       
       const searchUnderlying = underlyingMap[underlying] || underlying;
-      console.log(`[OptionSearch] Searching for ${searchUnderlying} ${strike}${optionType} options (mapped from ${underlying})`);
       
-      // Search broadly for the underlying instrument (same as positions API)
+      // Get expiry date and build the date code
+      const { currentWeek: _currWeek, nextWeek: _nextWeek } = getWeeklyExpiryDates();
+      const selectedExpiryDate = expiryChoice === 'next' ? _nextWeek : _currWeek;
+      
+      // Build expiry code in format like "25O07" for Oct 7, 2025
+      let expiryCode = '';
+      if (selectedExpiryDate) {
+        const year = selectedExpiryDate.getFullYear().toString().slice(-2); // "25"
+        const month = selectedExpiryDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase().charAt(0); // "O" for Oct
+        const day = selectedExpiryDate.getDate().toString().padStart(2, '0'); // "07"
+        expiryCode = `${year}${month}${day}`;
+      }
+      
+      // Build the exact symbol: NIFTY25O07{strike}{type}
+      const expectedSymbol = `${searchUnderlying}${expiryCode}${strike}${optionType}`;
+      console.log(`[OptionSearch] Looking for exact symbol: ${expectedSymbol}`);
+      
+      // Search for instruments
       const searchResults = await TradingService.searchInstruments(searchUnderlying);
       console.log(`[OptionSearch] Found ${searchResults.length} total instruments for ${searchUnderlying}`);
       
       if (!searchResults.length) return null;
       
-      // Filter for option contracts with matching strike and type
-      const optionContracts = searchResults.filter(instrument => {
+      // First try exact match
+      let exactMatch = searchResults.find(instrument => 
+        instrument.tradingsymbol === expectedSymbol
+      );
+      
+      if (exactMatch) {
+        console.log(`[OptionSearch] Found exact match: ${exactMatch.tradingsymbol}`);
+        return exactMatch;
+      }
+      
+      // If no exact match, try partial matching with strike and type
+      const partialMatches = searchResults.filter(instrument => {
         const symbol = instrument.tradingsymbol || '';
         const isOption = instrument.instrument_type === 'OPT' || symbol.includes('CE') || symbol.includes('PE');
         const hasStrike = symbol.includes(String(strike));
         const hasType = symbol.includes(optionType);
         
-        console.log(`[OptionSearch] Checking ${symbol}: isOption=${isOption}, hasStrike=${hasStrike} (looking for ${strike}), hasType=${hasType} (looking for ${optionType})`);
-        
         return isOption && hasStrike && hasType;
       });
       
-      console.log(`[OptionSearch] Found ${optionContracts.length} option contracts for ${strike}${optionType}:`, 
-        optionContracts.map(c => c.tradingsymbol));
+      console.log(`[OptionSearch] Partial matches for ${strike}${optionType}:`, 
+        partialMatches.map(c => c.tradingsymbol));
       
-      // Also log some examples of what was filtered out
-      const sampleFilteredOut = searchResults
-        .filter(instrument => {
-          const symbol = instrument.tradingsymbol || '';
-          return (symbol.includes('CE') || symbol.includes('PE')) && 
-                 symbol.includes(String(strike)) && 
-                 !symbol.includes(optionType);
-        })
-        .slice(0, 3);
-      
-      if (sampleFilteredOut.length > 0) {
-        console.log(`[OptionSearch] Sample contracts with same strike but different type:`, 
-          sampleFilteredOut.map(c => c.tradingsymbol));
+      if (partialMatches.length > 0) {
+        const bestMatch = partialMatches[0]; // Take first match
+        console.log(`[OptionSearch] Using partial match: ${bestMatch.tradingsymbol}`);
+        return bestMatch;
       }
       
-      if (optionContracts.length === 0) return null;
-      
-      // If multiple contracts found, try to pick the most relevant one
-      // Prefer weekly contracts that are closer to current date
-      const bestMatch = optionContracts.reduce((best, current) => {
-        // Simple heuristic: shorter symbol names are often weekly contracts
-        if (!best) return current;
-        return current.tradingsymbol.length < best.tradingsymbol.length ? current : best;
-      });
-      
-      console.log(`[OptionSearch] Selected best match:`, bestMatch.tradingsymbol);
-      return bestMatch;
+      console.log(`[OptionSearch] No matches found for ${expectedSymbol}`);
+      return null;
       
     } catch (error) {
       console.error(`[OptionSearch] Search failed:`, error);
