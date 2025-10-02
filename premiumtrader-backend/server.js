@@ -8,16 +8,118 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { KiteTicker } = require('kiteconnect');
 
 // In-memory cache for used request_tokens
 const usedTokens = new Set();
+// Quote cache and ticker state
+const quoteCache = new Map(); // instrument_token -> tick with cacheTs
+const subscribedTokens = new Set();
+let ticker = null;
+let tickerAccessToken = null;
+
+function initTickerIfPossible(accessToken) {
+  if (!accessToken) return;
+  if (ticker && tickerAccessToken === accessToken) return; // already initialized
+  tickerAccessToken = accessToken;
+  if (ticker) { try { ticker.disconnect(); } catch(_) {} ticker = null; }
+  try {
+    console.log('[TICKER] Initializing');
+    ticker = new KiteTicker({
+      api_key: process.env.KITE_API_KEY,
+      access_token: accessToken,
+      reconnect: true,
+      reconnect_max_delay: 60,
+      reconnect_max_tries: 30,
+      max_retry: 30,
+      debug: false,
+      ws_options: { rejectUnauthorized: false }
+    });
+    ticker.on('connect', () => {
+      console.log('[TICKER] Connected');
+      if (subscribedTokens.size) {
+        const arr = Array.from(subscribedTokens);
+        try { ticker.subscribe(arr); ticker.setMode(ticker.MODE_FULL, arr); } catch(e){ console.error('[TICKER] resubscribe failed', e.message); }
+      }
+    });
+    ticker.on('ticks', (ticks=[]) => {
+      if (!Array.isArray(ticks) || !ticks.length) return;
+      const now = Date.now();
+      ticks.forEach(t => { if (t && t.instrument_token) quoteCache.set(t.instrument_token, { ...t, cacheTs: now }); });
+      if (wss && wss.clients && wss.clients.size) {
+        const msg = JSON.stringify({ type: 'ticks', data: ticks });
+        let sent=0; wss.clients.forEach(c => { if (c.readyState===WebSocket.OPEN) { try { c.send(msg); sent++; } catch(_){} } });
+        if (sent) console.log(`[TICKER] Broadcast ${ticks.length} ticks to ${sent} clients`);
+      }
+    });
+    ticker.on('error', e => console.error('[TICKER] Error', e.message));
+    ticker.on('disconnect', r => console.warn('[TICKER] Disconnected', r));
+    ticker.connect();
+  } catch (e) {
+    console.error('[TICKER] Init failed', e.message);
+  }
+}
 
 dotenv.config();
 
 console.log('Using API Key:', process.env.KITE_API_KEY);
 console.log('Using API Secret:', process.env.KITE_API_SECRET ? '***secret redacted***' : 'MISSING');
+// Breeze key sanity check (avoid accidental whitespace)
+if (process.env.BREEZE_API_KEY && /\s/.test(process.env.BREEZE_API_KEY)) {
+  console.warn('[BREEZE] BREEZE_API_KEY contains whitespace characters – this will cause "public key does not exist" errors. Current (trimmed) length:', process.env.BREEZE_API_KEY.trim().length);
+}
+if (process.env.BREEZE_SECRET_KEY && /\s/.test(process.env.BREEZE_SECRET_KEY)) {
+  console.warn('[BREEZE] BREEZE_SECRET_KEY contains whitespace characters – remove spaces in .env');
+}
 
 const app = express();
+
+// In-memory instrument cache (15 min TTL)
+// Instrument cache + performance instrumentation
+let instrumentCache = { data: null, timestamp: 0, warmed: false };
+let instrumentLoadPromise = null; // prevent concurrent duplicate loads
+const INSTRUMENT_TTL_MS = 60 * 60 * 1000; // 1 hour (trading session scope)
+
+async function loadInstruments(force = false, reason = 'api-call') {
+  const now = Date.now();
+  // Serve fresh cache
+  if (!force && instrumentCache.data && (now - instrumentCache.timestamp) < INSTRUMENT_TTL_MS) {
+    return instrumentCache.data;
+  }
+  // Reuse in-flight promise if any
+  if (instrumentLoadPromise && !force) {
+    return instrumentLoadPromise;
+  }
+  const start = Date.now();
+  console.log(`[INSTRUMENTS] Loading start (reason=${reason}) force=${force} …`);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  if (globalLastAccessToken) kc.setAccessToken(globalLastAccessToken);
+  instrumentLoadPromise = kc.getInstruments()
+    .then(list => {
+      const duration = Date.now() - start;
+      instrumentCache = { data: list, timestamp: Date.now(), warmed: true };
+      console.log(`[INSTRUMENTS] Loaded ${list.length} instruments in ${duration} ms (reason=${reason})`);
+      return list;
+    })
+    .catch(e => {
+      const duration = Date.now() - start;
+      console.error(`[INSTRUMENTS] Load failed after ${duration} ms: ${e.message}`);
+      if (instrumentCache.data) {
+        console.warn('[INSTRUMENTS] Serving stale cache');
+        return instrumentCache.data;
+      }
+      throw e;
+    })
+    .finally(() => {
+      instrumentLoadPromise = null;
+    });
+  return instrumentLoadPromise;
+}
+
+// Track last provided access token to reuse for instrument fetch caching
+let globalLastAccessToken = null;
 
 // 1) Enable CORS with explicit origin and credentials
 app.use(cors({
@@ -61,7 +163,9 @@ app.post('/api/generate_session', async (req, res) => {
         user_name: sessionData.user_name,
         login_time: new Date().toISOString()
       });
-      return res.json(sessionData);
+  globalLastAccessToken = sessionData.access_token;
+  initTickerIfPossible(globalLastAccessToken);
+  return res.json(sessionData);
     } catch (apiErr) {
       console.error('KiteConnect API Error:', apiErr);
       return res.status(400).json({ 
@@ -76,6 +180,106 @@ app.post('/api/generate_session', async (req, res) => {
       error: err.message,
       details: 'Error initializing KiteConnect or processing session'
     });
+  }
+});
+
+// Breeze login stub (placeholder) - replace with real ICICI Breeze API integration
+app.post('/api/breeze/login', async (req, res) => {
+  try {
+    const { apiKey, apiSecret, userId, password, twoFA } = req.body || {};
+    if (!apiKey || !apiSecret || !userId || !password || !twoFA) {
+      return res.status(400).json({ error: 'Missing required fields (apiKey, apiSecret, userId, password, twoFA)' });
+    }
+    // In production: perform Breeze auth request here and obtain real access token + user details.
+    const mockAccessToken = `breeze_${Buffer.from(userId + Date.now()).toString('base64').slice(0,32)}`;
+    return res.json({
+      broker: 'breeze',
+      access_token: mockAccessToken,
+      user_id: userId,
+      user_name: userId,
+      login_time: new Date().toISOString(),
+      note: 'Stub response - replace with real Breeze API integration'
+    });
+  } catch (e) {
+    console.error('[BREEZE LOGIN STUB] Error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Breeze redirect login URL (similar to Zerodha style) - frontend will redirect user here first
+app.get('/api/breeze/login-url', (req, res) => {
+  try {
+    let appKey = process.env.BREEZE_API_KEY;
+    if (!appKey) return res.status(500).json({ error: 'BREEZE_API_KEY not configured' });
+    const raw = appKey;
+    appKey = appKey.trim();
+    if (raw !== appKey) {
+      console.warn('[BREEZE] Stripped whitespace from BREEZE_API_KEY. Original length', raw.length, 'trimmed length', appKey.length);
+    }
+    if (/\s/.test(appKey)) {
+      return res.status(400).json({ error: 'BREEZE_API_KEY contains whitespace – fix .env (no spaces)' });
+    }
+    if (appKey.length < 10) {
+      return res.status(400).json({ error: 'BREEZE_API_KEY seems too short or invalid' });
+    }
+    const url = `https://api.icicidirect.com/apiuser/login?api_key=${encodeURIComponent(appKey)}`;
+    return res.json({ url });
+  } catch (e) {
+    console.error('[BREEZE] login-url error', e.message);
+    return res.status(500).json({ error: 'Failed to construct Breeze login URL' });
+  }
+});
+
+// Exchange an API_Session (returned as query param after Breeze login redirect) for a session token + minimal profile
+app.post('/api/breeze/generate_session', async (req, res) => {
+  try {
+    const { api_session } = req.body || {};
+    if (!api_session) return res.status(400).json({ error: 'api_session required' });
+    const appKey = process.env.BREEZE_API_KEY;
+    const secret = process.env.BREEZE_SECRET_KEY;
+    if (!appKey || !secret) return res.status(500).json({ error: 'Breeze credentials not configured' });
+
+    // Per docs: Use API_Session against CustomerDetails to get SessionToken & user info.
+    // Docs show GET with JSON body; we'll follow pattern using axios.
+    const axios = (await import('axios')).default;
+
+    const payload = { SessionToken: api_session, AppKey: appKey };
+    // Customer details endpoint
+    const url = 'https://api.icicidirect.com/breezeapi/api/v1/customerdetails';
+    let customerResp;
+    try {
+      customerResp = await axios.get(url, { headers: { 'Content-Type': 'application/json' }, data: JSON.stringify(payload) });
+    } catch (err) {
+      // Some servers ignore body in GET; attempt POST fallback
+      try {
+        customerResp = await axios.post(url, JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } });
+      } catch (err2) {
+        return res.status(502).json({ error: 'Failed to fetch customer details', details: err2.message });
+      }
+    }
+
+    const raw = customerResp.data || {};
+    const successBlock = raw.Success || {};
+    // The Breeze docs mention we derive session token by decoding base64 session_token or using SessionToken; capture both possibilities
+    const sessionToken = successBlock.session_token || successBlock.SessionToken || api_session;
+    const userId = successBlock.idirect_userid || successBlock.idirect_user_id || 'breeze_user';
+    const userName = successBlock.idirect_user_name || userId;
+
+    if (!sessionToken) {
+      return res.status(500).json({ error: 'No session token returned from Breeze API' });
+    }
+
+    // For parity with existing frontend expectations, align field names
+    return res.json({
+      broker: 'breeze',
+      access_token: sessionToken,
+      user_id: userId,
+      user_name: userName,
+      meta: { received: Object.keys(successBlock), status: raw.Status }
+    });
+  } catch (e) {
+    console.error('[BREEZE SESSION EXCHANGE] Error:', e.message);
+    return res.status(500).json({ error: 'Internal error exchanging Breeze session' });
   }
 });
 
@@ -100,8 +304,8 @@ app.get('/api/profile', async (req, res) => {
       console.warn('[PROFILE] No access token provided, returning 401');
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
     try {
       const profile = await kc.getProfile();
       console.log('[PROFILE] Successfully fetched profile:', profile);
@@ -127,8 +331,8 @@ app.get('/api/margins', async (req, res) => {
       console.warn('[MARGINS] No access token provided, returning 401');
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
     try {
       console.log('[MARGINS] Sending request to KiteConnect getMargins API...');
       console.log('[MARGINS] Request headers:', {
@@ -168,8 +372,8 @@ app.get('/api/positions', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
     const positions = await kc.getPositions();
     res.json(positions);
   } catch (err) {
@@ -185,8 +389,8 @@ app.get('/api/holdings', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
     const holdings = await kc.getHoldings();
     res.json(holdings);
   } catch (err) {
@@ -202,8 +406,8 @@ app.get('/api/orders', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token;
     const orders = await kc.getOrders();
     res.json(orders);
   } catch (err) {
@@ -293,40 +497,17 @@ app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
     console.log(`[HISTORICAL] Additional params: continuous=${continuous}, oi=${oi}`);
     
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
-    
+  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
+
     try {
-      // Prepare parameters for getHistoricalData method
-      const params = {
-        from: fromDateTime,
-        to: toDateTime
-      };
-      
-      // Add continuous parameter if provided (for futures contracts)
+      const params = { from: fromDateTime, to: toDateTime };
       if (continuous !== undefined && continuous !== null) {
         params.continuous = continuous === '1' || continuous === 'true';
-        console.log(`[HISTORICAL] Continuous data requested: ${params.continuous}`);
       }
-      
-      // Add OI parameter if provided (for Open Interest data)
       if (oi !== undefined && oi !== null) {
         params.oi = oi === '1' || oi === 'true';
-        console.log(`[HISTORICAL] OI data requested: ${params.oi}`);
       }
-      
-      console.log(`[HISTORICAL] Calling getHistoricalData with params:`, params);
-      
-      // Call KiteConnect method with all parameters
       const data = await kc.getHistoricalData(instrumentToken, interval, params.from, params.to, params.continuous, params.oi);
-      
-      console.log('[HISTORICAL] Data fetched:', {
-        hasData: !!data,
-        hasCandlesArray: Array.isArray(data.candles),
-        candlesCount: data.candles ? data.candles.length : 0,
-        sampleCandle: data.candles && data.candles[0] ? data.candles[0] : null,
-        includesOI: params.oi && data.candles && data.candles[0] ? data.candles[0].length === 7 : false
-      });
-      
       res.json(data);
     } catch (apiErr) {
       console.error('[HISTORICAL] Error from KiteConnect:', apiErr);
@@ -335,6 +516,58 @@ app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
   } catch (err) {
     console.error('[HISTORICAL] Route error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Search instruments (substring match on tradingsymbol or name)
+app.get('/api/instruments/search', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (access_token) { globalLastAccessToken = access_token; }
+    const { query, name } = req.query;
+    const q = (query || name || '').trim();
+    if (!q) return res.status(400).json({ error: 'query parameter required' });
+    const list = await loadInstruments(false, 'search');
+    const lower = q.toLowerCase();
+    const filtered = list.filter(i => {
+      if (!i || !i.tradingsymbol) return false;
+      const ts = i.tradingsymbol.toLowerCase();
+      const nameField = (i.name || '').toLowerCase();
+      return ts.includes(lower) || nameField.includes(lower);
+    });
+    res.json(filtered.slice(0,200));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Exact symbol fetch (mirrors expectation from frontend TradingService.getInstrumentsBySymbol)
+app.get('/api/instruments/symbol', async (req, res) => {
+  try {
+    const access_token = getAccessToken(req);
+    if (access_token) { globalLastAccessToken = access_token; }
+    const { symbol } = req.query;
+    if (!symbol) return res.status(400).json({ error: 'symbol parameter required' });
+    const upper = symbol.toUpperCase();
+    const list = await loadInstruments(false, 'symbol');
+    const matches = list.filter(i => i.tradingsymbol === upper);
+    const enriched = matches.map(i => ({
+      instrument_token: i.instrument_token,
+      exchange_token: i.exchange_token,
+      tradingsymbol: i.tradingsymbol,
+      name: i.name,
+      last_price: 0,
+      expiry: i.expiry || null,
+      strike: i.strike || null,
+      tick_size: i.tick_size,
+      lot_size: i.lot_size || i.lotsize,
+      instrument_type: i.instrument_type,
+      segment: i.segment,
+      exchange: i.exchange
+    }));
+    res.json(enriched);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -749,157 +982,104 @@ app.get('/api/quotes', async (req, res) => {
   }
 });
 
-// Add search endpoint for instruments
-app.get('/api/instruments/search', async (req, res) => {
+// Single token quote (cache-first) endpoint
+app.get('/api/quote', async (req, res) => {
   try {
     const access_token = getAccessToken(req);
-    if (!access_token) {
-      return res.status(401).json({ error: 'Access token required' });
+    if (!access_token) return res.status(401).json({ error: 'Access token required' });
+    initTickerIfPossible(access_token);
+    const { token } = req.query;
+    if (!token) return res.status(400).json({ error: 'token parameter required' });
+    const instrumentToken = parseInt(String(token), 10);
+    if (Number.isNaN(instrumentToken)) return res.status(400).json({ error: 'token must be numeric' });
+    const freshWindow = 5000; // 5s
+    const cached = quoteCache.get(instrumentToken);
+    if (cached && (Date.now() - cached.cacheTs) < freshWindow) {
+      return res.json({ source: 'cache', quote: cached });
     }
-    
-    const { query } = req.query;
-    console.log('[INSTRUMENT SEARCH] Received search query:', query);
-    
-    if (!query) {
-      console.warn('[INSTRUMENT SEARCH] Missing query parameter');
-      return res.status(400).json({ error: 'Query parameter is required' });
-    }
-    
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
     kc.setAccessToken(access_token);
-    
     try {
-      console.log('[INSTRUMENT SEARCH] Fetching instruments from KiteConnect...');
-      const instruments = await kc.getInstruments();
-      console.log(`[INSTRUMENT SEARCH] Fetched ${instruments.length} instruments`);
-      
-      // Search instruments by tradingsymbol or name
-      const searchTerm = query.toUpperCase();
-      const matchingInstruments = instruments.filter(inst => 
-        (inst.tradingsymbol && inst.tradingsymbol.toUpperCase().includes(searchTerm)) ||
-        (inst.name && inst.name.toUpperCase().includes(searchTerm))
-      );
-      
-      console.log(`[INSTRUMENT SEARCH] Found ${matchingInstruments.length} matching instruments`);
-      
-      // Limit results to 20 and return relevant fields
-      const results = matchingInstruments.slice(0, 20).map(inst => ({
-        instrument_token: inst.instrument_token,
-        tradingsymbol: inst.tradingsymbol,
-        name: inst.name,
-        exchange: inst.exchange,
-        segment: inst.segment,
-        instrument_type: inst.instrument_type
-      }));
-      
-      res.json(results);
-    } catch (apiErr) {
-      console.error('[INSTRUMENT SEARCH] Error fetching instruments:', {
-        message: apiErr.message,
-        error_type: apiErr.error_type,
-        data: apiErr.data,
-        stack: apiErr.stack
-      });
-      res.status(500).json({ 
-        error: apiErr.message,
-        error_type: apiErr.error_type,
-        data: apiErr.data
-      });
+      const q = await kc.getQuote([instrumentToken]);
+      const data = q[instrumentToken];
+      if (data) quoteCache.set(instrumentToken, { ...data, cacheTs: Date.now() });
+      return res.json({ source: 'api', quote: data || null });
+    } catch (e) {
+      if (cached) return res.json({ source: 'stale-cache', quote: cached, warning: e.message });
+      return res.status(500).json({ error: e.message });
     }
-  } catch (err) {
-    console.error('[INSTRUMENT SEARCH] Route error:', err);
-    res.status(500).json({ error: err.message });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
+// Add search endpoint for instruments
+// (Removed duplicate /api/instruments/search route that bypassed cache)
+
 // Proxy route for instrument details
+// (Removed duplicate /api/instruments/details route doing full reload each call)
+
+// Lightweight instrument meta detail via cache (replacement) – returns token + name if present
 app.get('/api/instruments/details', async (req, res) => {
   try {
-    const access_token = getAccessToken(req);
-    if (!access_token) {
-      return res.status(401).json({ error: 'Access token required' });
-    }
     const { name } = req.query;
-    console.log('[INSTRUMENT DETAILS] Received request for instrument:', name);
-    if (!name) {
-      console.warn('[INSTRUMENT DETAILS] Missing name parameter');
-      return res.status(400).json({ error: 'Name parameter is required' });
+    if (!name) return res.status(400).json({ error: 'name parameter required' });
+    const list = await loadInstruments(false, 'details');
+    const searchName = name.toUpperCase().replace(/\s+/g, '');
+    let inst = list.find(i => i.tradingsymbol && i.tradingsymbol.toUpperCase() === searchName);
+    if (!inst) {
+      if (searchName === 'NIFTY50' || searchName === 'NIFTY') {
+        inst = list.find(i => i.tradingsymbol === 'NIFTY' && i.exchange === 'NSE');
+      } else if (searchName === 'BANKNIFTY') {
+        inst = list.find(i => i.tradingsymbol === 'BANKNIFTY' && i.exchange === 'NSE');
+      }
     }
-    
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(access_token);
-    
-    try {
-      console.log('[INSTRUMENT DETAILS] Fetching instruments from KiteConnect...');
-      const instruments = await kc.getInstruments();
-      console.log(`[INSTRUMENT DETAILS] Fetched ${instruments ? instruments.length : 0} instruments`);
-      
-      if (!instruments || !Array.isArray(instruments)) {
-        console.error('[INSTRUMENT DETAILS] No instruments returned from KiteConnect');
-        return res.status(500).json({ error: 'Failed to fetch instruments from Kite API' });
-      }
-      
-      // More flexible search - handle NIFTY 50, NIFTY, etc.
-      const searchName = name ? name.toUpperCase().replace(/\s+/g, '') : '';
-      let instrument = instruments.find(i => i && i.tradingsymbol && i.tradingsymbol.toUpperCase() === searchName);
-      
-      // If exact match not found, try a more flexible search
-      if (!instrument) {
-        console.log('[INSTRUMENT DETAILS] Exact match not found, trying flexible search for:', searchName);
-        
-        // Special case for NIFTY 50
-        if (searchName === 'NIFTY50' || searchName === 'NIFTY') {
-          instrument = instruments.find(i => i && i.tradingsymbol && i.tradingsymbol.toUpperCase() === 'NIFTY' && i.exchange === 'NSE');
-        }
-        
-        // Special case for BANKNIFTY
-        if (searchName === 'BANKNIFTY') {
-          instrument = instruments.find(i => i && i.tradingsymbol && i.tradingsymbol.toUpperCase() === 'BANKNIFTY' && i.exchange === 'NSE');
-        }
-        
-        // If still not found, try a partial match
-        if (!instrument) {
-          instrument = instruments.find(i => 
-            i.tradingsymbol.toUpperCase().includes(searchName) || 
-            (i.name && i.name.toUpperCase().includes(searchName))
-          );
-        }
-      }
-      
-      if (!instrument) {
-        console.warn('[INSTRUMENT DETAILS] Instrument not found:', name);
-        return res.status(404).json({ error: 'Instrument not found' });
-      }
-      
-      console.log('[INSTRUMENT DETAILS] Fetching quote for instrument token:', instrument.instrument_token);
-      const quote = await kc.getQuote([instrument.instrument_token]);
-      const quoteData = quote[instrument.instrument_token];
-      
-      res.json({
-        name: instrument.tradingsymbol,
-        token: instrument.instrument_token,
-        ltp: quoteData.last_price,
-        change: ((quoteData.last_price - quoteData.ohlc.open) / quoteData.ohlc.open * 100).toFixed(2) + '%',
-        volume: quoteData.volume,
-        ohlc: quoteData.ohlc
-      });
-    } catch (apiErr) {
-      console.error('[INSTRUMENT DETAILS] Error fetching instrument details:', {
-        message: apiErr.message,
-        error_type: apiErr.error_type,
-        data: apiErr.data,
-        stack: apiErr.stack
-      });
-      res.status(500).json({ 
-        error: apiErr.message,
-        error_type: apiErr.error_type,
-        data: apiErr.data
-      });
+    if (!inst) {
+      inst = list.find(i => i.tradingsymbol && i.tradingsymbol.toUpperCase().includes(searchName));
     }
-  } catch (err) {
-    console.error('Route error:', err);
-    res.status(500).json({ error: err.message });
+    if (!inst) return res.status(404).json({ error: 'Instrument not found' });
+    return res.json({
+      name: inst.tradingsymbol,
+      token: inst.instrument_token,
+      exchange: inst.exchange,
+      segment: inst.segment,
+      instrument_type: inst.instrument_type,
+      expiry: inst.expiry || null,
+      strike: inst.strike || null
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
+});
+
+// Cache status endpoint
+app.get('/api/instruments/cache/status', (req, res) => {
+  res.json({
+    hasData: !!instrumentCache.data,
+    count: instrumentCache.data ? instrumentCache.data.length : 0,
+    ageMs: instrumentCache.data ? (Date.now() - instrumentCache.timestamp) : null,
+    warmed: instrumentCache.warmed,
+    ttlMs: INSTRUMENT_TTL_MS
+  });
+});
+
+// Ticker status endpoint
+app.get('/api/ticker/status', (req, res) => {
+  const now = Date.now();
+  const sample = [];
+  // Provide up to 5 recent cached quotes for transparency
+  for (const [token, q] of quoteCache.entries()) {
+    sample.push({ token, last_price: q.last_price, cacheAgeMs: now - q.cacheTs });
+    if (sample.length >= 5) break;
+  }
+  res.json({
+    initialized: !!ticker,
+    connected: !!(ticker && ticker.connected),
+    subscribedTokenCount: subscribedTokens.size,
+    subscribedTokens: Array.from(subscribedTokens).slice(0, 50), // cap list size
+    quoteCacheSize: quoteCache.size,
+    quoteCacheSample: sample
+  });
 });
 
 // Create HTTP server
@@ -1143,6 +1323,11 @@ wss.on('connection', (ws, req) => {
             } catch (error) {
               console.error('Error fetching initial quotes:', error);
             }
+            // Track & subscribe ticker
+            data.tokens.forEach(t => { if (typeof t === 'number') subscribedTokens.add(t); });
+            if (ticker && ticker.connected) {
+              try { ticker.subscribe(data.tokens); ticker.setMode(ticker.MODE_FULL, data.tokens); } catch(e){ console.error('[TICKER] subscribe error', e.message); }
+            }
           }
           break;
 
@@ -1150,6 +1335,7 @@ wss.on('connection', (ws, req) => {
           if (Array.isArray(data.tokens)) {
             data.tokens.forEach(token => clientInfo.subscribedTokens.delete(token));
             console.log(`Client ${clientId} unsubscribed from tokens:`, data.tokens);
+            data.tokens.forEach(t => subscribedTokens.delete(t));
           }
           break;
 
@@ -1188,5 +1374,7 @@ wss.on('connection', (ws, req) => {
 server.listen(port, () => {
   console.log(`Backend server running on http://localhost:${port}`);
   console.log(`WebSocket server running on ws://localhost:${port}`);
+  // Warm instrument cache in background (non-blocking)
+  loadInstruments(false, 'warm-start').catch(e => console.warn('[INSTRUMENTS] Warm load failed:', e.message));
 });
 

@@ -100,19 +100,19 @@ To test the new implementation:
 1. **Restart the backend server** to load the new routes
 2. **Test new URI format**:
    ```bash
-   curl "http://localhost:5000/api/historical/256265/day?from=2024-01-15&to=2024-01-20" \
+   curl "http://https://goodbuck-algo.onrender.com/api/historical/256265/day?from=2024-01-15&to=2024-01-20" \
         -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
    ```
 
 3. **Test with OI data**:
    ```bash
-   curl "http://localhost:5000/api/historical/FUTURES_TOKEN/minute?from=2024-01-15&to=2024-01-20&oi=1" \
+   curl "http://https://goodbuck-algo.onrender.com/api/historical/FUTURES_TOKEN/minute?from=2024-01-15&to=2024-01-20&oi=1" \
         -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
    ```
 
 4. **Test continuous data**:
    ```bash
-   curl "http://localhost:5000/api/historical/FUTURES_TOKEN/day?from=2024-01-01&to=2024-01-31&continuous=1" \
+   curl "http://https://goodbuck-algo.onrender.com/api/historical/FUTURES_TOKEN/day?from=2024-01-01&to=2024-01-31&continuous=1" \
         -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
    ```
 

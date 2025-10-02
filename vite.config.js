@@ -10,7 +10,7 @@ export default defineConfig({
     cors: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'http://https://goodbuck-algo.onrender.com',
         changeOrigin: true,
         secure: false
       }

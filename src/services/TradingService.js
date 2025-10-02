@@ -70,7 +70,7 @@ async function setupWebSocket() {
     console.log('Attempting to connect to WebSocket server with token');
     
     // Create new WebSocket instance with the token as a query parameter
-    ws = new WebSocket(`ws://localhost:5000/ws?token=${encodeURIComponent(publicToken)}`);
+    ws = new WebSocket(`ws://https://goodbuck-algo.onrender.com/ws?token=${encodeURIComponent(publicToken)}`);
     
     // Keep track of ping interval
     let pingInterval;
@@ -480,7 +480,7 @@ class TradingService {
    * Get user profile information
    */
   async getProfile() {
-    const response = await fetch('http://localhost:5000/api/profile', {
+    const response = await fetch('http://https://goodbuck-algo.onrender.com/api/profile', {
       method: 'GET',
       credentials: 'include',
       headers: this.getAuthHeaders(),
@@ -498,7 +498,7 @@ class TradingService {
    */
   async getMargins() {
     try {
-      const response = await fetch('http://localhost:5000/api/margins', {
+      const response = await fetch('http://https://goodbuck-algo.onrender.com/api/margins', {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -522,7 +522,7 @@ class TradingService {
    */
   async getPositions() {
     try {
-      const response = await fetch('http://localhost:5000/api/positions', {
+      const response = await fetch('http://https://goodbuck-algo.onrender.com/api/positions', {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -558,7 +558,7 @@ class TradingService {
    * Get orders
    */
   async getOrders() {
-    const response = await fetch('http://localhost:5000/api/orders', {
+    const response = await fetch('http://https://goodbuck-algo.onrender.com/api/orders', {
       method: 'GET',
       credentials: 'include',
       headers: this.getAuthHeaders(),
@@ -577,7 +577,7 @@ class TradingService {
    */
   async getHoldings() {
     try {
-      const response = await fetch('http://localhost:5000/api/holdings', {
+      const response = await fetch('http://https://goodbuck-algo.onrender.com/api/holdings', {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -599,7 +599,7 @@ class TradingService {
    * Place an order
    */
   async placeOrder(orderParams) {
-    const response = await fetch('http://localhost:5000/api/orders', {
+    const response = await fetch('http://https://goodbuck-algo.onrender.com/api/orders', {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -626,7 +626,7 @@ class TradingService {
    * @returns {Promise<Object>} Historical data with candles array
    */
   async getHistoricalData(instrumentToken, fromDate, toDate, interval) {
-    const response = await fetch(`http://localhost:5000/api/historical?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}&interval=${interval}`, {
+    const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/historical?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}&interval=${interval}`, {
       method: 'GET',
       credentials: 'include',
       headers: this.getAuthHeaders(),
@@ -647,7 +647,7 @@ class TradingService {
     try {
       console.log(`[TradingService] Searching for instruments: ${query}`);
       
-      const response = await fetch(`http://localhost:5000/api/instruments/search?query=${encodeURIComponent(query)}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/instruments/search?query=${encodeURIComponent(query)}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -677,7 +677,7 @@ class TradingService {
     try {
       console.log(`[TradingService] Fetching all instruments for ${exchange}`);
       
-      const response = await fetch(`http://localhost:5000/api/instruments?exchange=${exchange}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/instruments?exchange=${exchange}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -704,7 +704,7 @@ class TradingService {
     try {
       console.log(`[TradingService] Fetching details for instrument: ${name}`);
       
-      const response = await fetch(`http://localhost:5000/api/instruments/details?name=${encodeURIComponent(name)}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/instruments/details?name=${encodeURIComponent(name)}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -748,18 +748,42 @@ class TradingService {
     try {
       console.log(`[TradingService] Fetching instruments for symbol: ${symbol}`);
       
-      const response = await fetch(`http://localhost:5000/api/instruments/symbol?symbol=${encodeURIComponent(symbol)}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/instruments/symbol?symbol=${encodeURIComponent(symbol)}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
       
-      if (!response.ok) {
+      let instruments = [];
+      if (response.ok) {
+        instruments = await response.json();
+      } else {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData && errorData.error ? errorData.error : `Failed to fetch instruments for symbol ${symbol}`);
+        console.warn(`[TradingService] Symbol endpoint failed (${response.status}) for ${symbol}:`, errorData);
       }
-      
-      const instruments = await response.json();
+
+      if (!Array.isArray(instruments) || instruments.length === 0) {
+        // Fallback: search
+        const basePrefix = symbol.slice(0, 8);
+        try {
+          console.log(`[TradingService] Fallback search for ${symbol} using prefix ${basePrefix}`);
+          const searchResults = await this.searchInstruments(basePrefix);
+          // Try exact match in search results
+          const exact = searchResults.find(r => r.tradingsymbol === symbol.toUpperCase());
+            if (exact) return [exact];
+          // Heuristic partial: same strike & type at end
+          const strikeMatch = symbol.match(/(\d{3,6})(CE|PE)$/);
+          const strikeDigits = strikeMatch?.[1]; const optType = strikeMatch?.[2];
+          if (strikeDigits && optType) {
+            const partial = searchResults.find(r => r.tradingsymbol?.endsWith(`${strikeDigits}${optType}`));
+            if (partial) return [partial];
+          }
+          return [];
+        } catch (searchErr) {
+          console.warn('[TradingService] Fallback search failed:', searchErr.message);
+          return [];
+        }
+      }
       return instruments;
     } catch (error) {
       console.error(`[TradingService] Error fetching instruments by symbol: ${error.message}`);
@@ -776,7 +800,7 @@ class TradingService {
     try {
       console.log(`[TradingService] Fetching instrument for token: ${token}`);
       
-      const response = await fetch(`http://localhost:5000/api/instruments/token?token=${token}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/instruments/token?token=${token}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -804,7 +828,7 @@ class TradingService {
     try {
       console.log(`[TradingService] Fetching quote for instrument ${instrumentToken}`);
       
-      const response = await fetch(`http://localhost:5000/api/quote?token=${instrumentToken}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/quote?token=${instrumentToken}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -815,8 +839,12 @@ class TradingService {
         console.error('[getQuote] Error:', errorData);
         throw new Error(errorData && errorData.error ? errorData.error : `Failed to fetch quote for ${instrumentToken}`);
       }
-      
-      return await response.json();
+      const payload = await response.json();
+      // Backend shape: { source, quote } – normalize to raw quote with metadata
+      if (payload && payload.quote) {
+        return { ...payload.quote, _source: payload.source };
+      }
+      return payload;
     } catch (error) {
       console.error(`[TradingService] Error fetching quote: ${error.message}`);
       throw error;
@@ -864,7 +892,7 @@ class TradingService {
     try {
       console.log(`[TradingService] Fetching historical high/low for instrument ${instrumentToken} from ${fromDate} to ${toDate}`);
       
-      const response = await fetch(`http://localhost:5000/api/instruments/historical-high-low?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/instruments/historical-high-low?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -896,7 +924,7 @@ class TradingService {
       
       const tokensParam = instrumentTokens.join(',');
       
-      const response = await fetch(`http://localhost:5000/api/quote/ltp?i=${tokensParam}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/quote/ltp?i=${tokensParam}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -926,7 +954,7 @@ class TradingService {
       
       const tokensParam = instrumentTokens.join(',');
       
-      const response = await fetch(`http://localhost:5000/api/quote/ohlc?i=${tokensParam}`, {
+      const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/quote/ohlc?i=${tokensParam}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -978,10 +1006,10 @@ class TradingService {
         // Request quotes for all tokens at once
         const tokensParam = tokens.join(',');
         console.log(`[TradingService] Requesting quotes for tokens: ${tokensParam}`);
-        console.log(`[TradingService] Making request to: http://localhost:5000/api/quotes?tokens=${tokensParam}`);
+        console.log(`[TradingService] Making request to: http://https://goodbuck-algo.onrender.com/api/quotes?tokens=${tokensParam}`);
         console.log(`[TradingService] Using headers:`, this.getAuthHeaders());
         
-        const response = await fetch(`http://localhost:5000/api/quotes?tokens=${tokensParam}`, {
+        const response = await fetch(`http://https://goodbuck-algo.onrender.com/api/quotes?tokens=${tokensParam}`, {
           method: 'GET',
           credentials: 'include',
           headers: this.getAuthHeaders()
