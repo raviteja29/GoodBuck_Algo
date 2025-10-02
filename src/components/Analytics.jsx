@@ -389,38 +389,99 @@ const Analytics = () => {
     return () => { cancelled = true; };
   }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate]);
 
-  // Subscribe to real-time option data (same approach as dashboard)
+  // Subscribe to real-time option data with fallback when WebSocket fails
   const lastTickRef = useRef({ pe: null, ce: null });
+  const fallbackIntervalRef = useRef(null);
 
-  // Subscribe to real-time option ticks (same as dashboard approach)
+  // Fallback quote fetching when WebSocket is unavailable
+  useEffect(() => {
+    if (!peOptionToken && !ceOptionToken) return;
+    
+    let cancelled = false;
+    
+    // Initial quote fetch
+    const fetchInitialQuotes = async () => {
+      try {
+        if (peOptionToken) {
+          const peQuote = await TradingService.getQuote(peOptionToken);
+          if (!cancelled && peQuote?.last_price != null) {
+            setPeLtp(peQuote.last_price);
+            console.log(`[Analytics] PE initial LTP: ${peQuote.last_price}`);
+          }
+        }
+        if (ceOptionToken) {
+          const ceQuote = await TradingService.getQuote(ceOptionToken);
+          if (!cancelled && ceQuote?.last_price != null) {
+            setCeLtp(ceQuote.last_price);
+            console.log(`[Analytics] CE initial LTP: ${ceQuote.last_price}`);
+          }
+        }
+      } catch (err) {
+        console.warn('[Analytics] Initial quote fetch failed:', err.message);
+      }
+    };
+
+    // Start with initial fetch
+    fetchInitialQuotes();
+
+    // Set up fallback polling for when WebSocket fails
+    fallbackIntervalRef.current = setInterval(async () => {
+      try {
+        if (peOptionToken) {
+          const peQuote = await TradingService.getQuote(peOptionToken);
+          if (!cancelled && peQuote?.last_price != null) {
+            setPeLtp(peQuote.last_price);
+          }
+        }
+        if (ceOptionToken) {
+          const ceQuote = await TradingService.getQuote(ceOptionToken);
+          if (!cancelled && ceQuote?.last_price != null) {
+            setCeLtp(ceQuote.last_price);
+          }
+        }
+      } catch (err) {
+        console.warn('[Analytics] Fallback quote polling failed:', err.message);
+      }
+    }, 10000); // Poll every 10 seconds as fallback
+
+    return () => {
+      cancelled = true;
+      if (fallbackIntervalRef.current) {
+        clearInterval(fallbackIntervalRef.current);
+        fallbackIntervalRef.current = null;
+      }
+    };
+  }, [peOptionToken, ceOptionToken]);
+
+  // Subscribe to real-time option ticks (with graceful WebSocket failure handling)
   useEffect(() => {
     const unsubscribers = [];
     
-    // Real-time tick handler (same logic as dashboard)
+    // Real-time tick handler
     function handleTicks(ticks) {
       if (!Array.isArray(ticks)) return;
-      console.log(`[Analytics] Received ${ticks.length} ticks`);
+      console.log(`[Analytics] Received ${ticks.length} ticks via WebSocket`);
       
       ticks.forEach(tick => {
         if (!tick || !tick.instrument_token) return;
         
         // Update PE option LTP
         if (tick.instrument_token === peOptionToken && tick.last_price != null) {
-          console.log(`[Analytics] PE LTP update: ${tick.last_price}`);
+          console.log(`[Analytics] PE LTP from WebSocket: ${tick.last_price}`);
           setPeLtp(tick.last_price);
           lastTickRef.current.pe = Date.now();
         }
         
         // Update CE option LTP  
         if (tick.instrument_token === ceOptionToken && tick.last_price != null) {
-          console.log(`[Analytics] CE LTP update: ${tick.last_price}`);
+          console.log(`[Analytics] CE LTP from WebSocket: ${tick.last_price}`);
           setCeLtp(tick.last_price);
           lastTickRef.current.ce = Date.now();
         }
       });
     }
     
-    // Subscribe to instruments (same as dashboard)
+    // Try to subscribe to WebSocket (will fail gracefully if server unavailable)
     const tokens = [];
     if (peOptionToken && !peSubscribed.current) {
       tokens.push(peOptionToken);
@@ -432,10 +493,15 @@ const Analytics = () => {
     }
     
     if (tokens.length > 0) {
-      console.log(`[Analytics] Subscribing to option tokens:`, tokens);
-      TradingService.subscribeToInstruments(tokens);
-      const unsub = TradingService.subscribeToTicks(handleTicks);
-      unsubscribers.push(unsub);
+      console.log(`[Analytics] Attempting WebSocket subscription to tokens:`, tokens);
+      try {
+        TradingService.subscribeToInstruments(tokens);
+        const unsub = TradingService.subscribeToTicks(handleTicks);
+        unsubscribers.push(unsub);
+        console.log(`[Analytics] WebSocket subscription successful`);
+      } catch (error) {
+        console.warn(`[Analytics] WebSocket subscription failed, using fallback polling:`, error.message);
+      }
     }
     
     return () => { 
