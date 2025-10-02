@@ -1191,11 +1191,12 @@ app.post('/api/webhook/orders', (req, res) => {
 app.use(express.static(path.join(__dirname, '../dist')));
 
 // Catch-all handler: send back React's index.html file for any non-API routes
-app.get('*', (req, res) => {
-  // Don't serve index.html for API routes
+app.use((req, res, next) => {
+  // Don't serve index.html for API routes or WebSocket
   if (req.path.startsWith('/api/') || req.path.startsWith('/ws')) {
     return res.status(404).json({ error: 'API endpoint not found' });
   }
+  // For all other routes, serve the React app
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
