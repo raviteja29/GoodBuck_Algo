@@ -231,11 +231,19 @@ const Analytics = () => {
   // Simple approach: Use direct search like positions API does
   const searchForOption = async (underlying, strike, optionType, expiryChoice) => {
     try {
-      console.log(`[OptionSearch] Searching for ${underlying} ${strike}${optionType} options`);
+      // Map display names to option search terms
+      const underlyingMap = {
+        'NIFTY 50': 'NIFTY',
+        'BANKNIFTY': 'BANKNIFTY',
+        'FINNIFTY': 'FINNIFTY'
+      };
+      
+      const searchUnderlying = underlyingMap[underlying] || underlying;
+      console.log(`[OptionSearch] Searching for ${searchUnderlying} ${strike}${optionType} options (mapped from ${underlying})`);
       
       // Search broadly for the underlying instrument (same as positions API)
-      const searchResults = await TradingService.searchInstruments(underlying);
-      console.log(`[OptionSearch] Found ${searchResults.length} total instruments for ${underlying}`);
+      const searchResults = await TradingService.searchInstruments(searchUnderlying);
+      console.log(`[OptionSearch] Found ${searchResults.length} total instruments for ${searchUnderlying}`);
       
       if (!searchResults.length) return null;
       
