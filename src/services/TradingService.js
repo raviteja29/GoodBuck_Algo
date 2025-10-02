@@ -54,10 +54,10 @@ async function setupWebSocket() {
 
   updateConnectionStatus('connecting');
   console.log('Setting up WebSocket connection');
-  
+
   const accessToken = localStorage.getItem('access_token');
   console.log('Access token from localStorage:', accessToken ? 'Token found (not showing for security)' : 'No token found');
-  
+
   if (!accessToken) {
     console.warn('No access token found, skipping WebSocket connection');
     updateConnectionStatus('disconnected');
@@ -68,10 +68,9 @@ async function setupWebSocket() {
     // Format the token as expected by the server (apiKey:accessToken)
     const publicToken = `${apiKey}:${accessToken}`;
     console.log('Attempting to connect to WebSocket server with token');
-    
-    // Create new WebSocket instance with the token as a query parameter
+
     ws = new WebSocket(`wss://goodbuck-algo.onrender.com/ws?token=${encodeURIComponent(publicToken)}`);
-    
+
     // Keep track of ping interval
     let pingInterval;
 
@@ -79,18 +78,12 @@ async function setupWebSocket() {
     ws.onopen = () => {
       console.log('WebSocket connection established successfully');
       updateConnectionStatus('connected');
-      
-      // Reset connection attempts on successful connection
       connectionAttempts = 0;
-      
-      // Start ping interval (every 25 seconds) to keep the connection alive
       pingInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'pong' }));
         }
       }, 25000);
-      
-      // Resubscribe to any existing instrument tokens
       if (instrumentTokens.size > 0) {
         console.log(`Resubscribing to ${instrumentTokens.size} instrument tokens`);
         ws.send(JSON.stringify({
@@ -103,7 +96,6 @@ async function setupWebSocket() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
         switch (data.type) {
           case 'ping':
             ws.send(JSON.stringify({ type: 'pong' }));
@@ -242,23 +234,19 @@ async function setupWebSocket() {
     ws.onclose = (event) => {
       console.log(`WebSocket connection closed: code=${event.code}, reason=${event.reason}`);
       updateConnectionStatus('disconnected');
-      
-      // Clear ping interval
       if (pingInterval) {
         clearInterval(pingInterval);
       }
-      
-      // Implement exponential backoff for reconnection attempts
-      if (event.code !== 1000) { // Only reconnect if not intentionally closed
+      // Only retry if not intentionally closed and not a fatal error
+      if (event.code !== 1000) {
         connectionAttempts++;
-        
         if (connectionAttempts <= MAX_RECONNECT_ATTEMPTS) {
           const delay = Math.min(30000, RECONNECT_DELAY_BASE * Math.pow(2, connectionAttempts - 1));
           console.log(`Attempting to reconnect in ${delay/1000}s... (Attempt ${connectionAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-          
           setTimeout(setupWebSocket, delay);
         } else {
-          console.error(`Maximum reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Please refresh the page.`);
+          // Show user-friendly error after max attempts
+          alert('Live market data connection failed. Please check your network or try again later. The analysis page will still work with delayed/static data.');
           updateConnectionStatus('failed');
         }
       }
@@ -269,15 +257,15 @@ async function setupWebSocket() {
       // The WebSocket might still be functioning despite errors
       console.warn('WebSocket error event received:', error);
       console.log('WebSocket state:', ws.readyState);
-      
       // Only update status if the connection is actually closed
       if (ws.readyState === WebSocket.CLOSED) {
         updateConnectionStatus('error');
       }
     };
-    
     return true;
   } catch (error) {
+    // Show user-friendly error if connection cannot be established at all
+    alert('Could not connect to live market data server. The analysis page will still work with delayed/static data.');
     console.error('Error creating WebSocket connection:', error);
     updateConnectionStatus('failed');
     return false;
