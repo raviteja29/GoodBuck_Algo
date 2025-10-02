@@ -254,11 +254,28 @@ const Analytics = () => {
         const hasStrike = symbol.includes(String(strike));
         const hasType = symbol.includes(optionType);
         
+        console.log(`[OptionSearch] Checking ${symbol}: isOption=${isOption}, hasStrike=${hasStrike} (looking for ${strike}), hasType=${hasType} (looking for ${optionType})`);
+        
         return isOption && hasStrike && hasType;
       });
       
-      console.log(`[OptionSearch] Found ${optionContracts.length} option contracts:`, 
+      console.log(`[OptionSearch] Found ${optionContracts.length} option contracts for ${strike}${optionType}:`, 
         optionContracts.map(c => c.tradingsymbol));
+      
+      // Also log some examples of what was filtered out
+      const sampleFilteredOut = searchResults
+        .filter(instrument => {
+          const symbol = instrument.tradingsymbol || '';
+          return (symbol.includes('CE') || symbol.includes('PE')) && 
+                 symbol.includes(String(strike)) && 
+                 !symbol.includes(optionType);
+        })
+        .slice(0, 3);
+      
+      if (sampleFilteredOut.length > 0) {
+        console.log(`[OptionSearch] Sample contracts with same strike but different type:`, 
+          sampleFilteredOut.map(c => c.tradingsymbol));
+      }
       
       if (optionContracts.length === 0) return null;
       
