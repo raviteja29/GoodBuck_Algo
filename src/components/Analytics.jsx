@@ -274,9 +274,13 @@ const Analytics = () => {
       const expectedSymbol = `${searchUnderlying}${expiryCode}${strike}${optionType}`;
       console.log(`[OptionSearch] Looking for exact symbol: ${expectedSymbol}`);
       
+      // Search with the expiry code to get more targeted results
+      const searchTerm = `${searchUnderlying}${expiryCode}`;
+      console.log(`[OptionSearch] Searching with term: ${searchTerm}`);
+      
       // Search for instruments
-      const searchResults = await TradingService.searchInstruments(searchUnderlying);
-      console.log(`[OptionSearch] Found ${searchResults.length} total instruments for ${searchUnderlying}`);
+      const searchResults = await TradingService.searchInstruments(searchTerm);
+      console.log(`[OptionSearch] Found ${searchResults.length} total instruments for ${searchTerm}`);
       
       if (!searchResults.length) return null;
       
