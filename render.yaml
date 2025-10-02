@@ -1,9 +1,11 @@
 services:
   - type: web
-    name: zerodha-trading-system
+    name: goodbuck-algo
     env: node
-    buildCommand: npm install && npm run build
-    startCommand: npm start
+    buildCommand: npm install && npx vite build
+    startCommand: node premiumtrader-backend/server.js
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: PORT
         value: 5000
