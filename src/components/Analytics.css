@@ -983,6 +983,19 @@
 .small-label { font-size:.7rem; letter-spacing:.07em; }
 .date-input.compact { padding: .85rem 1rem; }
 
+/* Auto-adjust hint styling */
+.auto-adjust-hint {
+  margin-left: 0.5rem;
+  opacity: 0.7;
+  font-size: 0.8em;
+  cursor: help;
+  transition: opacity 0.2s ease;
+}
+
+.auto-adjust-hint:hover {
+  opacity: 1;
+}
+
 .inline-help { font-size:.7rem; color:rgba(255,255,255,0.5); background:rgba(15,23,42,0.6); border:1px solid rgba(59,130,246,0.25); padding:.6rem .85rem; border-radius:12px; line-height:1.4; }
 
 .compact-actions { display:flex; justify-content:flex-end; gap:.85rem; margin-top:.25rem; }

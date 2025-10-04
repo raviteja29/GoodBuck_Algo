@@ -54,6 +54,54 @@ const Analytics = () => {
   const [highLowData, setHighLowData] = useState(null);
   const [error, setError] = useState(null);
 
+  // Date adjustment helper functions
+  const addDaysToDate = (dateString, days) => {
+    const date = new Date(dateString);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().split('T')[0];
+  };
+
+  const getMaxAllowedDate = () => {
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() - 2);
+    return maxDate.toISOString().split('T')[0];
+  };
+
+  // Handle from date change with automatic to date adjustment
+  const handleFromDateChange = (newFromDate) => {
+    setFromDate(newFromDate);
+    
+    // Calculate new to date (from date + 6 days) - trading week Wednesday to Tuesday
+    const newToDate = addDaysToDate(newFromDate, 6);
+    const maxDate = getMaxAllowedDate();
+    
+    // Ensure the new to date doesn't exceed the maximum allowed date
+    if (newToDate <= maxDate) {
+      setToDate(newToDate);
+    } else {
+      setToDate(maxDate);
+    }
+    
+    // Clear previous results when dates change
+    setHighLowData(null);
+    setError(null);
+  };
+
+  // Handle to date change with automatic from date adjustment
+  const handleToDateChange = (newToDate) => {
+    setToDate(newToDate);
+    
+    // Calculate new from date (to date - 6 days) - trading week Wednesday to Tuesday
+    const newFromDate = addDaysToDate(newToDate, -6);
+    
+    // Ensure the new from date is not in the future relative to current constraints
+    setFromDate(newFromDate);
+    
+    // Clear previous results when dates change
+    setHighLowData(null);
+    setError(null);
+  };
+
   // Handle instrument selection
   const handleInstrumentSelect = (instrument) => {
     setSelectedInstrument(instrument);
@@ -741,28 +789,30 @@ const Analytics = () => {
                       <div className="date-cell">
                         <label className="config-label small-label">
                           <CalendarDaysIcon className="label-icon" /> From
+                          <span className="auto-adjust-hint" title="Automatically adjusts To date to +6 days">📅</span>
                         </label>
                         <input
                           type="date"
                           value={fromDate}
-                          onChange={(e) => setFromDate(e.target.value)}
+                          onChange={(e) => handleFromDateChange(e.target.value)}
                           className="date-input compact"
                           max={(() => {
                             const maxDate = new Date();
                             maxDate.setDate(maxDate.getDate() - 2);
                             return maxDate.toISOString().split('T')[0];
                           })()} 
-                          aria-label="From date (must be earlier than To date)"
+                          aria-label="From date (automatically adjusts To date to +6 days)"
                         />
                       </div>
                       <div className="date-cell">
                         <label className="config-label small-label">
                           <CalendarDaysIcon className="label-icon" /> To
+                          <span className="auto-adjust-hint" title="Automatically adjusts From date to -6 days">📅</span>
                         </label>
                         <input
                           type="date"
                           value={toDate}
-                          onChange={(e) => setToDate(e.target.value)}
+                          onChange={(e) => handleToDateChange(e.target.value)}
                           className="date-input compact"
                           min={fromDate}
                           max={(() => {
@@ -770,7 +820,7 @@ const Analytics = () => {
                             maxDate.setDate(maxDate.getDate() - 2);
                             return maxDate.toISOString().split('T')[0];
                           })()} 
-                          aria-label="To date (must be after From date)"
+                          aria-label="To date (automatically adjusts From date to -6 days)"
                         />
                       </div>
                     </div>
@@ -779,6 +829,7 @@ const Analytics = () => {
                   {/* Inline Extended Tips (optional expansion could be future) */}
                   <div className="inline-help" role="note">
                     <p>Market hours applied automatically (09:15–15:30). Holidays excluded.</p>
+                    <p>💡 Tip: Selecting a date automatically adjusts the other date by ±6 days (trading week: Wed-Tue).</p>
                   </div>
 
                   {/* Actions */}
