@@ -28,42 +28,73 @@ class FyersService {
 
   // Generate app ID hash (required for Fyers)
   async generateAppIdHash() {
+    console.log('=== Generating App ID Hash ===');
+    console.log('Client ID:', this.clientId);
+    console.log('Client Secret:', this.clientSecret ? 'Present (length: ' + this.clientSecret.length + ')' : 'Missing');
+    
+    if (!this.clientId || !this.clientSecret) {
+      throw new Error('Client ID or Client Secret missing from environment variables');
+    }
+    
     const message = `${this.clientId}:${this.clientSecret}`;
+    console.log('Hash input message format: CLIENT_ID:CLIENT_SECRET');
+    
     const encoder = new TextEncoder();
     const data = encoder.encode(message);
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    console.log('Generated hash:', hash);
+    return hash;
   }
 
   // Step 2: Exchange auth code for access token
   async getAccessToken(authCode) {
     try {
+      console.log('=== Getting Access Token ===');
+      console.log('Auth Code:', authCode);
+      console.log('Client ID:', this.clientId);
+      console.log('Client Secret:', this.clientSecret ? 'Present' : 'Missing');
+      console.log('Redirect URL:', this.redirectUrl);
+      
       const appIdHash = await this.generateAppIdHash();
+      console.log('Generated App ID Hash:', appIdHash);
+      
+      const requestBody = {
+        grant_type: 'authorization_code',
+        appIdHash: appIdHash,
+        code: authCode
+      };
+      
+      console.log('Request body:', requestBody);
+      console.log('API URL:', `${this.baseUrl}/validate-authcode`);
       
       const response = await fetch(`${this.baseUrl}/validate-authcode`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          grant_type: 'authorization_code',
-          appIdHash: appIdHash,
-          code: authCode
-        })
+        body: JSON.stringify(requestBody)
       });
 
+      console.log('Response status:', response.status);
+      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+      
       const data = await response.json();
+      console.log('Response data:', data);
       
       if (data.s === 'ok') {
         this.accessToken = data.access_token;
         localStorage.setItem('fyers_access_token', this.accessToken);
+        console.log('✅ Access token received and stored');
         return data.access_token;
       } else {
-        throw new Error(data.message || 'Failed to get access token');
+        console.error('❌ API returned error:', data);
+        throw new Error(data.message || `API Error: ${JSON.stringify(data)}`);
       }
     } catch (error) {
-      console.error('Error getting access token:', error);
+      console.error('❌ Error getting access token:', error);
       throw error;
     }
   }
