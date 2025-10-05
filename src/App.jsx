@@ -3,6 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import Login from './components/Login';
 import AuthCallback from './components/AuthCallback';
+import FyersCallback from './components/FyersCallback';
+import FyersTest from './components/FyersTest';
+import FyersDebug from './components/FyersDebug';
 import Dashboard from './components/layout/Dashboard';
 import WebSocketDebugger from './components/WebSocketDebugger';
 import AuthService from './services/AuthService';
@@ -24,6 +27,12 @@ function App() {
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {
+        // Skip auth check for Fyers-specific routes
+        if (location.pathname === '/fyers-test' || location.pathname === '/fyers-callback' || location.pathname === '/fyers-debug') {
+          setIsLoading(false);
+          return;
+        }
+
         if (AuthService.isAuthenticated()) {
           const userInfo = AuthService.getUserInfo();
           
@@ -136,6 +145,18 @@ function App() {
               onAuthError={handleLoginError}
             />
           } 
+        />
+        <Route 
+          path="/fyers-callback" 
+          element={<FyersCallback />} 
+        />
+        <Route 
+          path="/fyers-test" 
+          element={<FyersTest />} 
+        />
+        <Route 
+          path="/fyers-debug" 
+          element={<FyersDebug />} 
         />
         <Route 
           path="/dashboard" 

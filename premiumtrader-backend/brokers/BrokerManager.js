@@ -1,5 +1,6 @@
 import ZerodhaBroker from './ZerodhaBroker.js';
 import BreezeBroker from './BreezeBroker.js';
+import FyersBroker from './FyersBroker.js';
 
 export class BrokerManager {
   constructor() {
@@ -21,6 +22,14 @@ export class BrokerManager {
       secretKey: process.env.BREEZE_SECRET_KEY
     }));
 
+    // Initialize Fyers broker
+    this.brokers.set('fyers', new FyersBroker({
+      clientId: process.env.FYERS_CLIENT_ID,
+      clientSecret: process.env.FYERS_CLIENT_SECRET,
+      redirectUrl: process.env.FYERS_REDIRECT_URL,
+      baseUrl: process.env.FYERS_BASE_URL
+    }));
+
     // Set default broker
     this.activeBroker = this.brokers.get('zerodha');
   }
@@ -36,7 +45,8 @@ export class BrokerManager {
   getBrokerDisplayName(brokerId) {
     const names = {
       'zerodha': 'Zerodha Kite',
-      'breeze': 'ICICI Breeze'
+      'breeze': 'ICICI Breeze',
+      'fyers': 'Fyers'
     };
     return names[brokerId] || brokerId;
   }
@@ -47,6 +57,8 @@ export class BrokerManager {
         return !!(process.env.KITE_API_KEY && process.env.KITE_API_SECRET);
       case 'breeze':
         return !!(process.env.BREEZE_API_KEY && process.env.BREEZE_SECRET_KEY);
+      case 'fyers':
+        return !!(process.env.FYERS_CLIENT_ID && process.env.FYERS_CLIENT_SECRET);
       default:
         return false;
     }
@@ -247,6 +259,15 @@ export class BrokerManager {
         }
         if (!process.env.BREEZE_SECRET_KEY) {
           return { valid: false, error: 'BREEZE_SECRET_KEY environment variable is required' };
+        }
+        break;
+
+      case 'fyers':
+        if (!process.env.FYERS_CLIENT_ID) {
+          return { valid: false, error: 'FYERS_CLIENT_ID environment variable is required' };
+        }
+        if (!process.env.FYERS_CLIENT_SECRET) {
+          return { valid: false, error: 'FYERS_CLIENT_SECRET environment variable is required' };
         }
         break;
     }

@@ -105,6 +105,16 @@ const Login = ({ onLoginSuccess }) => {
             )}
             {error && <p style={{ color: 'tomato', marginTop: '8px' }}>{error}</p>}
           </div>
+
+          {/* Fyers Test Link */}
+          <div className="fyers-test-link">
+            <a href="/fyers-test" className="test-link">
+              🚀 Test Fyers API Integration
+            </a>
+            <p className="test-link-description">
+              Test Fyers authentication and historical options data
+            </p>
+          </div>
         </div>
       </div>
     </div>

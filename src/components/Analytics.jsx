@@ -10,6 +10,7 @@ import {
 } from '@heroicons/react/24/outline';
 import InstrumentSearch from './InstrumentSearch';
 import TradingService from '../services/TradingService';
+import { useFyersAuth } from '../hooks/useFyersAuth';
 import './Analytics.css';
 
 const Analytics = () => {
@@ -31,6 +32,11 @@ const Analytics = () => {
   const [debugInfo, setDebugInfo] = useState({ pe: { candidates: [], resolved: null }, ce: { candidates: [], resolved: null } });
   const peSubscribed = useRef(false);
   const ceSubscribed = useRef(false);
+  
+  // Fyers integration
+  const { isAuthenticated: fyersAuth, login: fyersLogin, error: fyersError, userProfile, fyersService } = useFyersAuth();
+  const [fyersData, setFyersData] = useState(null);
+  const [fyersLoading, setFyersLoading] = useState(false);
   
   // Set default dates to a week ago (more likely to have data)
   const getDefaultDates = () => {
@@ -647,6 +653,54 @@ const Analytics = () => {
   useEffect(() => { if (peOptionToken) fetchHMAIfNeeded(peOptionToken, peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe]);
   useEffect(() => { if (ceOptionToken) fetchHMAIfNeeded(ceOptionToken, ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe]);
   
+  // Fyers Integration Functions
+  const fetchFyersOptionData = async () => {
+    if (!fyersAuth) {
+      fyersLogin();
+      return;
+    }
+
+    setFyersLoading(true);
+    try {
+      // Example: Fetch NIFTY option data
+      const expiry = new Date('2024-10-17'); // Adjust based on current week
+      const underlying = 'NIFTY';
+      const strike = 25000; // Adjust based on current market price
+      
+      const [callData, putData] = await Promise.all([
+        fyersService.getOptionData(underlying, expiry, strike, 'CE', fromDate, toDate),
+        fyersService.getOptionData(underlying, expiry, strike, 'PE', fromDate, toDate)
+      ]);
+
+      setFyersData({
+        call: callData,
+        put: putData,
+        symbol: `${underlying} ${strike} ${expiry.toLocaleDateString()}`,
+        strike,
+        expiry
+      });
+
+    } catch (error) {
+      console.error('Error fetching Fyers option data:', error);
+    } finally {
+      setFyersLoading(false);
+    }
+  };
+
+  const fetchFyersOptionChain = async () => {
+    if (!fyersAuth) {
+      fyersLogin();
+      return;
+    }
+
+    try {
+      const optionChain = await fyersService.getOptionChain('NSE:NIFTY50-INDEX', 10);
+      console.log('Fyers Option Chain:', optionChain);
+    } catch (error) {
+      console.error('Error fetching option chain:', error);
+    }
+  };
+  
 
 
   return (
@@ -685,6 +739,75 @@ const Analytics = () => {
           <div className="debug-notes">If no resolution, verify actual contract symbol via backend search endpoint. Strike or expiry formatting may differ.</div>
         </div>
       )}
+
+      {/* Fyers API Integration Section */}
+      <div className="fyers-section">
+        <div className="fyers-header">
+          <h3>Fyers API - Options Data</h3>
+          {fyersAuth ? (
+            <div className="fyers-status">
+              <span className="status-indicator success">Connected</span>
+              {userProfile && <span className="user-info">Welcome, {userProfile.name}</span>}
+            </div>
+          ) : (
+            <button onClick={fyersLogin} className="fyers-login-btn">
+              Connect to Fyers
+            </button>
+          )}
+        </div>
+        
+        {fyersAuth && (
+          <div className="fyers-controls">
+            <button 
+              onClick={fetchFyersOptionData}
+              disabled={fyersLoading}
+              className="fyers-action-btn"
+            >
+              {fyersLoading ? 'Loading...' : 'Fetch Option Data'}
+            </button>
+            
+            <button 
+              onClick={fetchFyersOptionChain}
+              className="fyers-action-btn"
+            >
+              Get Option Chain
+            </button>
+          </div>
+        )}
+        
+        {fyersData && (
+          <div className="fyers-data-display">
+            <h4>Option Data: {fyersData.symbol}</h4>
+            <div className="option-data-grid">
+              <div className="option-data-card">
+                <h5>Call Option (CE)</h5>
+                <div className="data-count">{fyersData.call?.length || 0} data points</div>
+                {fyersData.call?.length > 0 && (
+                  <div className="price-info">
+                    <span>Latest Close: ₹{fyersData.call[fyersData.call.length - 1]?.close}</span>
+                  </div>
+                )}
+              </div>
+              
+              <div className="option-data-card">
+                <h5>Put Option (PE)</h5>
+                <div className="data-count">{fyersData.put?.length || 0} data points</div>
+                {fyersData.put?.length > 0 && (
+                  <div className="price-info">
+                    <span>Latest Close: ₹{fyersData.put[fyersData.put.length - 1]?.close}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {fyersError && (
+          <div className="fyers-error">
+            <p>Error: {fyersError}</p>
+          </div>
+        )}
+      </div>
 
       {/* Main Content Grid */}
       <div className="analytics-main">
