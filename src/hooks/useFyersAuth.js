@@ -16,14 +16,15 @@ export const useFyersAuth = () => {
       fetchUserProfile();
     }
 
-    // Handle callback from Fyers
+    // Handle callback from Fyers - check for auth code in URL
     const urlParams = new URLSearchParams(window.location.search);
     const authCode = urlParams.get('code');
     const state = urlParams.get('state');
     const storedState = localStorage.getItem('fyers_state');
 
-    if (authCode && window.location.pathname.includes('fyers-callback')) {
-      if (state === storedState) {
+    // Handle callback on any page if auth code is present
+    if (authCode) {
+      if (state && state === storedState) {
         handleAuthCallback(authCode);
       } else {
         setError('Invalid state parameter. Please try logging in again.');

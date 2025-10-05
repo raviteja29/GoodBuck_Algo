@@ -3,6 +3,7 @@ import { useFyersAuth } from '../hooks/useFyersAuth';
 
 const FyersDebug = () => {
   const [debugInfo, setDebugInfo] = useState({});
+  const [manualAuthCode, setManualAuthCode] = useState('');
   const { isAuthenticated, login, error, userProfile, fyersService } = useFyersAuth();
 
   useEffect(() => {
@@ -27,6 +28,11 @@ const FyersDebug = () => {
         baseUrl: import.meta.env.VITE_FYERS_BASE_URL
       }
     });
+
+    // If auth code is in URL, set it for manual processing
+    if (authCode) {
+      setManualAuthCode(authCode);
+    }
   }, [isAuthenticated]);
 
   const generateAuthUrl = () => {
@@ -35,6 +41,21 @@ const FyersDebug = () => {
       return authUrl;
     } catch (error) {
       return `Error: ${error.message}`;
+    }
+  };
+
+  const processManualAuthCode = async () => {
+    if (!manualAuthCode) {
+      alert('Please enter an auth code');
+      return;
+    }
+
+    try {
+      await fyersService.getAccessToken(manualAuthCode);
+      alert('Authentication successful! Check status above.');
+      window.location.reload();
+    } catch (error) {
+      alert(`Authentication failed: ${error.message}`);
     }
   };
 
@@ -66,6 +87,42 @@ const FyersDebug = () => {
         <pre style={{ background: '#0f172a', padding: '1rem', borderRadius: '8px' }}>
           {JSON.stringify(debugInfo, null, 2)}
         </pre>
+      </div>
+
+      <div style={{ marginBottom: '2rem' }}>
+        <h2>Manual Auth Code Processing</h2>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '1rem' }}>
+          <input
+            type="text"
+            value={manualAuthCode}
+            onChange={(e) => setManualAuthCode(e.target.value)}
+            placeholder="Paste auth code here"
+            style={{
+              flex: 1,
+              padding: '0.5rem',
+              backgroundColor: '#0f172a',
+              color: 'white',
+              border: '1px solid #374151',
+              borderRadius: '4px'
+            }}
+          />
+          <button 
+            onClick={processManualAuthCode}
+            style={{ 
+              padding: '0.5rem 1rem', 
+              backgroundColor: '#22c55e', 
+              color: 'white', 
+              border: 'none', 
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Process Auth Code
+          </button>
+        </div>
+        <p style={{ fontSize: '0.9rem', color: '#9ca3af' }}>
+          If redirected from production, paste the auth code here to complete authentication.
+        </p>
       </div>
 
       <div style={{ marginBottom: '2rem' }}>

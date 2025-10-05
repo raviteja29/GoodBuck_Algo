@@ -2,7 +2,10 @@ class FyersService {
   constructor() {
     this.clientId = import.meta.env.VITE_FYERS_CLIENT_ID;
     this.clientSecret = import.meta.env.VITE_FYERS_CLIENT_SECRET;
+    
+    // Use the redirect URL from environment (matches Fyers app registration)
     this.redirectUrl = import.meta.env.VITE_FYERS_REDIRECT_URL;
+    
     this.baseUrl = import.meta.env.VITE_FYERS_BASE_URL || 'https://api-t1.fyers.in/api/v3';
     this.accessToken = localStorage.getItem('fyers_access_token');
   }

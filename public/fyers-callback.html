@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fyers Authentication Handler</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: white;
+            margin: 0;
+            padding: 2rem;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 2rem;
+            text-align: center;
+            max-width: 500px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 1rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error {
+            color: #ef4444;
+            margin-top: 1rem;
+        }
+        .success {
+            color: #22c55e;
+            margin-top: 1rem;
+        }
+        .auth-code {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: monospace;
+            word-break: break-all;
+            margin: 1rem 0;
+        }
+        .copy-btn {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 0.5rem;
+        }
+        .copy-btn:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Fyers Authentication</h1>
+        <div class="spinner" id="spinner"></div>
+        <p id="status">Processing authentication...</p>
+        <div id="authCode" class="auth-code" style="display: none;"></div>
+        <div id="actions" style="display: none;">
+            <button class="copy-btn" onclick="copyAuthCode()">Copy Auth Code</button>
+            <button class="copy-btn" onclick="openLocalApp()">Open Local App</button>
+        </div>
+        <div id="instructions" style="display: none;">
+            <h3>Manual Steps:</h3>
+            <ol style="text-align: left;">
+                <li>Copy the auth code above</li>
+                <li>Go to <a href="http://localhost:5173/fyers-debug" target="_blank" style="color: #3b82f6;">http://localhost:5173/fyers-debug</a></li>
+                <li>Paste the auth code in the debug page</li>
+                <li>Complete the authentication manually</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        let authCode = null;
+
+        function extractAuthCode() {
+            const urlParams = new URLSearchParams(window.location.search);
+            authCode = urlParams.get('code');
+            const state = urlParams.get('state');
+            const error = urlParams.get('error');
+
+            const statusEl = document.getElementById('status');
+            const spinnerEl = document.getElementById('spinner');
+            const authCodeEl = document.getElementById('authCode');
+            const actionsEl = document.getElementById('actions');
+            const instructionsEl = document.getElementById('instructions');
+
+            if (error) {
+                spinnerEl.style.display = 'none';
+                statusEl.innerHTML = `<div class="error">❌ Authentication failed: ${error}</div>`;
+                return;
+            }
+
+            if (authCode) {
+                spinnerEl.style.display = 'none';
+                statusEl.innerHTML = '<div class="success">✅ Authentication successful!</div>';
+                authCodeEl.textContent = authCode;
+                authCodeEl.style.display = 'block';
+                actionsEl.style.display = 'block';
+                instructionsEl.style.display = 'block';
+
+                // Try to automatically send to localhost
+                tryAutoRedirect();
+            } else {
+                spinnerEl.style.display = 'none';
+                statusEl.innerHTML = '<div class="error">❌ No authentication code found</div>';
+            }
+        }
+
+        function tryAutoRedirect() {
+            // Try to redirect to localhost with the auth code
+            const localUrl = `http://localhost:5173/fyers-debug?code=${authCode}&state=${new URLSearchParams(window.location.search).get('state')}`;
+            
+            // Check if localhost is accessible
+            fetch('http://localhost:5173/')
+                .then(() => {
+                    document.getElementById('status').innerHTML += '<br><div class="success">🚀 Redirecting to local app...</div>';
+                    setTimeout(() => {
+                        window.location.href = localUrl;
+                    }, 2000);
+                })
+                .catch(() => {
+                    document.getElementById('status').innerHTML += '<br><div class="error">⚠️ Local app not accessible. Use manual steps below.</div>';
+                });
+        }
+
+        function copyAuthCode() {
+            navigator.clipboard.writeText(authCode).then(() => {
+                alert('Auth code copied to clipboard!');
+            });
+        }
+
+        function openLocalApp() {
+            const localUrl = `http://localhost:5173/fyers-debug?code=${authCode}&state=${new URLSearchParams(window.location.search).get('state')}`;
+            window.open(localUrl, '_blank');
+        }
+
+        // Start processing when page loads
+        window.onload = extractAuthCode;
+    </script>
+</body>
+</html>
