@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import FyersService from '../services/FyersService';
 
 export const useFyersAuth = () => {
@@ -6,11 +6,15 @@ export const useFyersAuth = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
+  const authCodeProcessed = useRef(false); // Prevent duplicate processing
 
   useEffect(() => {
+    console.log('=== useFyersAuth useEffect triggered ===');
+    
     // Check if already authenticated
     const token = localStorage.getItem('fyers_access_token');
     if (token) {
+      console.log('Found existing token, setting authenticated state');
       FyersService.accessToken = token;
       setIsAuthenticated(true);
       fetchUserProfile();
@@ -22,13 +26,25 @@ export const useFyersAuth = () => {
     const state = urlParams.get('state');
     const storedState = localStorage.getItem('fyers_state');
 
-    // Handle callback on any page if auth code is present
-    if (authCode) {
+    console.log('URL Params check:');
+    console.log('- Auth Code:', authCode ? 'Present' : 'Missing');
+    console.log('- State:', state);
+    console.log('- Stored State:', storedState);
+    console.log('- Already Processed:', authCodeProcessed.current);
+
+    // Handle callback on any page if auth code is present and not already processed
+    if (authCode && !authCodeProcessed.current) {
+      authCodeProcessed.current = true; // Mark as being processed
+      
       if (state && state === storedState) {
+        console.log('✅ State validation passed, processing auth code');
         handleAuthCallback(authCode);
       } else {
+        console.error('❌ State validation failed');
         setError('Invalid state parameter. Please try logging in again.');
       }
+    } else if (authCode && authCodeProcessed.current) {
+      console.log('⚠️ Auth code already processed, skipping');
     }
   }, []);
 
@@ -43,23 +59,34 @@ export const useFyersAuth = () => {
   };
 
   const handleAuthCallback = async (authCode) => {
+    console.log('=== HANDLE AUTH CALLBACK START ===');
+    console.log('Received auth code:', authCode);
+    
     setLoading(true);
     setError(null);
     
     try {
+      console.log('Calling FyersService.getAccessToken...');
       await FyersService.getAccessToken(authCode);
+      
+      console.log('✅ Token exchange successful');
       setIsAuthenticated(true);
       
       // Fetch user profile
+      console.log('Fetching user profile...');
       await fetchUserProfile();
       
       // Clean up URL
+      console.log('Cleaning up URL and state...');
       window.history.replaceState({}, document.title, window.location.pathname);
       
       // Clean up state
       localStorage.removeItem('fyers_state');
       
+      console.log('✅ Authentication flow completed successfully');
+      
     } catch (err) {
+      console.error('❌ Authentication callback error:', err);
       setError(err.message);
       console.error('Authentication error:', err);
     } finally {

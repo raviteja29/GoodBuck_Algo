@@ -52,11 +52,18 @@ class FyersService {
   // Step 2: Exchange auth code for access token
   async getAccessToken(authCode) {
     try {
-      console.log('=== Getting Access Token ===');
-      console.log('Auth Code:', authCode);
+      console.log('=== FYERS TOKEN EXCHANGE START ===');
+      console.log('Auth Code received:', authCode);
+      console.log('Auth Code length:', authCode ? authCode.length : 'null');
+      
+      // Show environment variables (safely)
       console.log('Client ID:', this.clientId);
-      console.log('Client Secret:', this.clientSecret ? 'Present' : 'Missing');
+      console.log('Client Secret available:', !!this.clientSecret);
       console.log('Redirect URL:', this.redirectUrl);
+      
+      if (!this.clientId || !this.clientSecret) {
+        throw new Error('Missing Client ID or Client Secret in environment variables');
+      }
       
       const appIdHash = await this.generateAppIdHash();
       console.log('Generated App ID Hash:', appIdHash);
@@ -67,8 +74,8 @@ class FyersService {
         code: authCode
       };
       
+      console.log('Request URL:', `${this.baseUrl}/validate-authcode`);
       console.log('Request body:', requestBody);
-      console.log('API URL:', `${this.baseUrl}/validate-authcode`);
       
       const response = await fetch(`${this.baseUrl}/validate-authcode`, {
         method: 'POST',
@@ -79,15 +86,14 @@ class FyersService {
       });
 
       console.log('Response status:', response.status);
-      console.log('Response headers:', Object.fromEntries(response.headers.entries()));
       
       const data = await response.json();
-      console.log('Response data:', data);
+      console.log('API Response:', data);
       
       if (data.s === 'ok') {
         this.accessToken = data.access_token;
         localStorage.setItem('fyers_access_token', this.accessToken);
-        console.log('✅ Access token received and stored');
+        console.log('✅ SUCCESS: Access token received and stored');
         return data.access_token;
       } else {
         console.error('❌ API returned error:', data);
