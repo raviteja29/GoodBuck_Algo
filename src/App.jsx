@@ -6,6 +6,7 @@ import AuthCallback from './components/AuthCallback';
 import FyersCallback from './components/FyersCallback';
 import FyersTest from './components/FyersTest';
 import FyersDebug from './components/FyersDebug';
+import SimpleLoginTest from './components/SimpleLoginTest';
 import Dashboard from './components/layout/Dashboard';
 import WebSocketDebugger from './components/WebSocketDebugger';
 import AuthService from './services/AuthService';
@@ -28,7 +29,7 @@ function App() {
     const checkAuthStatus = async () => {
       try {
         // Skip auth check for Fyers-specific routes
-        if (location.pathname === '/fyers-test' || location.pathname === '/fyers-callback' || location.pathname === '/fyers-debug') {
+        if (location.pathname === '/fyers-test' || location.pathname === '/fyers-callback' || location.pathname === '/fyers-debug' || location.pathname === '/simple-login-test') {
           setIsLoading(false);
           return;
         }
@@ -157,6 +158,10 @@ function App() {
         <Route 
           path="/fyers-debug" 
           element={<FyersDebug />} 
+        />
+        <Route 
+          path="/simple-login-test" 
+          element={<SimpleLoginTest />} 
         />
         <Route 
           path="/dashboard" 

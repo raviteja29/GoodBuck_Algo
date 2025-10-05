@@ -69,8 +69,23 @@ export const useFyersAuth = () => {
 
   const login = () => {
     setError(null);
-    const authUrl = FyersService.getAuthUrl();
-    window.location.href = authUrl;
+    try {
+      const authUrl = FyersService.getAuthUrl();
+      console.log('Fyers Auth URL:', authUrl);
+      
+      if (!authUrl) {
+        setError('Failed to generate auth URL');
+        return;
+      }
+      
+      // Add a small delay to ensure state is updated
+      setTimeout(() => {
+        window.location.href = authUrl;
+      }, 100);
+    } catch (err) {
+      setError(`Login failed: ${err.message}`);
+      console.error('Login error:', err);
+    }
   };
 
   const logout = () => {
