@@ -4,6 +4,7 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import Login from './components/Login';
 import AuthCallback from './components/AuthCallback';
 import FyersCallback from './components/FyersCallback';
+import FyersDebugCallback from './components/FyersDebugCallback';
 import FyersTest from './components/FyersTest';
 import FyersDebug from './components/FyersDebug';
 import SimpleLoginTest from './components/SimpleLoginTest';
@@ -29,7 +30,7 @@ function App() {
     const checkAuthStatus = async () => {
       try {
         // Skip auth check for Fyers-specific routes
-        if (location.pathname === '/fyers-test' || location.pathname === '/fyers-callback' || location.pathname === '/fyers-debug' || location.pathname === '/simple-login-test') {
+        if (location.pathname === '/fyers-test' || location.pathname === '/fyers-callback' || location.pathname === '/fyers-debug-callback' || location.pathname === '/fyers-debug' || location.pathname === '/simple-login-test') {
           setIsLoading(false);
           return;
         }
@@ -150,6 +151,10 @@ function App() {
         <Route 
           path="/fyers-callback" 
           element={<FyersCallback />} 
+        />
+        <Route 
+          path="/fyers-debug-callback" 
+          element={<FyersDebugCallback />} 
         />
         <Route 
           path="/fyers-test" 
