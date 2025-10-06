@@ -191,6 +191,38 @@ app.post('/api/generate_session', async (req, res) => {
   }
 });
 
+// === BROKER MANAGEMENT ENDPOINTS ===
+let activeBroker = 'zerodha';
+const baseBrokers = () => {
+  return [
+    { id: 'zerodha', name: 'Zerodha', isAvailable: !!process.env.KITE_API_KEY },
+    { id: 'breeze', name: 'ICICI Breeze', isAvailable: !!process.env.BREEZE_API_KEY },
+    { id: 'fyers', name: 'Fyers', isAvailable: !!process.env.FYERS_CLIENT_ID }
+  ];
+};
+
+app.get('/api/brokers', (req, res) => {
+  const brokers = baseBrokers();
+  if (!brokers.find(b => b.id === activeBroker)) {
+    activeBroker = brokers[0]?.id || null;
+  }
+  res.json({ brokers, activeBroker });
+});
+
+app.post('/api/brokers/set', (req, res) => {
+  try {
+    const { brokerId } = req.body || {};
+    const brokers = baseBrokers();
+    if (!brokerId) return res.status(400).json({ error: 'brokerId required' });
+    if (!brokers.find(b => b.id === brokerId)) return res.status(400).json({ error: 'Unknown brokerId' });
+    activeBroker = brokerId;
+    res.json({ activeBroker, brokers });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+// === END BROKER MANAGEMENT ===
+
 // === FYERS PROXY ENDPOINTS (hide client secret & manage refresh) ===
 // Generates auth URL server-side using configured client_id and redirect
 app.get('/api/fyers/login-url', (req, res) => {

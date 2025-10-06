@@ -7,15 +7,11 @@ class AuthService {
 
   async initializeBrokers() {
     try {
-      const response = await fetch('https://goodbuck-algo.onrender.com/api/brokers', {
+      const response = await fetch('/api/brokers', {
         method: 'GET',
         credentials: 'include'
       });
       const data = await response.json();
-      // Ensure fyers appears if backend doesn't yet provide it
-      if (!data.brokers.find(b => b.id === 'fyers')) {
-        data.brokers.push({ id: 'fyers', name: 'Fyers', isAvailable: true });
-      }
       this.availableBrokers = data.brokers;
       this.currentBroker = data.activeBroker || (data.brokers[0] && data.brokers[0].id);
       return data;
@@ -34,7 +30,7 @@ class AuthService {
 
   async setBroker(brokerId) {
     try {
-      const response = await fetch('https://goodbuck-algo.onrender.com/api/brokers/set', {
+      const response = await fetch('/api/brokers/set', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
