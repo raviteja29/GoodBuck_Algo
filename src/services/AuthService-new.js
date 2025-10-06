@@ -11,15 +11,24 @@ class AuthService {
         method: 'GET',
         credentials: 'include'
       });
-      
       const data = await response.json();
+      // Ensure fyers appears if backend doesn't yet provide it
+      if (!data.brokers.find(b => b.id === 'fyers')) {
+        data.brokers.push({ id: 'fyers', name: 'Fyers', isAvailable: true });
+      }
       this.availableBrokers = data.brokers;
-      this.currentBroker = data.activeBroker;
-      
+      this.currentBroker = data.activeBroker || (data.brokers[0] && data.brokers[0].id);
       return data;
     } catch (error) {
       console.error('Failed to initialize brokers:', error);
-      throw error;
+      // Fallback static list with fyers included
+      this.availableBrokers = [
+        { id: 'zerodha', name: 'Zerodha', isAvailable: true },
+        { id: 'breeze', name: 'ICICI Breeze', isAvailable: true },
+        { id: 'fyers', name: 'Fyers', isAvailable: true }
+      ];
+      this.currentBroker = 'fyers';
+      return { brokers: this.availableBrokers, activeBroker: this.currentBroker };
     }
   }
 
@@ -70,7 +79,9 @@ class AuthService {
       const apiKey = import.meta.env.VITE_KITE_API_KEY;
       return `https://kite.zerodha.com/connect/login?v=3&api_key=${apiKey}`;
     } else if (this.currentBroker === 'breeze') {
-      // ICICI Breeze doesn't use web-based login
+      return null; // Breeze custom flow
+    } else if (this.currentBroker === 'fyers') {
+      // Fyers login handled by FyersService; return placeholder used by UI if needed
       return null;
     }
     return null;
@@ -158,6 +169,10 @@ class AuthService {
 
   requiresRequestToken() {
     return this.currentBroker === 'zerodha';
+  }
+
+  requiresFyersOAuth() {
+    return this.currentBroker === 'fyers';
   }
 }
 

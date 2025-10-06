@@ -19,33 +19,32 @@ export const useFyersAuth = () => {
       fetchUserProfile();
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
-    // Accept both code and auth_code just in case
+    const url = new URL(window.location.href);
+    const urlParams = url.searchParams;
     let authCode = urlParams.get('code') || urlParams.get('auth_code');
     const state = urlParams.get('state');
     const storedState = localStorage.getItem('fyers_state');
 
-    if (authCode) {
-      authCode = authCode.trim();
-    }
+    if (authCode) authCode = authCode.trim();
 
-    console.log('URL Params check:');
-    console.log('- Auth Code present:', !!authCode, authCode ? 'length=' + authCode.length : '');
-    console.log('- State:', state);
-    console.log('- Stored State:', storedState);
-    console.log('- Already Processed:', authCodeProcessed.current);
+    console.log('URL Params check:', { hasAuthCode: !!authCode, state, storedState, processed: authCodeProcessed.current });
 
     if (authCode && !authCodeProcessed.current) {
-      if (state && state === storedState) {
-        authCodeProcessed.current = true; // lock immediately
-        console.log('✅ State validation passed, processing auth code');
+      // Early single-use guard check
+      if (sessionStorage.getItem(`fyers_code_${authCode}`)) {
+        console.warn('[FYERS] Auth code already guarded in session, skipping');
+      } else if (state && state === storedState) {
+        authCodeProcessed.current = true;
+        // Clean URL immediately to avoid re-processing on rerenders
+        url.searchParams.delete('code');
+        url.searchParams.delete('auth_code');
+        url.searchParams.delete('state');
+        window.history.replaceState({}, document.title, url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''));
         handleAuthCallback(authCode);
       } else {
         console.error('❌ State validation failed');
         setError('Invalid state parameter. Please try logging in again.');
       }
-    } else if (authCode && authCodeProcessed.current) {
-      console.log('⚠️ Auth code already processed, skipping');
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -95,10 +94,10 @@ export const useFyersAuth = () => {
     }
   };
 
-  const login = () => {
+  const login = async () => {
     setError(null);
     try {
-      const authUrl = FyersService.getAuthUrl();
+      const authUrl = await FyersService.getAuthUrl();
       if (!authUrl) {
         setError('Failed to generate auth URL');
         return;

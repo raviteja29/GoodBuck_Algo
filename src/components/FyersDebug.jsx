@@ -37,8 +37,8 @@ const FyersDebug = () => {
 
   const generateAuthUrl = () => {
     try {
-      const authUrl = fyersService.getAuthUrl();
-      return authUrl;
+      // Display placeholder since getAuthUrl is async now
+      return '(Auth URL generated on click)';
     } catch (error) {
       return `Error: ${error.message}`;
     }
@@ -108,16 +108,17 @@ const FyersDebug = () => {
           />
           <button 
             onClick={processManualAuthCode}
+            disabled={!manualAuthCode || isAuthenticated || sessionStorage.getItem(`fyers_code_${manualAuthCode}`)}
             style={{ 
               padding: '0.5rem 1rem', 
-              backgroundColor: '#22c55e', 
+              backgroundColor: isAuthenticated ? '#64748b' : '#22c55e', 
               color: 'white', 
               border: 'none', 
               borderRadius: '4px',
-              cursor: 'pointer'
+              cursor: isAuthenticated ? 'not-allowed' : 'pointer'
             }}
           >
-            Process Auth Code
+            {isAuthenticated ? 'Already Authenticated' : 'Process Auth Code'}
           </button>
         </div>
         <p style={{ fontSize: '0.9rem', color: '#9ca3af' }}>

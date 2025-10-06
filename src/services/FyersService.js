@@ -5,15 +5,18 @@ class FyersService {
   constructor() {
     // Configuration from environment variables
     this.clientId = import.meta.env.VITE_FYERS_CLIENT_ID;
-    this.clientSecret = import.meta.env.VITE_FYERS_CLIENT_SECRET;
+    this.clientSecret = import.meta.env.VITE_FYERS_CLIENT_SECRET; // Will be deprecated client-side
     this.redirectUrl = import.meta.env.VITE_FYERS_REDIRECT_URL;
+    this.allowDirectFallback = import.meta.env.VITE_FYERS_DIRECT_FALLBACK === '1';
     // Separate bases as per docs
     this.apiBase = 'https://api-t1.fyers.in/api/v3';
     this.dataBase = 'https://api-t1.fyers.in/data';
 
     console.log('=== FYERS SERVICE INITIALIZATION ===');
     console.log('Client ID:', this.clientId);
-    console.log('Client Secret:', this.clientSecret ? 'Present' : 'Missing');
+    if (this.clientSecret) {
+      console.warn('[FYERS][SECURITY] clientSecret is present in frontend bundle. Remove VITE_FYERS_CLIENT_SECRET from env for production.');
+    }
     console.log('Redirect URL:', this.redirectUrl);
 
     // Check for existing combined token (should be clientId:access_token)
@@ -27,8 +30,11 @@ class FyersService {
       console.log('Found saved access token (length):', savedToken.length);
     }
   }
-
   async createAppIdHash() {
+    if (!this.allowDirectFallback) {
+      throw new Error('Direct fallback disabled');
+    }
+    if (!this.clientSecret) throw new Error('No client secret (fallback disabled)');
     // Browser hashing for fallback (will be removed once fully proxy-based)
     const text = `${this.clientId}:${this.clientSecret}`;
     const enc = new TextEncoder().encode(text);
@@ -37,93 +43,82 @@ class FyersService {
   }
 
   // Step 1: Generate authorization URL (based on SDK pattern)
-  getAuthUrl() {
-    // Try backend proxy first
+  async getAuthUrl() {
+    // Prefer backend proxy auth URL; fallback only if it fails
     try {
-      // Synchronous start of async IIFE to keep method signature simple
-      if (!this._proxyLoginFetch) {
-        this._proxyLoginFetch = fetch('/api/fyers/login-url')
-          .then(r=> r.ok ? r.json() : Promise.reject(new Error('proxy login url failed')))
-          .then(j=>{ if (j && j.url){ localStorage.setItem('fyers_state', j.state); return j.url; } throw new Error('Malformed proxy login response'); })
-          .catch(()=> null)
-          .finally(()=> { this._proxyLoginFetch = null; });
+      const resp = await fetch('/api/fyers/login-url', { cache: 'no-store' });
+      if (resp.ok) {
+        const j = await resp.json();
+        if (j && j.url && j.state) {
+          localStorage.setItem('fyers_state', j.state);
+          console.log('[FYERS] Using proxy auth URL');
+          return j.url;
+        }
+        console.warn('[FYERS] Proxy login-url malformed response, falling back');
+      } else {
+        console.warn('[FYERS] Proxy login-url failed status', resp.status);
       }
-      // Fire and forget; will fall back below if returns null
-    } catch(_) {}
-    // Original direct construction as fallback
-    console.log('=== GENERATING AUTH URL ===');
-    try {
-      const state = Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('fyers_state', state);
-      const params = new URLSearchParams({
-        client_id: this.clientId,
-        redirect_uri: this.redirectUrl,
-        response_type: 'code',
-        state: state
-      });
-      const authUrl = `${this.apiBase}/generate-authcode?${params.toString()}`;
-      console.log('Generated Auth URL:', authUrl);
-      return authUrl;
-    } catch (error) {
-      console.error('Error generating auth URL:', error);
-      throw error;
+    } catch (e) {
+      console.warn('[FYERS] Proxy login-url network error:', e.message);
     }
+    console.log('[FYERS] Falling back to direct auth URL construction');
+    const state = Math.random().toString(36).substring(2, 15);
+    localStorage.setItem('fyers_state', state);
+    const params = new URLSearchParams({
+      client_id: this.clientId,
+      redirect_uri: this.redirectUrl,
+      response_type: 'code',
+      state
+    });
+    return `${this.apiBase}/generate-authcode?${params.toString()}`;
   }
 
   // Step 2: Exchange auth code for access token (official flow)
   async getAccessToken(authCode) {
-    // Try proxy first (no hashing or secret exposure)
+    if (!authCode) throw new Error('Missing auth code');
+    // Single-use guard via sessionStorage
+    const guardKey = `fyers_code_${authCode}`;
+    if (sessionStorage.getItem(guardKey)) {
+      throw new Error('Auth code already processed (guard)');
+    }
+    sessionStorage.setItem(guardKey, '1');
+    // Proxy attempt first
+    let lastError = null;
     try {
       const proxyResp = await fetch('/api/fyers/validate-authcode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code: authCode }) });
-      if (proxyResp.ok){
+      if (proxyResp.ok) {
         const data = await proxyResp.json();
         if (data.s==='ok' && data.access_token){ this._storeTokens(data); return this.accessToken; }
+        lastError = new Error(data.message || 'Proxy exchange failed');
+        // If code invalid, do not fallback
+        if (data.code === -437) throw lastError;
+      } else {
+        lastError = new Error(`Proxy status ${proxyResp.status}`);
       }
-    } catch(_) { /* fall back */ }
-    console.log('=== GETTING ACCESS TOKEN ===');
-    if (authCode) {
-      console.log('Auth code length:', authCode.length, 'Starts with:', authCode.slice(0, 15), 'Ends with:', authCode.slice(-10));
+    } catch (e) {
+      lastError = e;
+      if (/already processed/.test(e.message)) throw e;
     }
-    try {
-      if (!this.clientId || !this.clientSecret) throw new Error('Missing Client ID or Client Secret');
-
-      const appIdHash = await this.createAppIdHash();
-      console.log('AppIdHash generated (first 12):', appIdHash.slice(0, 12));
-
-      const body = { grant_type: 'authorization_code', appIdHash, code: authCode };
-      console.log('POST /validate-authcode body keys:', Object.keys(body));
-
-      const response = await fetch(`${this.apiBase}/validate-authcode`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-
-      console.log('Token exchange HTTP status:', response.status);
-      const data = await response.json().catch(() => ({ s: 'error', message: 'Invalid JSON in response' }));
-      console.log('Raw token exchange response keys:', Object.keys(data));
-
-      if (data.s === 'ok' && data.access_token) {
-        this._storeTokens(data);
-        return this.accessToken;
-      }
-
-      // Provide enriched diagnostics for common -437
-      if (data.code === -437) {
-        const hints = [
-          'Auth code may have been already used (single-use). Retry full login.',
-            'State mismatch or page reloaded causing duplicate usage.',
-            'Ensure you are using the query param name "code" (not auth_code).',
-            'Check that appIdHash is SHA-256 of "client_id:client_secret" (with colon).',
-            'Auth code expires quickly. Complete exchange immediately after redirect.'
-        ];
-        console.error('❌ Error -437 (invalid auth code). Hints:', hints);
-      }
-      throw new Error(data.message || 'Token exchange failed');
-    } catch (err) {
-      console.error('❌ Error getting access token:', err);
-      throw err;
+    // Decide on fallback: only if we have clientSecret and error wasn't invalid auth code
+    if (lastError && /-437|invalid auth code/i.test(lastError.message)) {
+      console.warn('[FYERS] Not attempting direct fallback because code appears invalid/used');
+      throw new Error('invalid auth code');
     }
+    if (!this.clientSecret || !this.allowDirectFallback) {
+      console.warn('[FYERS] Direct fallback disabled (no secret or flag off)');
+      throw lastError || new Error('Proxy exchange failed');
+    }
+    console.log('[FYERS] Attempting direct exchange fallback');
+    const appIdHash = await this.createAppIdHash();
+    const body = { grant_type: 'authorization_code', appIdHash, code: authCode };
+    const response = await fetch(`${this.apiBase}/validate-authcode`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await response.json().catch(()=>({ s:'error', message:'Invalid JSON' }));
+    if (data.s==='ok' && data.access_token){ this._storeTokens(data); return this.accessToken; }
+    if (data.code === -437) {
+      console.error('❌ Error -437 (invalid auth code) on direct fallback.');
+      throw new Error('invalid auth code');
+    }
+    throw new Error(data.message || 'Token exchange failed');
   }
   _storeTokens(data){
     // data.access_token is raw token part; combine with clientId for auth header usage
