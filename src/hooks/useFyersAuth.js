@@ -10,33 +10,34 @@ export const useFyersAuth = () => {
 
   useEffect(() => {
     console.log('=== useFyersAuth useEffect triggered ===');
-    
-    // Check if already authenticated
+
     const token = localStorage.getItem('fyers_access_token');
-    if (token) {
+    if (token && !isAuthenticated) {
       console.log('Found existing token, setting authenticated state');
       FyersService.accessToken = token;
       setIsAuthenticated(true);
       fetchUserProfile();
     }
 
-    // Handle callback from Fyers - check for auth code in URL
     const urlParams = new URLSearchParams(window.location.search);
-    const authCode = urlParams.get('code');
+    // Accept both code and auth_code just in case
+    let authCode = urlParams.get('code') || urlParams.get('auth_code');
     const state = urlParams.get('state');
     const storedState = localStorage.getItem('fyers_state');
 
+    if (authCode) {
+      authCode = authCode.trim();
+    }
+
     console.log('URL Params check:');
-    console.log('- Auth Code:', authCode ? 'Present' : 'Missing');
+    console.log('- Auth Code present:', !!authCode, authCode ? 'length=' + authCode.length : '');
     console.log('- State:', state);
     console.log('- Stored State:', storedState);
     console.log('- Already Processed:', authCodeProcessed.current);
 
-    // Handle callback on any page if auth code is present and not already processed
     if (authCode && !authCodeProcessed.current) {
-      authCodeProcessed.current = true; // Mark as being processed
-      
       if (state && state === storedState) {
+        authCodeProcessed.current = true; // lock immediately
         console.log('✅ State validation passed, processing auth code');
         handleAuthCallback(authCode);
       } else {
@@ -46,7 +47,22 @@ export const useFyersAuth = () => {
     } else if (authCode && authCodeProcessed.current) {
       console.log('⚠️ Auth code already processed, skipping');
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Schedule silent refresh if expiry known
+  useEffect(()=>{
+    if (!isAuthenticated) return;
+    const expiry = FyersService.expiryEpoch;
+    if (!expiry) return;
+    const nowSec = Math.floor(Date.now()/1000);
+    const refreshAt = (expiry - FyersService.earlyRefreshSeconds - nowSec) * 1000;
+    if (refreshAt <= 0) {
+      FyersService.refreshAccessToken().catch(()=>{});
+      return;
+    }
+    const id = setTimeout(()=>{ FyersService.refreshAccessToken().catch(()=>{}); }, refreshAt);
+    return ()=> clearTimeout(id);
+  }, [isAuthenticated, FyersService.expiryEpoch]);
 
   const fetchUserProfile = async () => {
     try {
@@ -54,41 +70,26 @@ export const useFyersAuth = () => {
       setUserProfile(profile);
     } catch (err) {
       console.error('Error fetching user profile:', err);
-      // Don't set error for profile fetch failure
     }
   };
 
   const handleAuthCallback = async (authCode) => {
     console.log('=== HANDLE AUTH CALLBACK START ===');
-    console.log('Received auth code:', authCode);
-    
+    console.log('Received auth code length:', authCode.length);
     setLoading(true);
     setError(null);
-    
     try {
       console.log('Calling FyersService.getAccessToken...');
       await FyersService.getAccessToken(authCode);
-      
-      console.log('✅ Token exchange successful');
       setIsAuthenticated(true);
-      
-      // Fetch user profile
-      console.log('Fetching user profile...');
       await fetchUserProfile();
-      
-      // Clean up URL
-      console.log('Cleaning up URL and state...');
       window.history.replaceState({}, document.title, window.location.pathname);
-      
-      // Clean up state
       localStorage.removeItem('fyers_state');
-      
       console.log('✅ Authentication flow completed successfully');
-      
     } catch (err) {
       console.error('❌ Authentication callback error:', err);
-      setError(err.message);
-      console.error('Authentication error:', err);
+      setError(err.message === 'invalid auth code' ? 'Auth code invalid or already used. Please login again.' : err.message);
+      authCodeProcessed.current = false; // allow retry if failure due to code reuse might not be correct but keeps UX flexible
     } finally {
       setLoading(false);
     }
@@ -98,17 +99,11 @@ export const useFyersAuth = () => {
     setError(null);
     try {
       const authUrl = FyersService.getAuthUrl();
-      console.log('Fyers Auth URL:', authUrl);
-      
       if (!authUrl) {
         setError('Failed to generate auth URL');
         return;
       }
-      
-      // Add a small delay to ensure state is updated
-      setTimeout(() => {
-        window.location.href = authUrl;
-      }, 100);
+      setTimeout(() => { window.location.href = authUrl; }, 50);
     } catch (err) {
       setError(`Login failed: ${err.message}`);
       console.error('Login error:', err);
@@ -122,18 +117,7 @@ export const useFyersAuth = () => {
     setError(null);
   };
 
-  const clearError = () => {
-    setError(null);
-  };
+  const clearError = () => setError(null);
 
-  return {
-    isAuthenticated,
-    loading,
-    error,
-    userProfile,
-    login,
-    logout,
-    clearError,
-    fyersService: FyersService
-  };
+  return { isAuthenticated, loading, error, userProfile, login, logout, clearError, fyersService: FyersService };
 };

@@ -7,43 +7,41 @@ class FyersService {
     this.clientId = import.meta.env.VITE_FYERS_CLIENT_ID;
     this.clientSecret = import.meta.env.VITE_FYERS_CLIENT_SECRET;
     this.redirectUrl = import.meta.env.VITE_FYERS_REDIRECT_URL;
-    this.baseUrl = import.meta.env.VITE_FYERS_BASE_URL || 'https://api-t1.fyers.in/api/v3';
-    
+    // Separate bases as per docs
+    this.apiBase = 'https://api-t1.fyers.in/api/v3';
+    this.dataBase = 'https://api-t1.fyers.in/data';
+
     console.log('=== FYERS SERVICE INITIALIZATION ===');
     console.log('Client ID:', this.clientId);
     console.log('Client Secret:', this.clientSecret ? 'Present' : 'Missing');
     console.log('Redirect URL:', this.redirectUrl);
-    
-    // Check for existing access token
+
+    // Check for existing combined token (should be clientId:access_token)
     const savedToken = localStorage.getItem('fyers_access_token');
     this.accessToken = savedToken;
-    
+    this.refreshToken = localStorage.getItem('fyers_refresh_token') || null;
+    this.expiryEpoch = parseInt(localStorage.getItem('fyers_access_expiry')||'0',10) || 0; // seconds epoch
+    this.refreshInFlight = null; // promise singleton
+    this.earlyRefreshSeconds = 120; // refresh 2 min early
     if (savedToken) {
-      console.log('Found saved access token');
+      console.log('Found saved access token (length):', savedToken.length);
     }
   }
 
   // Step 1: Generate authorization URL (based on SDK pattern)
   getAuthUrl() {
     console.log('=== GENERATING AUTH URL ===');
-    
     try {
-      // Generate state for security
       const state = Math.random().toString(36).substring(2, 15);
       localStorage.setItem('fyers_state', state);
-      
-      // Build auth URL using official Fyers format
       const params = new URLSearchParams({
         client_id: this.clientId,
         redirect_uri: this.redirectUrl,
         response_type: 'code',
-        state: state,
-        scope: 'openid profile api-v3'
+        state: state
       });
-
-      const authUrl = `https://api-t1.fyers.in/api/v3/generate-authcode?${params.toString()}`;
+      const authUrl = `${this.apiBase}/generate-authcode?${params.toString()}`;
       console.log('Generated Auth URL:', authUrl);
-      
       return authUrl;
     } catch (error) {
       console.error('Error generating auth URL:', error);
@@ -51,339 +49,211 @@ class FyersService {
     }
   }
 
-  // Step 2: Exchange auth code for access token (based on official API documentation)
+  // Step 2: Exchange auth code for access token (official flow)
   async getAccessToken(authCode) {
     console.log('=== GETTING ACCESS TOKEN ===');
-    console.log('Auth Code received:', authCode);
-    
+    if (authCode) {
+      console.log('Auth code length:', authCode.length, 'Starts with:', authCode.slice(0, 15), 'Ends with:', authCode.slice(-10));
+    }
     try {
-      if (!this.clientId || !this.clientSecret) {
-        throw new Error('Missing Client ID or Client Secret in environment variables');
-      }
-      
-      // Create appIdHash by concatenating client_id and secret_key, then SHA-256 hashing
+      if (!this.clientId || !this.clientSecret) throw new Error('Missing Client ID or Client Secret');
+
       const appIdHash = await this.createAppIdHash();
-      console.log('AppIdHash created successfully');
-      
-      // Use the exact format from the official API documentation
-      const requestBody = {
-        grant_type: 'authorization_code',
-        appIdHash: appIdHash,
-        code: authCode
-      };
-      
-      console.log('Token exchange request:', {
-        grant_type: requestBody.grant_type,
-        appIdHash: requestBody.appIdHash ? 'Present' : 'Missing',
-        code: requestBody.code
-      });
-      
-      // Use the correct endpoint from documentation
-      const response = await fetch(`${this.baseUrl}/validate-authcode`, {
+      console.log('AppIdHash generated (first 12):', appIdHash.slice(0, 12));
+
+      const body = { grant_type: 'authorization_code', appIdHash, code: authCode };
+      console.log('POST /validate-authcode body keys:', Object.keys(body));
+
+      const response = await fetch(`${this.apiBase}/validate-authcode`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
       });
 
-      console.log('Response status:', response.status);
-      
-      const data = await response.json();
-      console.log('Token response:', data);
-      
-      if (data.s === 'ok') {
-        // Store the access token
-        this.accessToken = data.access_token;
-        localStorage.setItem('fyers_access_token', this.accessToken);
-        
-        console.log('✅ Access token received and stored');
+      console.log('Token exchange HTTP status:', response.status);
+      const data = await response.json().catch(() => ({ s: 'error', message: 'Invalid JSON in response' }));
+      console.log('Raw token exchange response keys:', Object.keys(data));
+
+      if (data.s === 'ok' && data.access_token) {
+        this._storeTokens(data);
         return this.accessToken;
-      } else {
-        console.error('❌ Token exchange failed:', data);
-        throw new Error(data.message || `Token exchange error: ${JSON.stringify(data)}`);
       }
-    } catch (error) {
-      console.error('❌ Error getting access token:', error);
-      throw error;
+
+      // Provide enriched diagnostics for common -437
+      if (data.code === -437) {
+        const hints = [
+          'Auth code may have been already used (single-use). Retry full login.',
+            'State mismatch or page reloaded causing duplicate usage.',
+            'Ensure you are using the query param name "code" (not auth_code).',
+            'Check that appIdHash is SHA-256 of "client_id:client_secret" (with colon).',
+            'Auth code expires quickly. Complete exchange immediately after redirect.'
+        ];
+        console.error('❌ Error -437 (invalid auth code). Hints:', hints);
+      }
+      throw new Error(data.message || 'Token exchange failed');
+    } catch (err) {
+      console.error('❌ Error getting access token:', err);
+      throw err;
     }
   }
-
-  // Helper method to create appIdHash (SHA-256 of client_id + client_secret)
-  async createAppIdHash() {
+  _storeTokens(data){
+    // data.access_token is raw token part; combine with clientId for auth header usage
+    this.accessToken = `${this.clientId}:${data.access_token}`;
+    localStorage.setItem('fyers_access_token', this.accessToken);
+    if (data.refresh_token){
+      this.refreshToken = data.refresh_token;
+      localStorage.setItem('fyers_refresh_token', data.refresh_token);
+    }
+    // Attempt to decode JWT part (after colon) to extract exp
     try {
-      const text = this.clientId + this.clientSecret;
-      const encoder = new TextEncoder();
-      const data = encoder.encode(text);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
-      return hashHex;
-    } catch (error) {
-      console.error('Error creating appIdHash:', error);
-      throw error;
-    }
+      const raw = data.access_token; // second part after clientId:
+      const parts = raw.split('.');
+      if (parts.length===3){
+        const payload = JSON.parse(atob(parts[1]));
+        if (payload.exp){
+          this.expiryEpoch = payload.exp; // already in seconds
+          localStorage.setItem('fyers_access_expiry', String(this.expiryEpoch));
+        }
+      }
+    } catch(e){ console.warn('Could not parse token exp:', e.message); }
+  }
+  _isExpiringSoon(){
+    if (!this.expiryEpoch) return false;
+    const nowSec = Math.floor(Date.now()/1000);
+    return (this.expiryEpoch - nowSec) < this.earlyRefreshSeconds;
+  }
+  async refreshAccessToken(force=false){
+    if (!this.refreshToken){ throw new Error('No refresh token available'); }
+    if (this.refreshInFlight) return this.refreshInFlight; // dedupe
+    if (!force && !this._isExpiringSoon()) return this.accessToken;
+    console.log('[FYERS] Refreshing access token...');
+    const appIdHash = await this.createAppIdHash();
+    const body = { grant_type: 'refresh_token', appIdHash, refresh_token: this.refreshToken };
+    const p = fetch(`${this.apiBase}/validate-refresh-token`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
+      .then(r=>r.json())
+      .then(data=>{
+        if (data.s==='ok' && data.access_token){
+          this._storeTokens(data);
+          console.log('[FYERS] Refresh successful');
+          return this.accessToken;
+        }
+        throw new Error(data.message || 'Refresh failed');
+      })
+      .catch(e=>{ console.error('[FYERS] Refresh error', e); throw e; })
+      .finally(()=>{ this.refreshInFlight = null; });
+    this.refreshInFlight = p;
+    return p;
   }
 
-  // Check if user is authenticated
-  isAuthenticated() {
-    return !!this.accessToken;
-  }
+  isAuthenticated() { return !!this.accessToken; }
 
-  // Clear authentication
   logout() {
     this.accessToken = null;
     localStorage.removeItem('fyers_access_token');
+    localStorage.removeItem('fyers_refresh_token');
     localStorage.removeItem('fyers_state');
+    localStorage.removeItem('fyers_access_expiry');
     console.log('Logged out and cleared tokens');
   }
 
-  // Get profile information using proper API format
+  // Unified GET helper for API (trading/user) vs Data endpoints
+  async _authedGet(url, isData = false, retry=true) {
+    if (!this.isAuthenticated()) throw new Error('Not authenticated');
+    if (this._isExpiringSoon()) {
+      try { await this.refreshAccessToken(); } catch(e){ console.warn('Pre-request refresh failed:', e.message); }
+    }
+    const full = `${isData ? this.dataBase : this.apiBase}${url}`;
+    let r = await fetch(full, { headers: { 'Authorization': this.accessToken, 'Content-Type': 'application/json' } });
+    if (r.status===401 && retry && this.refreshToken){
+      // attempt refresh then retry once
+      try { await this.refreshAccessToken(true); } catch(_){}
+      r = await fetch(full, { headers: { 'Authorization': this.accessToken, 'Content-Type': 'application/json' } });
+    }
+    const json = await r.json();
+    if (json.code && [-8,-15,-16,-17].includes(json.code) && retry && this.refreshToken){
+      try { await this.refreshAccessToken(true); } catch(_){}
+      return this._authedGet(url, isData, false);
+    }
+    if (json.s !== 'ok') throw new Error(json.message || 'Request failed');
+    return json;
+  }
+
   async getProfile() {
     console.log('=== GETTING PROFILE ===');
-    
-    try {
-      if (!this.isAuthenticated()) {
-        throw new Error('Access token not available. Please authenticate first.');
-      }
-      
-      const response = await fetch(`${this.baseUrl}/profile`, {
-        method: 'GET',
-        headers: {
-          'Authorization': this.accessToken,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      console.log('Profile response:', data);
-      
-      if (data.s === 'ok') {
-        return data.data;
-      } else {
-        throw new Error(data.message || 'Failed to fetch profile');
-      }
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-      throw error;
-    }
+    const json = await this._authedGet('/profile');
+    return json.data;
   }
 
-  // Get historical data using proper API format
   async getHistoricalData(symbol, fromDate, toDate, resolution = '15') {
     console.log('=== GETTING HISTORICAL DATA ===');
-    console.log('Symbol:', symbol);
-    console.log('From:', fromDate, 'To:', toDate, 'Resolution:', resolution);
-    
-    try {
-      if (!this.isAuthenticated()) {
-        throw new Error('Access token not available. Please authenticate first.');
-      }
-
-      const params = new URLSearchParams({
-        symbol: symbol,
-        resolution: resolution, // 1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 1D
-        date_format: '1', // 1 for epoch timestamp
-        range_from: Math.floor(new Date(fromDate).getTime() / 1000),
-        range_to: Math.floor(new Date(toDate).getTime() / 1000),
-        cont_flag: '1'
-      });
-
-      console.log('Historical data params:', Object.fromEntries(params));
-      
-      const response = await fetch(`${this.baseUrl}/data/history?${params}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': this.accessToken,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      console.log('Historical data response:', data);
-      
-      if (data.s === 'ok') {
-        return this.formatHistoricalData(data.candles);
-      } else {
-        throw new Error(data.message || 'Failed to fetch historical data');
-      }
-    } catch (error) {
-      console.error('Error fetching historical data:', error);
-      throw error;
-    }
+    if (!symbol) throw new Error('Symbol required');
+    const params = new URLSearchParams({
+      symbol,
+      resolution: String(resolution),
+      date_format: '1', // using epoch seconds
+      range_from: Math.floor(new Date(fromDate).getTime() / 1000),
+      range_to: Math.floor(new Date(toDate).getTime() / 1000),
+      cont_flag: ''
+    });
+    const json = await this._authedGet(`/history?${params}`, true);
+    return this.formatHistoricalData(json.candles);
   }
 
-  // Format historical data to match existing structure
   formatHistoricalData(candles) {
-    if (!candles || !Array.isArray(candles)) return [];
-    
-    return candles.map(candle => ({
-      timestamp: new Date(candle[0] * 1000).toISOString(),
-      date: new Date(candle[0] * 1000).toLocaleDateString(),
-      open: candle[1],
-      high: candle[2],
-      low: candle[3],
-      close: candle[4],
-      volume: candle[5]
+    if (!Array.isArray(candles)) return [];
+    return candles.map(c => ({
+      timestamp: new Date(c[0] * 1000).toISOString(),
+      date: new Date(c[0] * 1000).toLocaleDateString(),
+      open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5]
     }));
   }
 
-  // Get current market quotes using proper API format
   async getQuotes(symbols) {
     console.log('=== GETTING QUOTES ===');
-    console.log('Symbols:', symbols);
-    
-    try {
-      if (!this.isAuthenticated()) {
-        throw new Error('Access token not available. Please authenticate first.');
-      }
-
-      // Ensure symbols is properly formatted
-      const symbolsParam = Array.isArray(symbols) ? symbols.join(',') : symbols;
-      
-      const response = await fetch(`${this.baseUrl}/data/quotes/?symbols=${symbolsParam}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': this.accessToken,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      console.log('Quotes response:', data);
-      
-      if (data.s === 'ok') {
-        return data.d;
-      } else {
-        throw new Error(data.message || 'Failed to fetch quotes');
-      }
-    } catch (error) {
-      console.error('Error fetching quotes:', error);
-      throw error;
-    }
+    const symbolsParam = Array.isArray(symbols) ? symbols.join(',') : symbols;
+    const json = await this._authedGet(`/quotes?symbols=${encodeURIComponent(symbolsParam)}`, true);
+    return json.d;
   }
 
-  // Get option chain using proper API format
-  async getOptionChain(symbol, strikeCount = 10, expiryDate = null) {
+  async getOptionChain(symbol, strikeCount = 10) {
     console.log('=== GETTING OPTION CHAIN ===');
-    console.log('Symbol:', symbol, 'Strike Count:', strikeCount);
-    
-    try {
-      if (!this.isAuthenticated()) {
-        throw new Error('Access token not available. Please authenticate first.');
-      }
-
-      const params = new URLSearchParams({
-        symbol: symbol, // e.g., "NSE:NIFTY50-INDEX"
-        strikecount: strikeCount
-      });
-
-      if (expiryDate) {
-        params.append('expiryDate', expiryDate);
-      }
-
-      const response = await fetch(`${this.baseUrl}/data/optchain?${params}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': this.accessToken,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      console.log('Option chain response:', data);
-      
-      if (data.s === 'ok') {
-        return data.data;
-      } else {
-        throw new Error(data.message || 'Failed to fetch option chain');
-      }
-    } catch (error) {
-      console.error('Error fetching option chain:', error);
-      throw error;
-    }
+    const params = new URLSearchParams({ symbol, strikecount: strikeCount });
+    const json = await this._authedGet(`/options-chain-v3?${params}`, true);
+    return json.data || json;
   }
 
-  // Get market status using proper API format
   async getMarketStatus() {
     console.log('=== GETTING MARKET STATUS ===');
-    
-    try {
-      if (!this.isAuthenticated()) {
-        throw new Error('Access token not available. Please authenticate first.');
-      }
-
-      const response = await fetch(`${this.baseUrl}/data/market-status`, {
-        method: 'GET',
-        headers: {
-          'Authorization': this.accessToken,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const data = await response.json();
-      console.log('Market status response:', data);
-      
-      if (data.s === 'ok') {
-        return data.data;
-      } else {
-        throw new Error(data.message || 'Failed to fetch market status');
-      }
-    } catch (error) {
-      console.error('Error fetching market status:', error);
-      throw error;
-    }
+    const json = await this._authedGet('/marketStatus', true);
+    return json.marketStatus || json.data;
   }
 
-  // Build Fyers option symbol format
+  // Correct weekly expiry month encoding (Fyers weekly uses month char: 1..9,O,N,D)
+  _weeklyMonthChar(date){
+    const m = date.getMonth();
+    return ['1','2','3','4','5','6','7','8','9','O','N','D'][m];
+  }
   buildOptionSymbol(underlying, expiry, strike, optionType) {
-    // Fyers format: NSE:NIFTY24O17C25000 or NSE:NIFTY24O17P25000
-    // underlying: NIFTY, expiry: 2024-10-17, strike: 25000, optionType: CE/PE
-    
     const year = expiry.getFullYear().toString().slice(-2);
-    
-    // Convert month to letter (O for October, N for November, etc.)
-    const monthMap = {
-      0: 'A', 1: 'B', 2: 'C', 3: 'D', 4: 'E', 5: 'F',
-      6: 'G', 7: 'H', 8: 'I', 9: 'J', 10: 'K', 11: 'L'
-    };
-    const month = monthMap[expiry.getMonth()];
-    
-    const date = expiry.getDate().toString().padStart(2, '0');
+    const monthChar = this._weeklyMonthChar(expiry); // weekly code
+    const day = expiry.getDate().toString().padStart(2,'0');
     const type = optionType === 'CE' ? 'C' : 'P';
-    
-    return `NSE:${underlying}${year}${month}${date}${type}${strike}`;
+    // Underlying example: NIFTY; result: NSE:NIFTY25O02C20000
+    return `NSE:${underlying}${year}${monthChar}${day}${type}${strike}`;
   }
 
-  // Get specific option data for backtesting
   async getOptionData(underlying, expiry, strike, optionType, fromDate, toDate, resolution = '15') {
     const symbol = this.buildOptionSymbol(underlying, expiry, strike, optionType);
-    console.log('Fetching data for option symbol:', symbol);
-    
-    return await this.getHistoricalData(symbol, fromDate, toDate, resolution);
+    return this.getHistoricalData(symbol, fromDate, toDate, resolution);
   }
 
-  // Helper method to get weekly expiry dates
   getWeeklyExpiryDates() {
     const today = new Date();
     const thursday = new Date(today);
-    
-    // Get next Thursday
     const daysUntilThursday = (4 - today.getDay() + 7) % 7;
-    if (daysUntilThursday === 0 && today.getHours() >= 15) {
-      // If it's Thursday after 3:30 PM, get next Thursday
-      thursday.setDate(today.getDate() + 7);
-    } else {
-      thursday.setDate(today.getDate() + daysUntilThursday);
-    }
-    
-    const nextThursday = new Date(thursday);
-    nextThursday.setDate(thursday.getDate() + 7);
-    
-    return {
-      currentWeek: thursday,
-      nextWeek: nextThursday
-    };
+    if (daysUntilThursday === 0 && today.getHours() >= 15) thursday.setDate(today.getDate() + 7); else thursday.setDate(today.getDate() + daysUntilThursday);
+    const nextThursday = new Date(thursday); nextThursday.setDate(thursday.getDate() + 7);
+    return { currentWeek: thursday, nextWeek: nextThursday };
   }
 }
 

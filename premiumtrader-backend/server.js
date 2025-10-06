@@ -191,6 +191,61 @@ app.post('/api/generate_session', async (req, res) => {
   }
 });
 
+// === FYERS PROXY ENDPOINTS (hide client secret & manage refresh) ===
+// Generates auth URL server-side using configured client_id and redirect
+app.get('/api/fyers/login-url', (req, res) => {
+  try {
+    const clientId = process.env.FYERS_CLIENT_ID;
+    const redirect = process.env.FYERS_REDIRECT_URL;
+    if (!clientId || !redirect) return res.status(500).json({ error: 'Fyers client ID / redirect not configured' });
+    const state = Math.random().toString(36).slice(2,12);
+    const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: 'code', state });
+    const url = `https://api-t1.fyers.in/api/v3/generate-authcode?${params}`;
+    res.json({ url, state });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Exchange auth code -> access + refresh (server side)
+app.post('/api/fyers/validate-authcode', async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const clientId = process.env.FYERS_CLIENT_ID;
+    const clientSecret = process.env.FYERS_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return res.status(500).json({ error: 'Server not configured for Fyers' });
+    const hashInput = `${clientId}:${clientSecret}`;
+    const appIdHash = crypto.createHash('sha256').update(hashInput).digest('hex');
+    const axios = (await import('axios')).default;
+    const payload = { grant_type: 'authorization_code', appIdHash, code };
+    const r = await axios.post('https://api-t1.fyers.in/api/v3/validate-authcode', payload, { headers: { 'Content-Type': 'application/json' }});
+    res.json(r.data);
+  } catch (e) {
+    if (e.response) return res.status(e.response.status||500).json(e.response.data);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Refresh token exchange
+app.post('/api/fyers/refresh-token', async (req, res) => {
+  try {
+    const { refresh_token } = req.body || {};
+    if (!refresh_token) return res.status(400).json({ error: 'refresh_token required' });
+    const clientId = process.env.FYERS_CLIENT_ID;
+    const clientSecret = process.env.FYERS_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return res.status(500).json({ error: 'Server not configured for Fyers' });
+    const hashInput = `${clientId}:${clientSecret}`;
+    const appIdHash = crypto.createHash('sha256').update(hashInput).digest('hex');
+    const axios = (await import('axios')).default;
+    const payload = { grant_type: 'refresh_token', appIdHash, refresh_token };
+    const r = await axios.post('https://api-t1.fyers.in/api/v3/validate-refresh-token', payload, { headers: { 'Content-Type': 'application/json' }});
+    res.json(r.data);
+  } catch (e) {
+    if (e.response) return res.status(e.response.status||500).json(e.response.data);
+    res.status(500).json({ error: e.message });
+  }
+});
+// === END FYERS PROXY ===
+
 // Breeze login stub (placeholder) - replace with real ICICI Breeze API integration
 app.post('/api/breeze/login', async (req, res) => {
   try {
