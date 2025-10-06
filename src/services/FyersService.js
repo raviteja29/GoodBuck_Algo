@@ -28,8 +28,29 @@ class FyersService {
     }
   }
 
+  async createAppIdHash() {
+    // Browser hashing for fallback (will be removed once fully proxy-based)
+    const text = `${this.clientId}:${this.clientSecret}`;
+    const enc = new TextEncoder().encode(text);
+    const digest = await crypto.subtle.digest('SHA-256', enc);
+    return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+
   // Step 1: Generate authorization URL (based on SDK pattern)
   getAuthUrl() {
+    // Try backend proxy first
+    try {
+      // Synchronous start of async IIFE to keep method signature simple
+      if (!this._proxyLoginFetch) {
+        this._proxyLoginFetch = fetch('/api/fyers/login-url')
+          .then(r=> r.ok ? r.json() : Promise.reject(new Error('proxy login url failed')))
+          .then(j=>{ if (j && j.url){ localStorage.setItem('fyers_state', j.state); return j.url; } throw new Error('Malformed proxy login response'); })
+          .catch(()=> null)
+          .finally(()=> { this._proxyLoginFetch = null; });
+      }
+      // Fire and forget; will fall back below if returns null
+    } catch(_) {}
+    // Original direct construction as fallback
     console.log('=== GENERATING AUTH URL ===');
     try {
       const state = Math.random().toString(36).substring(2, 15);
@@ -51,6 +72,14 @@ class FyersService {
 
   // Step 2: Exchange auth code for access token (official flow)
   async getAccessToken(authCode) {
+    // Try proxy first (no hashing or secret exposure)
+    try {
+      const proxyResp = await fetch('/api/fyers/validate-authcode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code: authCode }) });
+      if (proxyResp.ok){
+        const data = await proxyResp.json();
+        if (data.s==='ok' && data.access_token){ this._storeTokens(data); return this.accessToken; }
+      }
+    } catch(_) { /* fall back */ }
     console.log('=== GETTING ACCESS TOKEN ===');
     if (authCode) {
       console.log('Auth code length:', authCode.length, 'Starts with:', authCode.slice(0, 15), 'Ends with:', authCode.slice(-10));
@@ -124,25 +153,26 @@ class FyersService {
   }
   async refreshAccessToken(force=false){
     if (!this.refreshToken){ throw new Error('No refresh token available'); }
-    if (this.refreshInFlight) return this.refreshInFlight; // dedupe
+    if (this.refreshInFlight) return this.refreshInFlight;
     if (!force && !this._isExpiringSoon()) return this.accessToken;
-    console.log('[FYERS] Refreshing access token...');
-    const appIdHash = await this.createAppIdHash();
-    const body = { grant_type: 'refresh_token', appIdHash, refresh_token: this.refreshToken };
-    const p = fetch(`${this.apiBase}/validate-refresh-token`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
-      .then(r=>r.json())
-      .then(data=>{
-        if (data.s==='ok' && data.access_token){
-          this._storeTokens(data);
-          console.log('[FYERS] Refresh successful');
-          return this.accessToken;
-        }
+    // Prefer proxy
+    const attempt = async () => {
+      try {
+        const r = await fetch('/api/fyers/refresh-token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ refresh_token: this.refreshToken }) });
+        if (r.ok){ const data = await r.json(); if (data.s==='ok' && data.access_token){ this._storeTokens(data); return this.accessToken; } }
+        throw new Error('Proxy refresh failed');
+      } catch(e){
+        // Fallback direct
+        const appIdHash = await this.createAppIdHash();
+        const body = { grant_type: 'refresh_token', appIdHash, refresh_token: this.refreshToken };
+        const direct = await fetch(`${this.apiBase}/validate-refresh-token`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const data = await direct.json();
+        if (data.s==='ok' && data.access_token){ this._storeTokens(data); return this.accessToken; }
         throw new Error(data.message || 'Refresh failed');
-      })
-      .catch(e=>{ console.error('[FYERS] Refresh error', e); throw e; })
-      .finally(()=>{ this.refreshInFlight = null; });
-    this.refreshInFlight = p;
-    return p;
+      }
+    };
+    this.refreshInFlight = attempt().finally(()=>{ this.refreshInFlight = null; });
+    return this.refreshInFlight;
   }
 
   isAuthenticated() { return !!this.accessToken; }
