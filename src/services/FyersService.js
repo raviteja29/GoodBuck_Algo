@@ -51,7 +51,7 @@ class FyersService {
     }
   }
 
-  // Step 2: Exchange auth code for access token (based on SDK documentation)
+  // Step 2: Exchange auth code for access token (based on official API documentation)
   async getAccessToken(authCode) {
     console.log('=== GETTING ACCESS TOKEN ===');
     console.log('Auth Code received:', authCode);
@@ -61,20 +61,25 @@ class FyersService {
         throw new Error('Missing Client ID or Client Secret in environment variables');
       }
       
-      // Use the exact format from the official SDK documentation
+      // Create appIdHash by concatenating client_id and secret_key, then SHA-256 hashing
+      const appIdHash = await this.createAppIdHash();
+      console.log('AppIdHash created successfully');
+      
+      // Use the exact format from the official API documentation
       const requestBody = {
-        client_id: this.clientId,
-        secret_key: this.clientSecret,
-        auth_code: authCode
+        grant_type: 'authorization_code',
+        appIdHash: appIdHash,
+        code: authCode
       };
       
       console.log('Token exchange request:', {
-        client_id: requestBody.client_id,
-        secret_key: requestBody.secret_key ? 'Present' : 'Missing',
-        auth_code: requestBody.auth_code
+        grant_type: requestBody.grant_type,
+        appIdHash: requestBody.appIdHash ? 'Present' : 'Missing',
+        code: requestBody.code
       });
       
-      const response = await fetch(`${this.baseUrl}/generate-access-token`, {
+      // Use the correct endpoint from documentation
+      const response = await fetch(`${this.baseUrl}/validate-authcode`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -88,7 +93,7 @@ class FyersService {
       console.log('Token response:', data);
       
       if (data.s === 'ok') {
-        // Store the access token (SDK format: APPID:AccessToken)
+        // Store the access token
         this.accessToken = data.access_token;
         localStorage.setItem('fyers_access_token', this.accessToken);
         
@@ -100,6 +105,22 @@ class FyersService {
       }
     } catch (error) {
       console.error('❌ Error getting access token:', error);
+      throw error;
+    }
+  }
+
+  // Helper method to create appIdHash (SHA-256 of client_id + client_secret)
+  async createAppIdHash() {
+    try {
+      const text = this.clientId + this.clientSecret;
+      const encoder = new TextEncoder();
+      const data = encoder.encode(text);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
+      return hashHex;
+    } catch (error) {
+      console.error('Error creating appIdHash:', error);
       throw error;
     }
   }
