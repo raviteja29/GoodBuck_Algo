@@ -68,10 +68,13 @@ function initTickerIfPossible(accessToken) {
   }
 }
 
-dotenv.config();
+// Load .env from parent directory (root of project)
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 console.log('Using API Key:', process.env.KITE_API_KEY);
 console.log('Using API Secret:', process.env.KITE_API_SECRET ? '***secret redacted***' : 'MISSING');
+console.log('Fyers Client ID:', process.env.FYERS_CLIENT_ID || 'MISSING');
+console.log('Fyers Client Secret:', process.env.FYERS_CLIENT_SECRET ? '***secret redacted***' : 'MISSING');
 // Breeze key sanity check (avoid accidental whitespace)
 if (process.env.BREEZE_API_KEY && /\s/.test(process.env.BREEZE_API_KEY)) {
   console.warn('[BREEZE] BREEZE_API_KEY contains whitespace characters – this will cause "public key does not exist" errors. Current (trimmed) length:', process.env.BREEZE_API_KEY.trim().length);
