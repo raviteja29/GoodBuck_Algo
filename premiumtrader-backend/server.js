@@ -249,10 +249,19 @@ app.post('/api/fyers/validate-authcode', async (req, res) => {
     const appIdHash = crypto.createHash('sha256').update(hashInput).digest('hex');
     const axios = (await import('axios')).default;
     const payload = { grant_type: 'authorization_code', appIdHash, code };
+    console.log('[FYERS PROXY] validate-authcode attempt', { codeLength: String(code).length, clientIdSuffix: clientId?.slice(-4) });
     const r = await axios.post('https://api-t1.fyers.in/api/v3/validate-authcode', payload, { headers: { 'Content-Type': 'application/json' }});
+    console.log('[FYERS PROXY] validate-authcode success');
     res.json(r.data);
   } catch (e) {
-    if (e.response) return res.status(e.response.status||500).json(e.response.data);
+    if (e.response) {
+      console.warn('[FYERS PROXY] validate-authcode error from Fyers', {
+        status: e.response.status,
+        data: e.response.data
+      });
+      return res.status(e.response.status||500).json(e.response.data);
+    }
+    console.error('[FYERS PROXY] validate-authcode internal error', e.message);
     res.status(500).json({ error: e.message });
   }
 });

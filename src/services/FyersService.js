@@ -90,17 +90,20 @@ class FyersService {
         const data = await proxyResp.json();
         if (data.s==='ok' && data.access_token){ this._storeTokens(data); return this.accessToken; }
         lastError = new Error(data.message || 'Proxy exchange failed');
-        // If code invalid, do not fallback
-        if (data.code === -437) throw lastError;
+        if (data.code === -437) { lastError.code = -437; throw lastError; }
       } else {
-        lastError = new Error(`Proxy status ${proxyResp.status}`);
+        let errPayload = null;
+        try { errPayload = await proxyResp.json(); } catch(_) {}
+        const msg = errPayload?.message || errPayload?.error || `Proxy status ${proxyResp.status}`;
+        lastError = new Error(msg);
+        if (errPayload && errPayload.code === -437) { lastError.code = -437; }
       }
     } catch (e) {
       lastError = e;
       if (/already processed/.test(e.message)) throw e;
     }
     // Decide on fallback: only if we have clientSecret and error wasn't invalid auth code
-    if (lastError && /-437|invalid auth code/i.test(lastError.message)) {
+    if (lastError && (lastError.code === -437 || /-437|invalid auth code/i.test(lastError.message))) {
       console.warn('[FYERS] Not attempting direct fallback because code appears invalid/used');
       throw new Error('invalid auth code');
     }
