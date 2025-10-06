@@ -68,7 +68,8 @@ class FyersService {
       client_id: this.clientId,
       redirect_uri: this.redirectUrl,
       response_type: 'code',
-      state
+      state,
+      scope: 'openid profile offline_access'
     });
     return `${this.apiBase}/generate-authcode?${params.toString()}`;
   }

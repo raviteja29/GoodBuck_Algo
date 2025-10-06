@@ -231,7 +231,7 @@ app.get('/api/fyers/login-url', (req, res) => {
     const redirect = process.env.FYERS_REDIRECT_URL;
     if (!clientId || !redirect) return res.status(500).json({ error: 'Fyers client ID / redirect not configured' });
     const state = Math.random().toString(36).slice(2,12);
-    const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: 'code', state });
+  const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: 'code', state, scope: 'openid profile offline_access' });
     const url = `https://api-t1.fyers.in/api/v3/generate-authcode?${params}`;
     res.json({ url, state });
   } catch (e) { res.status(500).json({ error: e.message }); }
