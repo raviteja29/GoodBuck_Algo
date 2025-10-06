@@ -1,15 +1,9 @@
-// Import the official Fyers API v3 SDK
-import { fyersModel } from 'fyers-api-v3';
+// Browser-compatible Fyers API implementation
+// Based on official fyers-api-v3 documentation but adapted for browser use
 
 class FyersService {
   constructor() {
-    // Initialize the Fyers model with logging configuration
-    this.fyers = new fyersModel({
-      path: "./logs/", // Path for logs (optional)
-      enableLogging: false // Disable logging in production
-    });
-    
-    // Set up configuration from environment variables
+    // Configuration from environment variables
     this.clientId = import.meta.env.VITE_FYERS_CLIENT_ID;
     this.clientSecret = import.meta.env.VITE_FYERS_CLIENT_SECRET;
     this.redirectUrl = import.meta.env.VITE_FYERS_REDIRECT_URL;
@@ -20,24 +14,16 @@ class FyersService {
     console.log('Client Secret:', this.clientSecret ? 'Present' : 'Missing');
     console.log('Redirect URL:', this.redirectUrl);
     
-    // Configure the SDK
-    if (this.clientId) {
-      this.fyers.setAppId(this.clientId);
-    }
-    
-    if (this.redirectUrl) {
-      this.fyers.setRedirectUrl(this.redirectUrl);
-    }
-    
     // Check for existing access token
     const savedToken = localStorage.getItem('fyers_access_token');
+    this.accessToken = savedToken;
+    
     if (savedToken) {
-      console.log('Found saved access token, setting in SDK');
-      this.fyers.setAccessToken(savedToken);
+      console.log('Found saved access token');
     }
   }
 
-  // Step 1: Generate authorization URL using the official SDK
+  // Step 1: Generate authorization URL (based on SDK pattern)
   getAuthUrl() {
     console.log('=== GENERATING AUTH URL ===');
     
@@ -46,8 +32,16 @@ class FyersService {
       const state = Math.random().toString(36).substring(2, 15);
       localStorage.setItem('fyers_state', state);
       
-      // Use the SDK method to generate auth code URL
-      const authUrl = this.fyers.generateAuthCode();
+      // Build auth URL using official Fyers format
+      const params = new URLSearchParams({
+        client_id: this.clientId,
+        redirect_uri: this.redirectUrl,
+        response_type: 'code',
+        state: state,
+        scope: 'openid profile api-v3'
+      });
+
+      const authUrl = `https://api-t1.fyers.in/api/v3/generate-authcode?${params.toString()}`;
       console.log('Generated Auth URL:', authUrl);
       
       return authUrl;
@@ -57,7 +51,7 @@ class FyersService {
     }
   }
 
-  // Step 2: Exchange auth code for access token using the official SDK
+  // Step 2: Exchange auth code for access token (based on SDK documentation)
   async getAccessToken(authCode) {
     console.log('=== GETTING ACCESS TOKEN ===');
     console.log('Auth Code received:', authCode);
@@ -67,34 +61,42 @@ class FyersService {
         throw new Error('Missing Client ID or Client Secret in environment variables');
       }
       
-      // Use the official SDK method for token exchange
-      const tokenRequest = {
+      // Use the exact format from the official SDK documentation
+      const requestBody = {
         client_id: this.clientId,
         secret_key: this.clientSecret,
         auth_code: authCode
       };
       
-      console.log('Calling fyers.generate_access_token with:', {
-        client_id: tokenRequest.client_id,
-        secret_key: tokenRequest.secret_key ? 'Present' : 'Missing',
-        auth_code: tokenRequest.auth_code
+      console.log('Token exchange request:', {
+        client_id: requestBody.client_id,
+        secret_key: requestBody.secret_key ? 'Present' : 'Missing',
+        auth_code: requestBody.auth_code
       });
       
-      const response = await this.fyers.generate_access_token(tokenRequest);
-      console.log('Token response:', response);
+      const response = await fetch(`${this.baseUrl}/generate-access-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      console.log('Response status:', response.status);
       
-      if (response.s === 'ok') {
-        // Set the access token in the SDK
-        this.fyers.setAccessToken(response.access_token);
+      const data = await response.json();
+      console.log('Token response:', data);
+      
+      if (data.s === 'ok') {
+        // Store the access token (SDK format: APPID:AccessToken)
+        this.accessToken = data.access_token;
+        localStorage.setItem('fyers_access_token', this.accessToken);
         
-        // Save to localStorage for persistence
-        localStorage.setItem('fyers_access_token', response.access_token);
-        
-        console.log('✅ Access token received and set in SDK');
-        return response.access_token;
+        console.log('✅ Access token received and stored');
+        return this.accessToken;
       } else {
-        console.error('❌ Token exchange failed:', response);
-        throw new Error(response.message || `Token exchange error: ${JSON.stringify(response)}`);
+        console.error('❌ Token exchange failed:', data);
+        throw new Error(data.message || `Token exchange error: ${JSON.stringify(data)}`);
       }
     } catch (error) {
       console.error('❌ Error getting access token:', error);
@@ -104,23 +106,18 @@ class FyersService {
 
   // Check if user is authenticated
   isAuthenticated() {
-    const token = localStorage.getItem('fyers_access_token');
-    if (token && !this.fyers.getAccessToken()) {
-      // If we have a saved token but SDK doesn't have it, set it
-      this.fyers.setAccessToken(token);
-    }
-    return !!token;
+    return !!this.accessToken;
   }
 
   // Clear authentication
   logout() {
+    this.accessToken = null;
     localStorage.removeItem('fyers_access_token');
     localStorage.removeItem('fyers_state');
-    // Note: The SDK doesn't have a clearAccessToken method, so we'll handle this in memory
     console.log('Logged out and cleared tokens');
   }
 
-  // Get profile information using the official SDK
+  // Get profile information using proper API format
   async getProfile() {
     console.log('=== GETTING PROFILE ===');
     
@@ -129,13 +126,21 @@ class FyersService {
         throw new Error('Access token not available. Please authenticate first.');
       }
       
-      const response = await this.fyers.get_profile();
-      console.log('Profile response:', response);
+      const response = await fetch(`${this.baseUrl}/profile`, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.accessToken,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('Profile response:', data);
       
-      if (response.s === 'ok') {
-        return response.data;
+      if (data.s === 'ok') {
+        return data.data;
       } else {
-        throw new Error(response.message || 'Failed to fetch profile');
+        throw new Error(data.message || 'Failed to fetch profile');
       }
     } catch (error) {
       console.error('Error fetching profile:', error);
@@ -143,7 +148,7 @@ class FyersService {
     }
   }
 
-  // Get historical data using the official SDK
+  // Get historical data using proper API format
   async getHistoricalData(symbol, fromDate, toDate, resolution = '15') {
     console.log('=== GETTING HISTORICAL DATA ===');
     console.log('Symbol:', symbol);
@@ -154,24 +159,32 @@ class FyersService {
         throw new Error('Access token not available. Please authenticate first.');
       }
 
-      const params = {
+      const params = new URLSearchParams({
         symbol: symbol,
         resolution: resolution, // 1, 2, 3, 5, 10, 15, 30, 60, 120, 240, 1D
-        date_format: 1, // 1 for epoch timestamp
+        date_format: '1', // 1 for epoch timestamp
         range_from: Math.floor(new Date(fromDate).getTime() / 1000),
         range_to: Math.floor(new Date(toDate).getTime() / 1000),
-        cont_flag: 1
-      };
+        cont_flag: '1'
+      });
 
-      console.log('Historical data params:', params);
+      console.log('Historical data params:', Object.fromEntries(params));
       
-      const response = await this.fyers.getHistoricalData(params);
-      console.log('Historical data response:', response);
+      const response = await fetch(`${this.baseUrl}/data/history?${params}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.accessToken,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('Historical data response:', data);
       
-      if (response.s === 'ok') {
-        return this.formatHistoricalData(response.candles);
+      if (data.s === 'ok') {
+        return this.formatHistoricalData(data.candles);
       } else {
-        throw new Error(response.message || 'Failed to fetch historical data');
+        throw new Error(data.message || 'Failed to fetch historical data');
       }
     } catch (error) {
       console.error('Error fetching historical data:', error);
@@ -194,7 +207,7 @@ class FyersService {
     }));
   }
 
-  // Get current market quotes using the official SDK
+  // Get current market quotes using proper API format
   async getQuotes(symbols) {
     console.log('=== GETTING QUOTES ===');
     console.log('Symbols:', symbols);
@@ -204,16 +217,24 @@ class FyersService {
         throw new Error('Access token not available. Please authenticate first.');
       }
 
-      // Ensure symbols is an array
-      const symbolArray = Array.isArray(symbols) ? symbols : [symbols];
+      // Ensure symbols is properly formatted
+      const symbolsParam = Array.isArray(symbols) ? symbols.join(',') : symbols;
       
-      const response = await this.fyers.getQuotes(symbolArray);
-      console.log('Quotes response:', response);
+      const response = await fetch(`${this.baseUrl}/data/quotes/?symbols=${symbolsParam}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.accessToken,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('Quotes response:', data);
       
-      if (response.s === 'ok') {
-        return response.d;
+      if (data.s === 'ok') {
+        return data.d;
       } else {
-        throw new Error(response.message || 'Failed to fetch quotes');
+        throw new Error(data.message || 'Failed to fetch quotes');
       }
     } catch (error) {
       console.error('Error fetching quotes:', error);
@@ -221,7 +242,7 @@ class FyersService {
     }
   }
 
-  // Get option chain (using market depth for now, as SDK may not have dedicated optchain method)
+  // Get option chain using proper API format
   async getOptionChain(symbol, strikeCount = 10, expiryDate = null) {
     console.log('=== GETTING OPTION CHAIN ===');
     console.log('Symbol:', symbol, 'Strike Count:', strikeCount);
@@ -231,20 +252,30 @@ class FyersService {
         throw new Error('Access token not available. Please authenticate first.');
       }
 
-      // For now, we'll use market depth to get option data
-      // This might need adjustment based on the exact SDK capabilities
-      const params = {
-        symbol: [symbol],
-        ohlcv_flag: 1
-      };
+      const params = new URLSearchParams({
+        symbol: symbol, // e.g., "NSE:NIFTY50-INDEX"
+        strikecount: strikeCount
+      });
 
-      const response = await this.fyers.getMarketDepth(params);
-      console.log('Option chain response:', response);
+      if (expiryDate) {
+        params.append('expiryDate', expiryDate);
+      }
+
+      const response = await fetch(`${this.baseUrl}/data/optchain?${params}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.accessToken,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('Option chain response:', data);
       
-      if (response.s === 'ok') {
-        return response.d;
+      if (data.s === 'ok') {
+        return data.data;
       } else {
-        throw new Error(response.message || 'Failed to fetch option chain');
+        throw new Error(data.message || 'Failed to fetch option chain');
       }
     } catch (error) {
       console.error('Error fetching option chain:', error);
@@ -252,7 +283,7 @@ class FyersService {
     }
   }
 
-  // Get market status using the official SDK
+  // Get market status using proper API format
   async getMarketStatus() {
     console.log('=== GETTING MARKET STATUS ===');
     
@@ -261,13 +292,21 @@ class FyersService {
         throw new Error('Access token not available. Please authenticate first.');
       }
 
-      const response = await this.fyers.getMarketStatus();
-      console.log('Market status response:', response);
+      const response = await fetch(`${this.baseUrl}/data/market-status`, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.accessToken,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      console.log('Market status response:', data);
       
-      if (response.s === 'ok') {
-        return response.data;
+      if (data.s === 'ok') {
+        return data.data;
       } else {
-        throw new Error(response.message || 'Failed to fetch market status');
+        throw new Error(data.message || 'Failed to fetch market status');
       }
     } catch (error) {
       console.error('Error fetching market status:', error);
