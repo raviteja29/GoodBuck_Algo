@@ -20,6 +20,10 @@ const __dirname = path.dirname(__filename);
 
 // In-memory cache for used request_tokens
 const usedTokens = new Set();
+// Fyers auth state tracking
+const fyersIssuedStates = new Map(); // state -> { timestamp, clientInfo }
+const fyersUsedCodes = new Set(); // prevent code reuse
+const FYERS_STATE_TTL = 10 * 60 * 1000; // 10 minutes
 // Quote cache and ticker state
 const quoteCache = new Map(); // instrument_token -> tick with cacheTs
 const subscribedTokens = new Set();
@@ -234,17 +238,46 @@ app.get('/api/fyers/login-url', (req, res) => {
     const redirect = process.env.FYERS_REDIRECT_URL;
     if (!clientId || !redirect) return res.status(500).json({ error: 'Fyers client ID / redirect not configured' });
     const state = Math.random().toString(36).slice(2,12);
-  const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: 'code', state, scope: 'openid profile offline_access' });
+    // Store issued state for validation
+    fyersIssuedStates.set(state, { timestamp: Date.now(), clientInfo: req.ip });
+    // Clean old states
+    const now = Date.now();
+    for (const [oldState, info] of fyersIssuedStates.entries()) {
+      if (now - info.timestamp > FYERS_STATE_TTL) fyersIssuedStates.delete(oldState);
+    }
+    const params = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: 'code', state, scope: 'openid profile offline_access' });
     const url = `https://api-t1.fyers.in/api/v3/generate-authcode?${params}`;
+    console.log('[FYERS PROXY] login-url issued', { state, ip: req.ip });
     res.json({ url, state });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Exchange auth code -> access + refresh (server side)
+});// Exchange auth code -> access + refresh (server side)
 app.post('/api/fyers/validate-authcode', async (req, res) => {
   try {
-    const { code } = req.body || {};
-    if (!code) return res.status(400).json({ error: 'code required' });
+    const { code, state } = req.body || {};
+    if (!code) return res.status(400).json({ error: 'code required', reason: 'missing_code' });
+    
+    // Check for code reuse
+    if (fyersUsedCodes.has(code)) {
+      console.warn('[FYERS PROXY] Code reuse attempt', { codeLength: String(code).length, ip: req.ip });
+      return res.status(400).json({ error: 'Auth code already used', reason: 'code_reused', code: -437, message: 'invalid auth code', s: 'error' });
+    }
+    
+    // Validate state if provided
+    if (state) {
+      const stateInfo = fyersIssuedStates.get(state);
+      if (!stateInfo) {
+        console.warn('[FYERS PROXY] Unknown state', { state, ip: req.ip });
+        return res.status(400).json({ error: 'Invalid or expired state', reason: 'invalid_state' });
+      }
+      if (Date.now() - stateInfo.timestamp > FYERS_STATE_TTL) {
+        fyersIssuedStates.delete(state);
+        console.warn('[FYERS PROXY] Expired state', { state, age: Date.now() - stateInfo.timestamp });
+        return res.status(400).json({ error: 'State expired', reason: 'state_expired' });
+      }
+      // Mark state as used
+      fyersIssuedStates.delete(state);
+    }
+    
     const clientId = process.env.FYERS_CLIENT_ID;
     const clientSecret = process.env.FYERS_CLIENT_SECRET;
     if (!clientId || !clientSecret) return res.status(500).json({ error: 'Server not configured for Fyers' });
@@ -252,15 +285,20 @@ app.post('/api/fyers/validate-authcode', async (req, res) => {
     const appIdHash = crypto.createHash('sha256').update(hashInput).digest('hex');
     const axios = (await import('axios')).default;
     const payload = { grant_type: 'authorization_code', appIdHash, code };
-    console.log('[FYERS PROXY] validate-authcode attempt', { codeLength: String(code).length, clientIdSuffix: clientId?.slice(-4) });
+    console.log('[FYERS PROXY] validate-authcode attempt', { codeLength: String(code).length, clientIdSuffix: clientId?.slice(-4), hasState: !!state, ip: req.ip });
+    
+    // Mark code as used before attempting exchange
+    fyersUsedCodes.add(code);
+    
     const r = await axios.post('https://api-t1.fyers.in/api/v3/validate-authcode', payload, { headers: { 'Content-Type': 'application/json' }});
-    console.log('[FYERS PROXY] validate-authcode success');
+    console.log('[FYERS PROXY] validate-authcode success', { userId: r.data?.user_id });
     res.json(r.data);
   } catch (e) {
     if (e.response) {
       console.warn('[FYERS PROXY] validate-authcode error from Fyers', {
         status: e.response.status,
-        data: e.response.data
+        data: e.response.data,
+        ip: req.ip
       });
       return res.status(e.response.status||500).json(e.response.data);
     }

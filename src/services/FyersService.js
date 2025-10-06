@@ -86,7 +86,12 @@ class FyersService {
     // Proxy attempt first
     let lastError = null;
     try {
-      const proxyResp = await fetch('/api/fyers/validate-authcode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ code: authCode }) });
+      // Include state for server-side validation
+      const storedState = localStorage.getItem('fyers_state');
+      const requestBody = { code: authCode };
+      if (storedState) requestBody.state = storedState;
+      
+      const proxyResp = await fetch('/api/fyers/validate-authcode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(requestBody) });
       if (proxyResp.ok) {
         const data = await proxyResp.json();
         if (data.s==='ok' && data.access_token){ this._storeTokens(data); return this.accessToken; }
@@ -96,7 +101,8 @@ class FyersService {
         let errPayload = null;
         try { errPayload = await proxyResp.json(); } catch(_) {}
         const msg = errPayload?.message || errPayload?.error || `Proxy status ${proxyResp.status}`;
-        lastError = new Error(msg);
+        const reason = errPayload?.reason;
+        lastError = new Error(reason ? `${msg} (${reason})` : msg);
         if (errPayload && errPayload.code === -437) { lastError.code = -437; }
       }
     } catch (e) {
