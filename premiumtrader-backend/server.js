@@ -232,6 +232,14 @@ app.post('/api/brokers/set', (req, res) => {
 // === END BROKER MANAGEMENT ===
 
 // === FYERS PROXY ENDPOINTS (hide client secret & manage refresh) ===
+// Helper: accept both 'code' and 'auth_code' (SDK/docs variations)
+function getFyersAuthCodeFromReq(req) {
+  try {
+    const b = req.body || {};
+    const q = req.query || {};
+    return b.code || b.auth_code || q.code || q.auth_code || null;
+  } catch (_) { return null; }
+}
 // Generates auth URL server-side using configured client_id and redirect
 app.get('/api/fyers/login-url', (req, res) => {
   try {
@@ -254,7 +262,8 @@ app.get('/api/fyers/login-url', (req, res) => {
 });// Exchange auth code -> access + refresh (server side)
 app.post('/api/fyers/validate-authcode', async (req, res) => {
   try {
-    const { code, state } = req.body || {};
+    const code = getFyersAuthCodeFromReq(req);
+    const state = (req.body && (req.body.state || req.body.State)) || (req.query && (req.query.state || req.query.State));
     if (!code) return res.status(400).json({ error: 'code required', reason: 'missing_code' });
     
     // Check for code reuse
@@ -291,7 +300,7 @@ app.post('/api/fyers/validate-authcode', async (req, res) => {
     const appIdHash = crypto.createHash('sha256').update(hashInput).digest('hex');
     const axios = (await import('axios')).default;
     const payload = { grant_type: 'authorization_code', appIdHash, code };
-    console.log('[FYERS PROXY] validate-authcode attempt', { codeLength: String(code).length, clientIdSuffix: clientId?.slice(-4), hasState: !!state, ip: req.ip });
+  console.log('[FYERS PROXY] validate-authcode attempt', { codeLength: String(code).length, clientIdSuffix: clientId?.slice(-4), hasState: !!state, ip: req.ip });
     
     // Mark in-flight to prevent duplicates; only mark as used on success
     fyersCodesInFlight.add(code);

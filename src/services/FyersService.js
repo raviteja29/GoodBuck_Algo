@@ -87,23 +87,32 @@ class FyersService {
     let lastError = null;
     try {
       // Include state for server-side validation
-      const storedState = localStorage.getItem('fyers_state');
-      const requestBody = { code: authCode };
+  const storedState = localStorage.getItem('fyers_state');
+  // Accept alias 'auth_code' across ecosystem (SDK/docs)
+  const requestBody = { code: authCode, auth_code: authCode };
       if (storedState) requestBody.state = storedState;
       
-      const proxyResp = await fetch('/api/fyers/validate-authcode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(requestBody) });
-      if (proxyResp.ok) {
-        const data = await proxyResp.json();
-        if (data.s==='ok' && data.access_token){ this._storeTokens(data); return this.accessToken; }
-        lastError = new Error(data.message || 'Proxy exchange failed');
-        if (data.code === -437) { lastError.code = -437; throw lastError; }
-      } else {
-        let errPayload = null;
-        try { errPayload = await proxyResp.json(); } catch(_) {}
-        const msg = errPayload?.message || errPayload?.error || `Proxy status ${proxyResp.status}`;
-        const reason = errPayload?.reason;
-        lastError = new Error(reason ? `${msg} (${reason})` : msg);
-        if (errPayload && errPayload.code === -437) { lastError.code = -437; }
+      // Retry loop to handle 'in_flight' concurrency guard on server
+      const attemptProxy = async () => {
+        const resp = await fetch('/api/fyers/validate-authcode', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(requestBody) });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.s==='ok' && data.access_token){ return { ok: true, data }; }
+          return { ok: false, payload: data };
+        }
+        let payload = null; try { payload = await resp.json(); } catch(_) {}
+        return { ok: false, status: resp.status, payload };
+      };
+      let tries = 0; const maxTries = 6; // ~4s total
+      while (tries < maxTries) {
+        const r = await attemptProxy();
+        if (r.ok) { this._storeTokens(r.data); return this.accessToken; }
+        const p = r.payload || {};
+        if (p && p.code === -437) { lastError = new Error(p.message || 'invalid auth code'); lastError.code = -437; break; }
+        if (p && p.reason === 'in_flight') { tries++; await new Promise(res=>setTimeout(res, 700)); continue; }
+        // other error
+        const msg = p?.message || p?.error || `Proxy status ${r.status||'error'}`;
+        const reason = p?.reason; lastError = new Error(reason ? `${msg} (${reason})` : msg); break;
       }
     } catch (e) {
       lastError = e;

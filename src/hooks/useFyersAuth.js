@@ -30,10 +30,21 @@ export const useFyersAuth = () => {
     console.log('URL Params check:', { hasAuthCode: !!authCode, state, storedState, processed: authCodeProcessed.current });
 
     if (authCode && !authCodeProcessed.current) {
+      // If we're already authenticated, just clean URL and skip exchange
+      if (localStorage.getItem('fyers_access_token')) {
+        console.log('[FYERS] Token already present; skipping code exchange and cleaning URL');
+        url.searchParams.delete('code');
+        url.searchParams.delete('auth_code');
+        url.searchParams.delete('state');
+        window.history.replaceState({}, document.title, url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : ''));
+        return;
+      }
       // Early single-use guard check
       if (sessionStorage.getItem(`fyers_code_${authCode}`)) {
         console.warn('[FYERS] Auth code already guarded in session, skipping');
       } else if (state && state === storedState) {
+        // Set guard immediately to survive StrictMode double-mount
+        sessionStorage.setItem(`fyers_code_${authCode}`,'1');
         authCodeProcessed.current = true;
         // Clean URL immediately to avoid re-processing on rerenders
         url.searchParams.delete('code');
@@ -87,8 +98,11 @@ export const useFyersAuth = () => {
       console.log('✅ Authentication flow completed successfully');
     } catch (err) {
       console.error('❌ Authentication callback error:', err);
-      setError(err.message === 'invalid auth code' ? 'Auth code invalid or already used. Please login again.' : err.message);
-      authCodeProcessed.current = false; // allow retry if failure due to code reuse might not be correct but keeps UX flexible
+      const msg = err?.message || String(err);
+      setError(/invalid auth code/i.test(msg) ? 'Auth code invalid or already used. Please login again.' : msg);
+      // Clear guard to allow a brand-new login
+      try { sessionStorage.removeItem(`fyers_code_${authCode}`); } catch(_) {}
+      authCodeProcessed.current = false;
     } finally {
       setLoading(false);
     }

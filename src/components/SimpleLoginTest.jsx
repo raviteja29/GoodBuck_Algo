@@ -5,31 +5,28 @@ const SimpleLoginTest = () => {
   const [status, setStatus] = useState('Ready');
   const [authUrl, setAuthUrl] = useState('');
 
-  const testLogin = () => {
+  const testLogin = async () => {
     try {
       setStatus('Generating auth URL...');
       
-      // Create a new instance of FyersService
-      const fyersService = new FyersService();
-      console.log('FyersService instance created:', fyersService);
+      // Use the singleton service instance
+      console.log('FyersService instance:', FyersService);
+      console.log('Client ID:', FyersService.clientId);
+      console.log('Redirect URL:', FyersService.redirectUrl);
+      console.log('Base URL:', FyersService.baseUrl);
       
-      // Check if all required properties are available
-      console.log('Client ID:', fyersService.clientId);
-      console.log('Redirect URL:', fyersService.redirectUrl);
-      console.log('Base URL:', fyersService.baseUrl);
-      
-      if (!fyersService.clientId) {
+      if (!FyersService.clientId) {
         setStatus('Error: Client ID not found');
         return;
       }
       
-      if (!fyersService.redirectUrl) {
+      if (!FyersService.redirectUrl) {
         setStatus('Error: Redirect URL not found');
         return;
       }
       
       // Generate auth URL
-      const url = fyersService.getAuthUrl();
+      const url = await FyersService.getAuthUrl();
       console.log('Generated URL:', url);
       
       setAuthUrl(url);
