@@ -1,7 +1,7 @@
 // src/App.jsx
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import Login from './components/Login';
+import Login from './components/Login-new';
 import AuthCallback from './components/AuthCallback';
 import FyersCallback from './components/FyersCallback';
 import FyersDebugCallback from './components/FyersDebugCallback';

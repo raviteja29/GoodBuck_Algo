@@ -22,7 +22,8 @@ const __dirname = path.dirname(__filename);
 const usedTokens = new Set();
 // Fyers auth state tracking
 const fyersIssuedStates = new Map(); // state -> { timestamp, clientInfo }
-const fyersUsedCodes = new Set(); // prevent code reuse
+const fyersUsedCodes = new Set(); // prevent code reuse (persisted used)
+const fyersCodesInFlight = new Set(); // prevent concurrent exchanges
 const FYERS_STATE_TTL = 10 * 60 * 1000; // 10 minutes
 // Quote cache and ticker state
 const quoteCache = new Map(); // instrument_token -> tick with cacheTs
@@ -261,6 +262,11 @@ app.post('/api/fyers/validate-authcode', async (req, res) => {
       console.warn('[FYERS PROXY] Code reuse attempt', { codeLength: String(code).length, ip: req.ip });
       return res.status(400).json({ error: 'Auth code already used', reason: 'code_reused', code: -437, message: 'invalid auth code', s: 'error' });
     }
+    // Prevent concurrent exchange attempts with same code
+    if (fyersCodesInFlight.has(code)) {
+      console.warn('[FYERS PROXY] Concurrent exchange attempt blocked', { codeLength: String(code).length, ip: req.ip });
+      return res.status(429).json({ error: 'Auth code exchange already in progress', reason: 'in_flight' });
+    }
     
     // Validate state if provided
     if (state) {
@@ -287,12 +293,17 @@ app.post('/api/fyers/validate-authcode', async (req, res) => {
     const payload = { grant_type: 'authorization_code', appIdHash, code };
     console.log('[FYERS PROXY] validate-authcode attempt', { codeLength: String(code).length, clientIdSuffix: clientId?.slice(-4), hasState: !!state, ip: req.ip });
     
-    // Mark code as used before attempting exchange
-    fyersUsedCodes.add(code);
-    
-    const r = await axios.post('https://api-t1.fyers.in/api/v3/validate-authcode', payload, { headers: { 'Content-Type': 'application/json' }});
-    console.log('[FYERS PROXY] validate-authcode success', { userId: r.data?.user_id });
-    res.json(r.data);
+    // Mark in-flight to prevent duplicates; only mark as used on success
+    fyersCodesInFlight.add(code);
+    try {
+      const r = await axios.post('https://api-t1.fyers.in/api/v3/validate-authcode', payload, { headers: { 'Content-Type': 'application/json' }});
+      console.log('[FYERS PROXY] validate-authcode success', { userId: r.data?.user_id });
+      // Mark code as permanently used after successful exchange
+      fyersUsedCodes.add(code);
+      res.json(r.data);
+    } finally {
+      fyersCodesInFlight.delete(code);
+    }
   } catch (e) {
     if (e.response) {
       console.warn('[FYERS PROXY] validate-authcode error from Fyers', {
