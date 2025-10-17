@@ -37,6 +37,8 @@ const Analytics = () => {
   const { isAuthenticated: fyersAuth, login: fyersLogin, error: fyersError, userProfile, fyersService } = useFyersAuth();
   const [fyersData, setFyersData] = useState(null);
   const [fyersLoading, setFyersLoading] = useState(false);
+  const [peFyersSymbol, setPeFyersSymbol] = useState(null);
+  const [ceFyersSymbol, setCeFyersSymbol] = useState(null);
   
   // Set default dates to a week ago (more likely to have data)
   const getDefaultDates = () => {
@@ -376,7 +378,7 @@ const Analytics = () => {
     }
   };
 
-  // Resolve option instrument tokens when strikes and instrument selected or expiry changes
+  // Resolve option instrument identifiers when strikes and instrument selected or expiry changes
   useEffect(() => {
     let cancelled = false;
     async function resolveTokens() {
@@ -384,6 +386,7 @@ const Analytics = () => {
       setPeFibLevels(null); setCeFibLevels(null);
       peSubscribed.current = false; ceSubscribed.current = false;
       setPeLtp(null); setCeLtp(null);
+      setPeFyersSymbol(null); setCeFyersSymbol(null);
       if (!selectedInstrument || !peStrike || !ceStrike) return;
       
       const under = selectedInstrument.tradingsymbol;
@@ -397,66 +400,66 @@ const Analytics = () => {
         pe: { ...prev.pe, candidates: [`Searching for ${under} ${peStrike}PE options...`], resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } },
         ce: { ...prev.ce, candidates: [`Searching for ${under} ${ceStrike}CE options...`], resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } }
       }));
-
-      // Use simple search approach (same as positions API)
+      // If Fyers is authenticated, build Fyers symbols; else use Zerodha token resolution
+      if (fyersAuth) {
+        try {
+          const underlying = baseSymbolForUnderlying(under);
+          const fyersPe = fyersService.buildOptionSymbol(underlying, chosenExpiryDate, peStrike, 'PE');
+          const fyersCe = fyersService.buildOptionSymbol(underlying, chosenExpiryDate, ceStrike, 'CE');
+          setPeFyersSymbol(fyersPe);
+          setCeFyersSymbol(fyersCe);
+          setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { symbol: fyersPe, method: 'fyers-symbol' } }, ce: { ...prev.ce, resolved: { symbol: fyersCe, method: 'fyers-symbol' } } }));
+          // Use last close via history as initial LTP
+          try {
+            const [peHist, ceHist] = await Promise.all([
+              fyersService.getHistoricalData(fyersPe, `${fromDate}`, `${toDate}`, '15'),
+              fyersService.getHistoricalData(fyersCe, `${fromDate}`, `${toDate}`, '15')
+            ]);
+            const peLast = Array.isArray(peHist) && peHist.length ? peHist[peHist.length-1].close : null;
+            const ceLast = Array.isArray(ceHist) && ceHist.length ? ceHist[ceHist.length-1].close : null;
+            if (peLast != null) setPeLtp(peLast);
+            if (ceLast != null) setCeLtp(ceLast);
+          } catch(_) {}
+        } catch (error) {
+          console.error('[OptionResolve][FYERS] Symbol build failed:', error);
+        }
+        return;
+      }
+      // Zerodha path (original)
       try {
-        // Search for PE option
         const peOption = await searchForOption(under, peStrike, 'PE', optionExpiry);
         if (peOption) {
           const token = peOption.instrument_token || peOption.token;
-          console.log(`[OptionResolve] PE resolved: ${peOption.tradingsymbol} -> token ${token}`);
           setPeOptionToken(token);
-          
-          // Fetch initial LTP
-          try {
-            const q = await TradingService.getQuote(token);
-            if (q?.last_price != null) setPeLtp(q.last_price);
-            setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { symbol: peOption.tradingsymbol, token, method: 'direct-search', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
-          } catch(_) {
-            setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { symbol: peOption.tradingsymbol, token, method: 'direct-search', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
-          }
-        } else {
-          setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { error: 'No PE option found' } }}));
-        }
+          try { const q = await TradingService.getQuote(token); if (q?.last_price != null) setPeLtp(q.last_price); } catch(_) {}
+          setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { symbol: peOption.tradingsymbol, token, method: 'direct-search' } }}));
+        } else { setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { error: 'No PE option found' } }})); }
 
-        // Search for CE option  
         const ceOption = await searchForOption(under, ceStrike, 'CE', optionExpiry);
         if (ceOption) {
           const token = ceOption.instrument_token || ceOption.token;
-          console.log(`[OptionResolve] CE resolved: ${ceOption.tradingsymbol} -> token ${token}`);
           setCeOptionToken(token);
-          
-          // Fetch initial LTP
-          try {
-            const q = await TradingService.getQuote(token);
-            if (q?.last_price != null) setCeLtp(q.last_price);
-            setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { symbol: ceOption.tradingsymbol, token, method: 'direct-search', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
-          } catch(_) {
-            setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { symbol: ceOption.tradingsymbol, token, method: 'direct-search', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
-          }
-        } else {
-          setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { error: 'No CE option found' } }}));
-        }
-        
+          try { const q = await TradingService.getQuote(token); if (q?.last_price != null) setCeLtp(q.last_price); } catch(_) {}
+          setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { symbol: ceOption.tradingsymbol, token, method: 'direct-search' } }}));
+        } else { setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { error: 'No CE option found' } }})); }
       } catch (error) {
         console.error('[OptionResolve] Resolution failed:', error);
-        setDebugInfo(prev => ({
-          ...prev,
-          pe: { ...prev.pe, resolved: { error: error.message } },
-          ce: { ...prev.ce, resolved: { error: error.message } }
-        }));
+        setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { error: error.message } }, ce: { ...prev.ce, resolved: { error: error.message } } }));
       }
     }
     resolveTokens();
     return () => { cancelled = true; };
-  }, [selectedInstrument, peStrike, ceStrike, optionExpiry]);
+  }, [selectedInstrument, peStrike, ceStrike, optionExpiry, fyersAuth]);
 
   // Static Fibonacci levels (per option token + date range). Cached so they don't change with live LTP.
   const fibCacheRef = useRef({}); // key: token|fromDate|toDate
   useEffect(() => {
     let cancelled = false;
     async function computeFib(token, setter) {
-      if (!token || !fromDate || !toDate) return;
+      if (!fromDate || !toDate) return;
+      // FYERS path uses symbol instead of token
+      if (fyersAuth) return;
+      if (!token) return;
       const key = `${token}|${fromDate}|${toDate}`;
       if (fibCacheRef.current[key]) { setter(fibCacheRef.current[key]); return; }
       try {
@@ -476,10 +479,33 @@ const Analytics = () => {
         console.warn('Fib fetch failed', e.message);
       }
     }
-    if (peOptionToken && !peFibLevels) computeFib(peOptionToken, setPeFibLevels);
-    if (ceOptionToken && !ceFibLevels) computeFib(ceOptionToken, setCeFibLevels);
+    async function computeFibFyers(symbol, setter) {
+      if (!symbol || !fromDate || !toDate) return;
+      const key = `${symbol}|FYERS|${fromDate}|${toDate}`;
+      if (fibCacheRef.current[key]) { setter(fibCacheRef.current[key]); return; }
+      try {
+        // Use daily resolution for fibs; Fyers resolution 'D'
+        const hist = await fyersService.getHistoricalData(symbol, fromDate, toDate, 'D');
+        const candles = Array.isArray(hist) ? hist : [];
+        if (!candles.length) { setter(null); return; }
+        let low = Infinity, high = -Infinity;
+        candles.forEach(c => { if (c.low < low) low = c.low; if (c.high > high) high = c.high; });
+        if (!isFinite(low) || !isFinite(high)) { setter(null); return; }
+        const diff = high - low;
+        const fibs = { 0: low, 0.5: low + diff * 0.5, 1: high, 1.618: low + diff * 1.618 };
+        fibCacheRef.current[key] = fibs;
+        setter(fibs);
+      } catch(e) { console.warn('[FYERS] Fib fetch failed', e.message); }
+    }
+    if (!fyersAuth) {
+      if (peOptionToken && !peFibLevels) computeFib(peOptionToken, setPeFibLevels);
+      if (ceOptionToken && !ceFibLevels) computeFib(ceOptionToken, setCeFibLevels);
+    } else {
+      if (peFyersSymbol && !peFibLevels) computeFibFyers(peFyersSymbol, setPeFibLevels);
+      if (ceFyersSymbol && !ceFibLevels) computeFibFyers(ceFyersSymbol, setCeFibLevels);
+    }
     return () => { cancelled = true; };
-  }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate]);
+  }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate, fyersAuth, peFyersSymbol, ceFyersSymbol]);
 
   // Subscribe to real-time option data with fallback when WebSocket fails
   const lastTickRef = useRef({ pe: null, ce: null });
@@ -488,6 +514,7 @@ const Analytics = () => {
   // Fallback quote fetching when WebSocket is unavailable
   useEffect(() => {
     if (!peOptionToken && !ceOptionToken) return;
+    if (fyersAuth) return; // Skip WS when using Fyers data
     
     let cancelled = false;
     
@@ -543,7 +570,7 @@ const Analytics = () => {
         fallbackIntervalRef.current = null;
       }
     };
-  }, [peOptionToken, ceOptionToken]);
+  }, [peOptionToken, ceOptionToken, fyersAuth]);
 
   // Subscribe to real-time option ticks (with graceful WebSocket failure handling)
   useEffect(() => {
@@ -634,24 +661,38 @@ const Analytics = () => {
   };
 
   const timeframeToInterval = { '15m': '15minute', '1h': '60minute', '1d': 'day' };
+  const timeframeToFyers = { '15m': '15', '1h': '60', '1d': 'D' };
 
-  const fetchHMAIfNeeded = async (token, timeframe, stateObj, setStateObj) => {
-    if (!token) return;
+  const fetchHMAIfNeeded = async (tokenOrSymbol, timeframe, stateObj, setStateObj) => {
+    if (!tokenOrSymbol) return;
     if (stateObj[timeframe] != null) return; // already computed
     try {
-      const fromDateTime = `${fromDate} 09:15:00`;
-      const toDateTime = `${toDate} 15:30:00`;
-      const interval = timeframeToInterval[timeframe];
-      const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, interval);
-      const candles = data?.candles || [];
-      const closes = candles.map(c => c[4]);
+      let closes = [];
+      if (!fyersAuth) {
+        const fromDateTime = `${fromDate} 09:15:00`;
+        const toDateTime = `${toDate} 15:30:00`;
+        const interval = timeframeToInterval[timeframe];
+        const data = await TradingService.getHistoricalData(tokenOrSymbol, fromDateTime, toDateTime, interval);
+        const candles = data?.candles || [];
+        closes = candles.map(c => c[4]);
+      } else {
+        const res = timeframeToFyers[timeframe] || '15';
+        const hist = await fyersService.getHistoricalData(tokenOrSymbol, fromDate, toDate, res);
+        closes = Array.isArray(hist) ? hist.map(c => c.close) : [];
+      }
       const hmaVal = computeHMA(closes, 50);
       setStateObj(prev => ({ ...prev, [timeframe]: hmaVal }));
     } catch (e) { console.warn('HMA fetch failed', e.message); }
   };
 
-  useEffect(() => { if (peOptionToken) fetchHMAIfNeeded(peOptionToken, peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe]);
-  useEffect(() => { if (ceOptionToken) fetchHMAIfNeeded(ceOptionToken, ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe]);
+  useEffect(() => { 
+    const id = fyersAuth ? peFyersSymbol : peOptionToken; 
+    if (id) fetchHMAIfNeeded(id, peTimeframe, peHma, setPeHma); 
+  }, [peOptionToken, peFyersSymbol, peTimeframe, fyersAuth]);
+  useEffect(() => { 
+    const id = fyersAuth ? ceFyersSymbol : ceOptionToken; 
+    if (id) fetchHMAIfNeeded(id, ceTimeframe, ceHma, setCeHma); 
+  }, [ceOptionToken, ceFyersSymbol, ceTimeframe, fyersAuth]);
   
   // Fyers Integration Functions
   const fetchFyersOptionData = async () => {

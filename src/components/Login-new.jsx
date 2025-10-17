@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import AuthService from '../services/AuthService-new';
 import BrokerSelector from './BrokerSelector';
+import { useFyersAuth } from '../hooks/useFyersAuth';
 import './Login.css';
 
 const Login = () => {
@@ -10,6 +11,8 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [currentBroker, setCurrentBroker] = useState(null);
+  // Fyers hook
+  const { login: fyersLogin, loading: fyersLoading, error: fyersError, isAuthenticated: fyersAuthed } = useFyersAuth();
   
   // Zerodha-specific state
   const [requestToken, setRequestToken] = useState('');
@@ -222,6 +225,42 @@ const Login = () => {
     </div>
   );
 
+  const renderFyersLogin = () => (
+    <div className="login-form">
+      <h2>Login to Fyers</h2>
+      <p style={{ marginTop: '6px', opacity: 0.85 }}>Secure OAuth flow via server proxy. Your client secret never touches the browser.</p>
+
+      <div style={{ marginTop: 16 }}>
+        <button
+          className="login-button"
+          onClick={() => {
+            setError('');
+            fyersLogin();
+          }}
+          disabled={fyersLoading}
+        >
+          {fyersLoading ? 'Redirecting to Fyers…' : 'Login with Fyers'}
+        </button>
+      </div>
+
+      {fyersError && (
+        <div className="error-message" style={{ marginTop: 12 }}>
+          {fyersError}
+        </div>
+      )}
+
+      {fyersAuthed && (
+        <div className="success-message" style={{ marginTop: 12 }}>
+          Logged in to Fyers. Opening tools…
+        </div>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: 14, opacity: 0.85 }}>
+        <a href="/fyers-test">Open Fyers Tools</a> · <a href="/fyers-debug">Debug</a>
+      </div>
+    </div>
+  );
+
   return (
     <div className="login-container">
       <div className="login-card">
@@ -240,6 +279,7 @@ const Login = () => {
 
         {currentBroker === 'zerodha' && renderZerodhaLogin()}
         {currentBroker === 'breeze' && renderBreezeLogin()}
+  {currentBroker === 'fyers' && renderFyersLogin()}
         
         {!currentBroker && (
           <div className="no-broker">

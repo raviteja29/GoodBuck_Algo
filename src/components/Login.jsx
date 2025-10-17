@@ -2,12 +2,15 @@
 import React, { useState } from 'react';
 import { CurrencyRupeeIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 import AuthService from '../services/AuthService';
+import { useFyersAuth } from '../hooks/useFyersAuth';
 import './Login.css';
 
 const Login = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [broker, setBroker] = useState('zerodha');
   const [error, setError] = useState(null);
+  // Fyers auth hook for parity with new login page
+  const { login: fyersLogin, loading: fyersLoading, error: fyersError, isAuthenticated: fyersAuthed } = useFyersAuth();
 
   const handleLogin = async () => {
     setError(null);
@@ -16,6 +19,11 @@ const Login = ({ onLoginSuccess }) => {
       if (broker === 'zerodha') {
         const loginUrl = AuthService.getLoginUrl();
         window.location.href = loginUrl;
+        return;
+      }
+      if (broker === 'fyers') {
+        // Use secure proxy flow via Fyers hook
+        await fyersLogin();
         return;
       }
       // Breeze redirect style: obtain backend-generated login URL
@@ -69,6 +77,7 @@ const Login = ({ onLoginSuccess }) => {
             >
               <option value="zerodha">Zerodha</option>
               <option value="breeze">ICICI Breeze</option>
+              <option value="fyers">Fyers</option>
             </select>
           </div>
 
@@ -77,7 +86,7 @@ const Login = ({ onLoginSuccess }) => {
           <button
             className="login-button"
             onClick={handleLogin}
-            disabled={isLoading}
+            disabled={isLoading || fyersLoading}
           >
             {isLoading ? (
               <div className="loading-spinner"></div>
@@ -90,9 +99,13 @@ const Login = ({ onLoginSuccess }) => {
                 />
                 Login with Zerodha
               </>
-            ) : (
+            ) : broker === 'breeze' ? (
               <>
                 <span style={{ fontWeight: 600 }}>Login with Breeze</span>
+              </>
+            ) : (
+              <>
+                <span style={{ fontWeight: 600 }}>Login with Fyers</span>
               </>
             )}
           </button>
@@ -100,10 +113,18 @@ const Login = ({ onLoginSuccess }) => {
           <div className="login-info">
             {broker === 'zerodha' ? (
               <p>OAuth 2.0 authentication with Zerodha Kite Connect</p>
-            ) : (
+            ) : broker === 'breeze' ? (
               <p>Redirect-based authentication with ICICI Breeze (keys stay on server)</p>
+            ) : (
+              <p>Secure OAuth with Fyers via server proxy. Your client secret is never exposed.</p>
             )}
             {error && <p style={{ color: 'tomato', marginTop: '8px' }}>{error}</p>}
+            {fyersError && broker === 'fyers' && (
+              <p style={{ color: 'tomato', marginTop: '8px' }}>{fyersError}</p>
+            )}
+            {fyersAuthed && broker === 'fyers' && (
+              <p style={{ color: '#22c55e', marginTop: '8px' }}>Connected to Fyers. You can proceed to the dashboard or open Fyers tools.</p>
+            )}
           </div>
 
           {/* Fyers Test Link */}
