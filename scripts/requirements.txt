@@ -1,0 +1,6 @@
+# Python dependencies for the Fyers Nifty analyzer tool
+Flask>=3.0
+fyers-apiv3>=3.0
+pandas>=2.0
+requests>=2.31
+python-dotenv>=1.0

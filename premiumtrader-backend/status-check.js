@@ -1,7 +1,12 @@
 // Quick status check for multi-broker setup
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+// Load .env from project root (one level up)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 console.log('🔧 Multi-Broker Trading System Status\n');
 
@@ -9,36 +14,38 @@ console.log('🔧 Multi-Broker Trading System Status\n');
 console.log('📊 Zerodha Kite:');
 const kiteKey = process.env.KITE_API_KEY;
 const kiteSecret = process.env.KITE_API_SECRET;
+console.log(`   API Key: ${kiteKey ? '✅ Configured' : '❌ Missing'}`);
+console.log(`   API Secret: ${kiteSecret ? '✅ Configured' : '❌ Missing'}`);
 
-if (kiteKey && kiteSecret) {
-  console.log('   ✅ API Key: Configured');
-  console.log('   ✅ API Secret: Configured');
-  console.log('   ✅ Status: Ready to use');
-} else {
-  console.log('   ❌ Missing credentials');
-}
-
-// Check ICICI Breeze  
+// Check ICICI Breeze
 console.log('\n🏦 ICICI Breeze:');
 const breezeKey = process.env.BREEZE_API_KEY;
 const breezeSecret = process.env.BREEZE_SECRET_KEY;
+console.log(`   API Key: ${breezeKey ? '✅ Configured' : '⚠️ Missing'}`);
+console.log(`   Secret Key: ${breezeSecret ? '✅ Configured' : '⚠️ Missing'}`);
 
-if (breezeKey && breezeSecret) {
-  if (breezeKey.includes('your_icici_breeze') || breezeSecret.includes('your_icici_breeze')) {
-    console.log('   ⚠️  API Key: Placeholder value');
-    console.log('   ⚠️  Secret Key: Placeholder value');
-    console.log('   ⏳ Status: Needs actual credentials');
-  } else {
-    console.log('   ✅ API Key: Configured');
-    console.log('   ✅ Secret Key: Configured');
-    console.log('   ✅ Status: Ready to test');
-  }
-} else {
-  console.log('   ❌ Missing credentials');
+// Check Fyers
+console.log('\n📈 Fyers:');
+const fyersClientId = process.env.FYERS_CLIENT_ID;
+const fyersClientSecret = process.env.FYERS_CLIENT_SECRET;
+const fyersRedirect = process.env.FYERS_REDIRECT_URL;
+console.log(`   Client ID: ${fyersClientId ? '✅ Configured' : '❌ Missing'}`);
+console.log(`   Client Secret: ${fyersClientSecret ? '✅ Configured' : '❌ Missing'}`);
+console.log(`   Redirect URL: ${fyersRedirect ? '✅ Configured' : '❌ Missing'}`);
+if (process.env.VITE_FYERS_CLIENT_SECRET) {
+  console.log('   ⚠️ Frontend VITE_FYERS_CLIENT_SECRET is set — remove for production (secret must not be exposed).');
 }
+
+// Environment and server
+console.log('\n🛠️  Environment:');
+console.log(`   NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
+console.log(`   PORT: ${process.env.PORT || 5000}`);
 
 console.log('\n📋 Summary:');
 console.log(`   • Zerodha Kite: ${kiteKey && kiteSecret ? '✅ Ready' : '❌ Not Ready'}`);
-console.log(`   • ICICI Breeze: ${breezeKey && breezeSecret && !breezeKey.includes('your_icici_breeze') ? '✅ Ready' : '⚠️  Needs Setup'}`);
+const breezeReady = !!(breezeKey && breezeSecret && !String(breezeKey).includes('your_icici_breeze'));
+console.log(`   • ICICI Breeze: ${breezeReady ? '✅ Ready' : '⚠️  Needs Setup'}`);
+const fyersReady = !!(fyersClientId && fyersClientSecret && fyersRedirect);
+console.log(`   • Fyers: ${fyersReady ? '✅ Ready' : '❌ Not Ready'}`);
 
-console.log('\n🚀 Ready to start server with: node server-new.js');
+console.log('\n🚀 Start backend with: node premiumtrader-backend/server.js');
