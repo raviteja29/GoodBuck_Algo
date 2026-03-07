@@ -2,7 +2,7 @@ services:
   - type: web
     name: goodbuck-algo
     env: node
-    buildCommand: npm install && npx vite build
+    buildCommand: npm install && cd premiumtrader-backend && npm install && cd .. && npx vite build
     startCommand: node premiumtrader-backend/server.js
     envVars:
       - key: NODE_ENV
