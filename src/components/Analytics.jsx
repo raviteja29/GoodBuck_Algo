@@ -52,7 +52,28 @@ const Analytics = () => {
   const [toDate, setToDate] = useState(defaultDates.to);
   const [loading, setLoading] = useState(false);
   const [highLowData, setHighLowData] = useState(null);
+  const [giftNiftyData, setGiftNiftyData] = useState(null);
+  const [giftNiftyLoading, setGiftNiftyLoading] = useState(false);
+  const [giftNiftyInstrument, setGiftNiftyInstrument] = useState(null);
   const [error, setError] = useState(null);
+
+  // Initialize GIFT NIFTY instrument
+  useEffect(() => {
+    const resolveGiftNifty = async () => {
+      try {
+        const results = await TradingService.searchInstruments('GIFT NIFTY');
+        // Prefer NSEIX or the most prominent match
+        const match = results.find(i => i.exchange === 'NSEIX') || results[0];
+        if (match) {
+          console.log('Resolved GIFT NIFTY instrument:', match);
+          setGiftNiftyInstrument(match);
+        }
+      } catch (e) {
+        console.warn('Failed to resolve GIFT NIFTY instrument:', e.message);
+      }
+    };
+    resolveGiftNifty();
+  }, []);
 
   // Handle instrument selection
   const handleInstrumentSelect = (instrument) => {
@@ -119,6 +140,23 @@ const Analytics = () => {
 
       setHighLowData(data);
       console.log('High/Low data received:', data);
+
+      // Fetch GIFT Nifty data if possible
+      if (giftNiftyInstrument) {
+        setGiftNiftyLoading(true);
+        try {
+          const gnData = await TradingService.getInstrumentHighLow(
+            giftNiftyInstrument.instrument_token,
+            fromDateTime,
+            toDateTime
+          );
+          setGiftNiftyData(gnData);
+        } catch (gnErr) {
+          console.warn('GIFT Nifty analysis failed:', gnErr.message);
+        } finally {
+          setGiftNiftyLoading(false);
+        }
+      }
     } catch (err) {
       console.error('Error fetching high/low data:', err);
 
@@ -142,6 +180,7 @@ const Analytics = () => {
     setFromDate(newDefaultDates.from);
     setToDate(newDefaultDates.to);
     setHighLowData(null);
+    setGiftNiftyData(null);
     setError(null);
   };
 
@@ -251,7 +290,9 @@ const Analytics = () => {
       `${base}${dd}${mmm}${strikeStr}${type}`,
       `${base}${yy}${strikeStr}${type}`,
       `${base}${mmm}${yy}${strikeStr}${type}`,
-      `${base}${dd}${monthNum}${yy}${strikeStr}${type}`
+      `${base}${dd}${monthNum}${yy}${strikeStr}${type}`,
+      // Zerodha Weekly format: YY + Month(1 char for OND, else 1-9) + DD
+      `${base}${yy}${monthNum.startsWith('0') ? monthNum.slice(1) : (monthNum === '10' ? 'O' : monthNum === '11' ? 'N' : 'D')}${dd}${strikeStr}${type}`
     ];
     if (mmm === 'SEP') {
       // Some data sources may list September as SEPT
@@ -804,7 +845,11 @@ const Analytics = () => {
                           <option value="1h">1h</option>
                           <option value="1d">1d</option>
                         </select>
-                        <div className="hma-value">HMA50: {peHma[peTimeframe] != null ? peHma[peTimeframe].toFixed(2) : '--'}</div>
+                        <div className="hma-value">
+                          HMA50: {peHma[peTimeframe] != null
+                            ? peHma[peTimeframe].toFixed(2)
+                            : (peOptionToken ? 'Calculating/Insufficient Data' : '--')}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -860,7 +905,11 @@ const Analytics = () => {
                           <option value="1h">1h</option>
                           <option value="1d">1d</option>
                         </select>
-                        <div className="hma-value">HMA50: {ceHma[ceTimeframe] != null ? ceHma[ceTimeframe].toFixed(2) : '--'}</div>
+                        <div className="hma-value">
+                          HMA50: {ceHma[ceTimeframe] != null
+                            ? ceHma[ceTimeframe].toFixed(2)
+                            : (ceOptionToken ? 'Calculating/Insufficient Data' : '--')}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -894,6 +943,41 @@ const Analytics = () => {
                   </div>
                 </div>
               </div>
+
+              {/* GIFT NIFTY Card */}
+              {(giftNiftyData || giftNiftyLoading) && (
+                <div className="result-card gift-nifty-card full-width">
+                  <div className="card-header">
+                    <h4 className="card-title">GIFT NIFTY Analysis</h4>
+                    <div className="symbol-badge">NSEIX</div>
+                  </div>
+                  {giftNiftyLoading ? (
+                    <div className="card-loading">
+                      <div className="loading-spinner small"></div>
+                      Analyzing GIFT NIFTY...
+                    </div>
+                  ) : (
+                    <div className="gift-grid">
+                      <div className="gift-stat">
+                        <span className="stat-label">High</span>
+                        <span className="stat-value high">₹{giftNiftyData?.high?.toLocaleString()}</span>
+                      </div>
+                      <div className="gift-stat">
+                        <span className="stat-label">Low</span>
+                        <span className="stat-value low">₹{giftNiftyData?.low?.toLocaleString()}</span>
+                      </div>
+                      <div className="gift-stat">
+                        <span className="stat-label">Range</span>
+                        <span className="stat-value">₹{((giftNiftyData?.high || 0) - (giftNiftyData?.low || 0)).toLocaleString()}</span>
+                      </div>
+                      <div className="gift-stat">
+                        <span className="stat-label">Days</span>
+                        <span className="stat-value">{giftNiftyData?.dataPoints}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Summary Info */}
               <div className="results-summary">

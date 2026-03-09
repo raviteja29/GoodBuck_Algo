@@ -71,7 +71,7 @@ async function setupWebSocket() {
 
     // Create new WebSocket instance with the token as a query parameter
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsHost = process.env.NODE_ENV === 'development' ? 'localhost:5000' : window.location.host;
+    const wsHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'localhost:5000' : window.location.host;
     ws = new WebSocket(`${wsProtocol}//${wsHost}/ws?token=${encodeURIComponent(publicToken)}`);
 
     // Keep track of ping interval
