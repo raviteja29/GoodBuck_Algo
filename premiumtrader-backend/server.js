@@ -30,7 +30,7 @@ function initTickerIfPossible(accessToken) {
   if (!accessToken) return;
   if (ticker && tickerAccessToken === accessToken) return; // already initialized
   tickerAccessToken = accessToken;
-  if (ticker) { try { ticker.disconnect(); } catch(_) {} ticker = null; }
+  if (ticker) { try { ticker.disconnect(); } catch (_) { } ticker = null; }
   try {
     console.log('[TICKER] Initializing');
     ticker = new KiteTicker({
@@ -47,16 +47,16 @@ function initTickerIfPossible(accessToken) {
       console.log('[TICKER] Connected');
       if (subscribedTokens.size) {
         const arr = Array.from(subscribedTokens);
-        try { ticker.subscribe(arr); ticker.setMode(ticker.MODE_FULL, arr); } catch(e){ console.error('[TICKER] resubscribe failed', e.message); }
+        try { ticker.subscribe(arr); ticker.setMode(ticker.MODE_FULL, arr); } catch (e) { console.error('[TICKER] resubscribe failed', e.message); }
       }
     });
-    ticker.on('ticks', (ticks=[]) => {
+    ticker.on('ticks', (ticks = []) => {
       if (!Array.isArray(ticks) || !ticks.length) return;
       const now = Date.now();
       ticks.forEach(t => { if (t && t.instrument_token) quoteCache.set(t.instrument_token, { ...t, cacheTs: now }); });
       if (wss && wss.clients && wss.clients.size) {
         const msg = JSON.stringify({ type: 'ticks', data: ticks });
-        let sent=0; wss.clients.forEach(c => { if (c.readyState===WebSocket.OPEN) { try { c.send(msg); sent++; } catch(_){} } });
+        let sent = 0; wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) { try { c.send(msg); sent++; } catch (_) { } } });
         if (sent) console.log(`[TICKER] Broadcast ${ticks.length} ticks to ${sent} clients`);
       }
     });
@@ -72,13 +72,7 @@ dotenv.config();
 
 console.log('Using API Key:', process.env.KITE_API_KEY);
 console.log('Using API Secret:', process.env.KITE_API_SECRET ? '***secret redacted***' : 'MISSING');
-// Breeze key sanity check (avoid accidental whitespace)
-if (process.env.BREEZE_API_KEY && /\s/.test(process.env.BREEZE_API_KEY)) {
-  console.warn('[BREEZE] BREEZE_API_KEY contains whitespace characters – this will cause "public key does not exist" errors. Current (trimmed) length:', process.env.BREEZE_API_KEY.trim().length);
-}
-if (process.env.BREEZE_SECRET_KEY && /\s/.test(process.env.BREEZE_SECRET_KEY)) {
-  console.warn('[BREEZE] BREEZE_SECRET_KEY contains whitespace characters – remove spaces in .env');
-}
+// Breeze key sanity check removed
 
 const app = express();
 
@@ -129,7 +123,7 @@ let globalLastAccessToken = null;
 
 // 1) Enable CORS with explicit origin and credentials
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
+  origin: process.env.NODE_ENV === 'production'
     ? 'https://goodbuck-algo.onrender.com'
     : 'http://localhost:5173',
   credentials: true
@@ -154,7 +148,7 @@ app.post('/api/generate_session', async (req, res) => {
   usedTokens.add(request_token);
 
   try {
-    const kc = new KiteConnect({ 
+    const kc = new KiteConnect({
       api_key: process.env.KITE_API_KEY,
       timeout: 30000, // 30 second timeout
       retry: {
@@ -162,7 +156,7 @@ app.post('/api/generate_session', async (req, res) => {
         delay: 1000   // 1 second between retries
       }
     });
-    
+
     console.log('Attempting to generate session with KiteConnect...');
     try {
       const sessionData = await kc.generateSession(request_token, process.env.KITE_API_SECRET);
@@ -171,125 +165,27 @@ app.post('/api/generate_session', async (req, res) => {
         user_name: sessionData.user_name,
         login_time: new Date().toISOString()
       });
-  globalLastAccessToken = sessionData.access_token;
-  initTickerIfPossible(globalLastAccessToken);
-  return res.json(sessionData);
+      globalLastAccessToken = sessionData.access_token;
+      initTickerIfPossible(globalLastAccessToken);
+      return res.json(sessionData);
     } catch (apiErr) {
       console.error('KiteConnect API Error:', apiErr);
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: apiErr.message,
         error_type: apiErr.error_type,
-        data: apiErr.data 
+        data: apiErr.data
       });
     }
   } catch (err) {
     console.error('Session generation error:', err);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: err.message,
       details: 'Error initializing KiteConnect or processing session'
     });
   }
 });
 
-// Breeze login stub (placeholder) - replace with real ICICI Breeze API integration
-app.post('/api/breeze/login', async (req, res) => {
-  try {
-    const { apiKey, apiSecret, userId, password, twoFA } = req.body || {};
-    if (!apiKey || !apiSecret || !userId || !password || !twoFA) {
-      return res.status(400).json({ error: 'Missing required fields (apiKey, apiSecret, userId, password, twoFA)' });
-    }
-    // In production: perform Breeze auth request here and obtain real access token + user details.
-    const mockAccessToken = `breeze_${Buffer.from(userId + Date.now()).toString('base64').slice(0,32)}`;
-    return res.json({
-      broker: 'breeze',
-      access_token: mockAccessToken,
-      user_id: userId,
-      user_name: userId,
-      login_time: new Date().toISOString(),
-      note: 'Stub response - replace with real Breeze API integration'
-    });
-  } catch (e) {
-    console.error('[BREEZE LOGIN STUB] Error:', e);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Breeze redirect login URL (similar to Zerodha style) - frontend will redirect user here first
-app.get('/api/breeze/login-url', (req, res) => {
-  try {
-    let appKey = process.env.BREEZE_API_KEY;
-    if (!appKey) return res.status(500).json({ error: 'BREEZE_API_KEY not configured' });
-    const raw = appKey;
-    appKey = appKey.trim();
-    if (raw !== appKey) {
-      console.warn('[BREEZE] Stripped whitespace from BREEZE_API_KEY. Original length', raw.length, 'trimmed length', appKey.length);
-    }
-    if (/\s/.test(appKey)) {
-      return res.status(400).json({ error: 'BREEZE_API_KEY contains whitespace – fix .env (no spaces)' });
-    }
-    if (appKey.length < 10) {
-      return res.status(400).json({ error: 'BREEZE_API_KEY seems too short or invalid' });
-    }
-    const url = `https://api.icicidirect.com/apiuser/login?api_key=${encodeURIComponent(appKey)}`;
-    return res.json({ url });
-  } catch (e) {
-    console.error('[BREEZE] login-url error', e.message);
-    return res.status(500).json({ error: 'Failed to construct Breeze login URL' });
-  }
-});
-
-// Exchange an API_Session (returned as query param after Breeze login redirect) for a session token + minimal profile
-app.post('/api/breeze/generate_session', async (req, res) => {
-  try {
-    const { api_session } = req.body || {};
-    if (!api_session) return res.status(400).json({ error: 'api_session required' });
-    const appKey = process.env.BREEZE_API_KEY;
-    const secret = process.env.BREEZE_SECRET_KEY;
-    if (!appKey || !secret) return res.status(500).json({ error: 'Breeze credentials not configured' });
-
-    // Per docs: Use API_Session against CustomerDetails to get SessionToken & user info.
-    // Docs show GET with JSON body; we'll follow pattern using axios.
-    const axios = (await import('axios')).default;
-
-    const payload = { SessionToken: api_session, AppKey: appKey };
-    // Customer details endpoint
-    const url = 'https://api.icicidirect.com/breezeapi/api/v1/customerdetails';
-    let customerResp;
-    try {
-      customerResp = await axios.get(url, { headers: { 'Content-Type': 'application/json' }, data: JSON.stringify(payload) });
-    } catch (err) {
-      // Some servers ignore body in GET; attempt POST fallback
-      try {
-        customerResp = await axios.post(url, JSON.stringify(payload), { headers: { 'Content-Type': 'application/json' } });
-      } catch (err2) {
-        return res.status(502).json({ error: 'Failed to fetch customer details', details: err2.message });
-      }
-    }
-
-    const raw = customerResp.data || {};
-    const successBlock = raw.Success || {};
-    // The Breeze docs mention we derive session token by decoding base64 session_token or using SessionToken; capture both possibilities
-    const sessionToken = successBlock.session_token || successBlock.SessionToken || api_session;
-    const userId = successBlock.idirect_userid || successBlock.idirect_user_id || 'breeze_user';
-    const userName = successBlock.idirect_user_name || userId;
-
-    if (!sessionToken) {
-      return res.status(500).json({ error: 'No session token returned from Breeze API' });
-    }
-
-    // For parity with existing frontend expectations, align field names
-    return res.json({
-      broker: 'breeze',
-      access_token: sessionToken,
-      user_id: userId,
-      user_name: userName,
-      meta: { received: Object.keys(successBlock), status: raw.Status }
-    });
-  } catch (e) {
-    console.error('[BREEZE SESSION EXCHANGE] Error:', e.message);
-    return res.status(500).json({ error: 'Internal error exchanging Breeze session' });
-  }
-});
+// Removed Breeze login stubs and endpoints
 
 
 // Helper to get access token from header or query
@@ -312,8 +208,8 @@ app.get('/api/profile', async (req, res) => {
       console.warn('[PROFILE] No access token provided, returning 401');
       return res.status(401).json({ error: 'Access token required' });
     }
-  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
     try {
       const profile = await kc.getProfile();
       console.log('[PROFILE] Successfully fetched profile:', profile);
@@ -339,8 +235,8 @@ app.get('/api/margins', async (req, res) => {
       console.warn('[MARGINS] No access token provided, returning 401');
       return res.status(401).json({ error: 'Access token required' });
     }
-  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
     try {
       console.log('[MARGINS] Sending request to KiteConnect getMargins API...');
       console.log('[MARGINS] Request headers:', {
@@ -361,7 +257,7 @@ app.get('/api/margins', async (req, res) => {
         api_key: process.env.KITE_API_KEY,
         access_token
       });
-      res.status(500).json({ 
+      res.status(500).json({
         error: apiErr.message,
         error_type: apiErr.error_type,
         data: apiErr.data
@@ -380,8 +276,8 @@ app.get('/api/positions', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
     const positions = await kc.getPositions();
     res.json(positions);
   } catch (err) {
@@ -397,8 +293,8 @@ app.get('/api/holdings', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
     const holdings = await kc.getHoldings();
     res.json(holdings);
   } catch (err) {
@@ -414,8 +310,8 @@ app.get('/api/orders', async (req, res) => {
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-  kc.setAccessToken(access_token); globalLastAccessToken = access_token;
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(access_token); globalLastAccessToken = access_token;
     const orders = await kc.getOrders();
     res.json(orders);
   } catch (err) {
@@ -451,20 +347,20 @@ app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
       console.error('[HISTORICAL] No access token provided');
       return res.status(401).json({ error: 'Access token required' });
     }
-    
+
     // URI parameters (as per Kite Connect documentation)
     const { instrumentToken, interval } = req.params;
-    
+
     // Request parameters (as per Kite Connect documentation)
     const { from, to, continuous, oi } = req.query;
-    
+
     console.log('[HISTORICAL] URI params:', { instrumentToken, interval });
     console.log('[HISTORICAL] Query params:', { from, to, continuous, oi });
-    
+
     if (!instrumentToken || !interval || !from || !to) {
       console.error('[HISTORICAL] Missing required parameters');
-      return res.status(400).json({ 
-        error: 'Missing required parameters. instrumentToken and interval are required in URI, from and to are required in query' 
+      return res.status(400).json({
+        error: 'Missing required parameters. instrumentToken and interval are required in URI, from and to are required in query'
       });
     }
 
@@ -472,25 +368,25 @@ app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
     const allowedIntervals = ['minute', 'day', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute'];
     if (!allowedIntervals.includes(interval)) {
       console.error('[HISTORICAL] Invalid interval:', interval);
-      return res.status(400).json({ 
-        error: `Invalid interval. Allowed values: ${allowedIntervals.join(', ')}` 
+      return res.status(400).json({
+        error: `Invalid interval. Allowed values: ${allowedIntervals.join(', ')}`
       });
     }
 
     // Validate date format - accept both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS
     const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
     const dateTimeRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-    
+
     const isFromDateValid = dateOnlyRegex.test(from) || dateTimeRegex.test(from);
     const isToDateValid = dateOnlyRegex.test(to) || dateTimeRegex.test(to);
-    
+
     if (!isFromDateValid || !isToDateValid) {
       return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS' });
     }
 
     // Convert dates to datetime format expected by Kite API (yyyy-mm-dd hh:mm:ss)
     let fromDateTime, toDateTime;
-    
+
     // Check if input is already in datetime format
     if (from.includes(' ')) {
       fromDateTime = from;
@@ -500,12 +396,12 @@ app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
       fromDateTime = `${from} 09:15:00`; // Market opening time
       toDateTime = `${to} 15:30:00`; // Market closing time
     }
-    
+
     console.log(`[HISTORICAL] Converted to datetime format: ${fromDateTime} to ${toDateTime}`);
     console.log(`[HISTORICAL] Additional params: continuous=${continuous}, oi=${oi}`);
-    
+
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-  kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
+    kc.setAccessToken(access_token); globalLastAccessToken = access_token; initTickerIfPossible(access_token);
 
     try {
       const params = { from: fromDateTime, to: toDateTime };
@@ -543,7 +439,7 @@ app.get('/api/instruments/search', async (req, res) => {
       const nameField = (i.name || '').toLowerCase();
       return ts.includes(lower) || nameField.includes(lower);
     });
-    res.json(filtered.slice(0,200));
+    res.json(filtered.slice(0, 200));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -587,40 +483,40 @@ app.get('/api/historical', async (req, res) => {
       console.error('[HISTORICAL-COMPAT] No access token provided');
       return res.status(401).json({ error: 'Access token required' });
     }
-    
+
     const { instrumentToken, fromDate, toDate, interval, continuous, oi } = req.query;
-    
+
     console.log('[HISTORICAL-COMPAT] Legacy route accessed');
     console.log('[HISTORICAL-COMPAT] Query params:', { instrumentToken, fromDate, toDate, interval, continuous, oi });
-    
+
     if (!instrumentToken || !interval || !fromDate || !toDate) {
       console.error('[HISTORICAL-COMPAT] Missing required query parameters');
       return res.status(400).json({ error: 'Missing required query parameters: instrumentToken, interval, fromDate, toDate' });
     }
-    
+
     // Validate interval parameter against allowed values
     const allowedIntervals = ['minute', 'day', '3minute', '5minute', '10minute', '15minute', '30minute', '60minute'];
     if (!allowedIntervals.includes(interval)) {
       console.error('[HISTORICAL-COMPAT] Invalid interval:', interval);
-      return res.status(400).json({ 
-        error: `Invalid interval. Allowed values: ${allowedIntervals.join(', ')}` 
+      return res.status(400).json({
+        error: `Invalid interval. Allowed values: ${allowedIntervals.join(', ')}`
       });
     }
 
     // Validate date format - accept both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS
     const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
     const dateTimeRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-    
+
     const isFromDateValid = dateOnlyRegex.test(fromDate) || dateTimeRegex.test(fromDate);
     const isToDateValid = dateOnlyRegex.test(toDate) || dateTimeRegex.test(toDate);
-    
+
     if (!isFromDateValid || !isToDateValid) {
       return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS' });
     }
 
     // Convert dates to datetime format expected by Kite API (yyyy-mm-dd hh:mm:ss)
     let fromDateTime, toDateTime;
-    
+
     // Check if input is already in datetime format
     if (fromDate.includes(' ')) {
       fromDateTime = fromDate;
@@ -630,37 +526,37 @@ app.get('/api/historical', async (req, res) => {
       fromDateTime = `${fromDate} 09:15:00`; // Market opening time
       toDateTime = `${toDate} 15:30:00`; // Market closing time
     }
-    
+
     console.log(`[HISTORICAL-COMPAT] Converted to datetime format: ${fromDateTime} to ${toDateTime}`);
     console.log(`[HISTORICAL-COMPAT] Additional params: continuous=${continuous}, oi=${oi}`);
-    
+
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
     kc.setAccessToken(access_token);
-    
+
     try {
       // Prepare parameters for getHistoricalData method
       const params = {
         from: fromDateTime,
         to: toDateTime
       };
-      
+
       // Add continuous parameter if provided (for futures contracts)
       if (continuous !== undefined && continuous !== null) {
         params.continuous = continuous === '1' || continuous === 'true';
         console.log(`[HISTORICAL-COMPAT] Continuous data requested: ${params.continuous}`);
       }
-      
+
       // Add OI parameter if provided (for Open Interest data)
       if (oi !== undefined && oi !== null) {
         params.oi = oi === '1' || oi === 'true';
         console.log(`[HISTORICAL-COMPAT] OI data requested: ${params.oi}`);
       }
-      
+
       console.log(`[HISTORICAL-COMPAT] Calling getHistoricalData with params:`, params);
-      
+
       // Call KiteConnect method with all parameters
       const data = await kc.getHistoricalData(instrumentToken, interval, params.from, params.to, params.continuous, params.oi);
-      
+
       console.log('[HISTORICAL-COMPAT] Data fetched:', {
         hasData: !!data,
         hasCandlesArray: Array.isArray(data.candles),
@@ -668,7 +564,7 @@ app.get('/api/historical', async (req, res) => {
         sampleCandle: data.candles && data.candles[0] ? data.candles[0] : null,
         includesOI: params.oi && data.candles && data.candles[0] ? data.candles[0].length === 7 : false
       });
-      
+
       res.json(data);
     } catch (apiErr) {
       console.error('[HISTORICAL-COMPAT] Error from KiteConnect:', apiErr);
@@ -688,63 +584,63 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
       console.error('[HISTORICAL-HIGH-LOW] No access token provided');
       return res.status(401).json({ error: 'Access token required' });
     }
-    
+
     const { instrumentToken, fromDate, toDate } = req.query;
     console.log('[HISTORICAL-HIGH-LOW] Query params:', { instrumentToken, fromDate, toDate });
-    
+
     if (!instrumentToken) {
       return res.status(400).json({ error: 'instrumentToken parameter is required' });
     }
-    
+
     if (!fromDate || !toDate) {
       return res.status(400).json({ error: 'fromDate and toDate parameters are required' });
     }
-    
+
     // Validate date format - accept both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS
     const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
     const dateTimeRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-    
+
     const isFromDateValid = dateOnlyRegex.test(fromDate) || dateTimeRegex.test(fromDate);
     const isToDateValid = dateOnlyRegex.test(toDate) || dateTimeRegex.test(toDate);
-    
+
     if (!isFromDateValid || !isToDateValid) {
       return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS' });
     }
-    
+
     console.log(`[HISTORICAL-HIGH-LOW] Date validation passed for ${fromDate} to ${toDate}`);
-    
+
     // Convert to datetime format expected by Kite API if needed
     let fromDateTime, toDateTime;
-    
+
     // Check if dates already include time, otherwise add market hours
     if (fromDate.includes(' ')) {
       fromDateTime = fromDate;
     } else {
       fromDateTime = `${fromDate} 09:15:00`; // Market opening time
     }
-    
+
     if (toDate.includes(' ')) {
       toDateTime = toDate;
     } else {
       toDateTime = `${toDate} 15:30:00`; // Market closing time
     }
-    
+
     console.log(`[HISTORICAL-HIGH-LOW] Converted to datetime format: ${fromDateTime} to ${toDateTime}`);
-    
+
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
     kc.setAccessToken(access_token);
-    
+
     try {
       console.log(`[HISTORICAL-HIGH-LOW] Fetching historical data for token ${instrumentToken} from ${fromDateTime} to ${toDateTime}`);
       console.log(`[HISTORICAL-HIGH-LOW] KiteConnect instance created with API key: ${process.env.KITE_API_KEY ? 'Present' : 'Missing'}`);
       console.log(`[HISTORICAL-HIGH-LOW] Access token set: ${access_token ? 'Present' : 'Missing'}`);
-      
+
       // Instead of using 'day' interval, use 'minute' interval to get intraday data
       // Then calculate OHLC for each day from 9:15 AM to 3:30 PM
       console.log(`[HISTORICAL-HIGH-LOW] Fetching minute-level data to calculate daily OHLC from market hours`);
-      
+
       const historicalData = await kc.getHistoricalData(instrumentToken, 'minute', fromDateTime, toDateTime);
-      
+
       console.log(`[HISTORICAL-HIGH-LOW] Raw minute-level data received:`, {
         hasData: !!historicalData,
         hasCandles: !!(historicalData && historicalData.candles),
@@ -754,7 +650,7 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
         instrumentToken: instrumentToken,
         dataType: Array.isArray(historicalData) ? 'direct_array' : 'candles_object'
       });
-      
+
       // Handle both formats: candles array or direct array of objects
       let dataArray = null;
       if (historicalData && historicalData.candles && Array.isArray(historicalData.candles)) {
@@ -762,20 +658,20 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
       } else if (historicalData && Array.isArray(historicalData)) {
         dataArray = historicalData;
       }
-      
+
       if (!dataArray || dataArray.length === 0) {
         console.warn(`[HISTORICAL-HIGH-LOW] No data available for the requested range ${fromDateTime} to ${toDateTime}`);
-        
+
         // Provide more specific error message based on the date range
         const startDate = new Date(fromDate);
         const endDate = new Date(toDate);
         const today = new Date();
-        
+
         // Check if trying to access future dates
         if (startDate > today || endDate > today) {
           throw new Error(`Cannot fetch data for future dates. Please select dates from the past.`);
         }
-        
+
         // Check if the range is only weekends
         let hasWeekdays = false;
         for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
@@ -785,27 +681,27 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
             break;
           }
         }
-        
+
         if (!hasWeekdays) {
           throw new Error(`The selected date range (${fromDate} to ${toDate}) contains only weekends. Please select a range that includes weekdays.`);
         }
-        
+
         // Generic message for other cases (holidays, etc.)
         throw new Error(`No trading data available for the selected date range (${fromDate} to ${toDate}). This could be due to market holidays. Please try a different date range.`);
       }
-      
+
       // Calculate daily OHLC from minute-level data for market hours (9:15 AM to 3:30 PM)
       let overallHigh = Number.MIN_SAFE_INTEGER;
       let overallLow = Number.MAX_SAFE_INTEGER;
-      
+
       console.log(`[HISTORICAL-HIGH-LOW] Processing ${dataArray.length} minute-level data points for date range ${fromDate} to ${toDate}:`);
-      
+
       // Group minute data by date to calculate daily OHLC
       const dailyData = {};
-      
+
       dataArray.forEach((dataPoint, index) => {
         let timestamp, open, high, low, close, volume;
-        
+
         // Handle both formats: array format [timestamp, open, high, low, close, volume] or object format
         if (Array.isArray(dataPoint)) {
           timestamp = dataPoint[0];
@@ -822,10 +718,10 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
           close = dataPoint.close;
           volume = dataPoint.volume;
         }
-        
+
         const date = new Date(timestamp).toISOString().split('T')[0];
         const time = new Date(timestamp).toTimeString().split(' ')[0];
-        
+
         // Initialize daily data if not exists
         if (!dailyData[date]) {
           dailyData[date] = {
@@ -839,19 +735,19 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
             lastTime: null
           };
         }
-        
+
         // Set open price (first minute of the day)
         if (dailyData[date].open === null || !dailyData[date].firstTime || time < dailyData[date].firstTime) {
           dailyData[date].open = open;
           dailyData[date].firstTime = time;
         }
-        
+
         // Set close price (last minute of the day)
         if (dailyData[date].close === null || !dailyData[date].lastTime || time > dailyData[date].lastTime) {
           dailyData[date].close = close;
           dailyData[date].lastTime = time;
         }
-        
+
         // Update high and low
         if (high > dailyData[date].high) {
           dailyData[date].high = high;
@@ -859,9 +755,9 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
         if (low < dailyData[date].low) {
           dailyData[date].low = low;
         }
-        
+
         dailyData[date].minuteCount++;
-        
+
         // Update overall high and low
         if (high > overallHigh) {
           overallHigh = high;
@@ -870,16 +766,16 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
           overallLow = low;
         }
       });
-      
+
       // Log each day's OHLC calculated from minute data
       const sortedDates = Object.keys(dailyData).sort();
       sortedDates.forEach((date, index) => {
         const dayData = dailyData[date];
         console.log(`[HISTORICAL-HIGH-LOW] Day ${index + 1} (${date}): Open=${dayData.open}, High=${dayData.high}, Low=${dayData.low}, Close=${dayData.close}, Minutes=${dayData.minuteCount}, TimeRange=${dayData.firstTime}-${dayData.lastTime}`);
       });
-      
+
       console.log(`[HISTORICAL-HIGH-LOW] Analysis complete - Overall High: ${overallHigh}, Overall Low: ${overallLow} across ${sortedDates.length} trading days`);
-      
+
       const result = {
         high: overallHigh,
         low: overallLow,
@@ -891,7 +787,7 @@ app.get('/api/instruments/historical-high-low', async (req, res) => {
           to: toDate
         }
       };
-      
+
       res.json(result);
     } catch (apiErr) {
       console.error('[HISTORICAL-HIGH-LOW] Error from KiteConnect:', apiErr);
@@ -908,25 +804,25 @@ app.get('/api/quotes', async (req, res) => {
   try {
     const access_token = getAccessToken(req);
     console.log(`[QUOTES] Access token exists: ${!!access_token}`);
-    
+
     if (!access_token) {
       return res.status(401).json({ error: 'Access token required' });
     }
-    
+
     const { tokens } = req.query;
     if (!tokens) {
       return res.status(400).json({ error: 'Tokens parameter is required' });
     }
-    
+
     const tokenArray = tokens.split(',').map(t => parseInt(t, 10));
     console.log(`[QUOTES] Fetching quotes for tokens: ${tokenArray.join(',')}`);
-    
+
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
     kc.setAccessToken(access_token);
-    
+
     console.log(`[QUOTES] Using API Key: ${process.env.KITE_API_KEY ? 'Present' : 'Missing'}`);
     console.log(`[QUOTES] Access token length: ${access_token ? access_token.length : 0}`);
-    
+
     try {
       // Get quotes for the requested tokens
       console.log(`[QUOTES] Calling kc.getQuote with tokens: ${tokenArray}`);
@@ -939,7 +835,7 @@ app.get('/api/quotes', async (req, res) => {
       console.error('Error status:', kiteError.status);
       console.error('Error code:', kiteError.code);
       console.error('Full error:', kiteError);
-      
+
       // If permission error, try alternative approach with individual calls
       if (kiteError.error_type === 'PermissionException') {
         console.log('[QUOTES] Permission error detected. Trying individual quote fetches...');
@@ -954,7 +850,7 @@ app.get('/api/quotes', async (req, res) => {
               console.error(`[QUOTES] Failed to fetch individual quote for ${token}:`, individualError.message);
             }
           }
-          
+
           if (Object.keys(individualQuotes).length > 0) {
             console.log('[QUOTES] Successfully fetched some individual quotes');
             return res.json(individualQuotes);
@@ -963,29 +859,29 @@ app.get('/api/quotes', async (req, res) => {
           console.error('[QUOTES] Individual quote approach also failed:', individualError.message);
         }
       }
-      
+
       // Check if it's an authentication error
       if (kiteError.message && (kiteError.message.includes('token') || kiteError.message.includes('auth'))) {
         console.error('[QUOTES] Authentication error - token may be expired');
         return res.status(401).json({ error: 'Authentication failed. Please login again.' });
       }
-      
+
       // For other errors, return the actual error instead of mock data
       console.error('[QUOTES] Kite API error - returning error response');
-      return res.status(500).json({ 
-        error: 'Market data temporarily unavailable', 
+      return res.status(500).json({
+        error: 'Market data temporarily unavailable',
         details: kiteError.message,
-        error_type: kiteError.error_type 
+        error_type: kiteError.error_type
       });
     }
   } catch (err) {
     console.error('[QUOTES] Route error:', err.message || err);
     console.error('[QUOTES] Stack trace:', err.stack);
-    
+
     // Return proper error response instead of mock data
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Market data service temporarily unavailable',
-      details: err.message 
+      details: err.message
     });
   }
 });
@@ -1100,14 +996,14 @@ const server = createServer(app);
  */
 app.post('/api/webhook/orders', (req, res) => {
   console.log('Order webhook received');
-  
+
   try {
     // Check for Kite API version header
     const kiteVersion = req.headers['x-kite-version'];
     if (kiteVersion) {
       console.log(`Kite API Version: ${kiteVersion}`);
     }
-    
+
     // Verify the request is from Zerodha using checksum validation
     // when X-Kite-Signature header is present
     const signature = req.headers['x-kite-signature'];
@@ -1117,14 +1013,14 @@ app.post('/api/webhook/orders', (req, res) => {
         console.error('Cannot verify webhook: KITE_API_SECRET not configured');
         return res.status(500).json({ status: 'error', message: 'Server configuration error' });
       }
-      
+
       // Create checksum from request body using API secret
       const body = JSON.stringify(req.body);
       const calculatedSignature = crypto
         .createHmac('sha256', apiSecret)
         .update(body)
         .digest('hex');
-      
+
       // Compare the calculated signature with the one provided by Zerodha
       if (signature !== calculatedSignature) {
         console.error('Webhook signature verification failed');
@@ -1132,28 +1028,28 @@ app.post('/api/webhook/orders', (req, res) => {
         console.log('Calculated signature:', calculatedSignature);
         return res.status(403).json({ status: 'error', message: 'Invalid signature' });
       }
-      
+
       console.log('Webhook signature verified successfully');
     } else {
       console.warn('No X-Kite-Signature header found - webhook verification skipped');
     }
-    
+
     // The postback payload is an array of order objects according to Zerodha docs
     const orderUpdates = req.body;
-    
+
     // Validate the data structure
     if (!Array.isArray(orderUpdates)) {
       console.error('Invalid order webhook data received - expected array:', orderUpdates);
       return res.status(400).json({ status: 'error', message: 'Invalid data format, expected array' });
     }
-    
+
     if (orderUpdates.length === 0) {
       console.log('Empty order updates array received');
       return res.status(200).json({ status: 'success', message: 'No updates to process' });
     }
-    
+
     console.log(`Processing ${orderUpdates.length} order updates`);
-    
+
     // Process each order update
     orderUpdates.forEach(orderData => {
       // Validate essential fields according to Zerodha docs
@@ -1161,16 +1057,16 @@ app.post('/api/webhook/orders', (req, res) => {
         console.error('Invalid order data in webhook:', orderData);
         return; // Skip this item but continue processing others
       }
-      
+
       console.log(`Broadcasting order update for order_id: ${orderData.order_id}`);
-      
+
       // Process the order update (broadcast to connected clients via WebSocket)
       if (wss && wss.clients) {
         const orderUpdateMessage = JSON.stringify({
           type: 'order_update',
           data: orderData
         });
-        
+
         wss.clients.forEach(client => {
           if (client.readyState === WebSocket.OPEN) {
             client.send(orderUpdateMessage);
@@ -1178,7 +1074,7 @@ app.post('/api/webhook/orders', (req, res) => {
         });
       }
     });
-    
+
     // Return success to acknowledge receipt
     return res.status(200).json({ status: 'success' });
   } catch (error) {
@@ -1201,7 +1097,7 @@ app.use((req, res, next) => {
 });
 
 // Initialize WebSocket server with path
-const wss = new WebSocketServer({ 
+const wss = new WebSocketServer({
   server,
   path: '/ws',
   perMessageDeflate: false,
@@ -1210,27 +1106,27 @@ const wss = new WebSocketServer({
       const url = new URL(req.url, `http://${req.headers.host}`);
       console.log('WebSocket connection attempt from:', req.socket.remoteAddress);
       console.log('Request URL:', req.url);
-      
+
       const token = url.searchParams.get('token');
       console.log('Token present:', !!token);
-      
+
       if (!token) {
         console.log('WebSocket connection rejected: No token provided');
         return done(false, 401, 'Unauthorized');
       }
-      
+
       // Expect token in format api_key:access_token
       const [apiKey, accessToken] = token.split(':');
       console.log('API key present:', !!apiKey);
       console.log('Access token present:', !!accessToken);
-      
+
       if (!apiKey || !accessToken) {
         console.log('WebSocket connection rejected: Malformed public token');
         return done(false, 401, 'Unauthorized');
       }
       const kc = new KiteConnect({ api_key: apiKey });
       kc.setAccessToken(accessToken);
-      
+
       try {
         console.log('Attempting to validate token with Kite API...');
         // Use a simple method like getProfile to check if the token is valid
@@ -1240,15 +1136,15 @@ const wss = new WebSocketServer({
       } catch (error) {
         console.log('WebSocket authentication failed:', error.message);
         console.log('Error type:', error.error_type || 'Unknown');
-        
+
         if (error.message && error.message.includes('Insufficient permission')) {
           console.log('This appears to be a permission error. Check that the API key has appropriate permissions.');
         }
-        
+
         if (error.message && error.message.includes('Invalid access token')) {
           console.log('The access token appears to be invalid or expired.');
         }
-        
+
         done(false, 401, 'Unauthorized');
       }
     } catch (error) {
@@ -1289,14 +1185,14 @@ wss.on('connection', (ws, req) => {
   // Generate unique ID for client
   const clientId = uuidv4();
   console.log(`New WebSocket client connected [ID: ${clientId}] from:`, req.socket.remoteAddress);
-  
+
   // Get token from URL
   const url = new URL(req.url, `http://${req.headers.host}`);
   const token = url.searchParams.get('token');
-  
+
   // Extract access token from the public token format (api_key:access_token)
   const [, accessToken] = token.split(':');
-  
+
   // Store client info
   clients.set(clientId, {
     ws,
@@ -1333,7 +1229,7 @@ wss.on('connection', (ws, req) => {
           if (Array.isArray(data.tokens)) {
             clientInfo.subscribedTokens = new Set([...clientInfo.subscribedTokens, ...data.tokens]);
             console.log(`Client ${clientId} subscribed to tokens:`, data.tokens);
-            
+
             // Get and send initial quotes for subscribed tokens
             try {
               const quotes = await clientInfo.kiteClient.getQuote(data.tokens);
@@ -1347,7 +1243,7 @@ wss.on('connection', (ws, req) => {
             // Track & subscribe ticker
             data.tokens.forEach(t => { if (typeof t === 'number') subscribedTokens.add(t); });
             if (ticker && ticker.connected) {
-              try { ticker.subscribe(data.tokens); ticker.setMode(ticker.MODE_FULL, data.tokens); } catch(e){ console.error('[TICKER] subscribe error', e.message); }
+              try { ticker.subscribe(data.tokens); ticker.setMode(ticker.MODE_FULL, data.tokens); } catch (e) { console.error('[TICKER] subscribe error', e.message); }
             }
           }
           break;

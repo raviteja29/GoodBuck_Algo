@@ -1,109 +1,89 @@
-// src/components/Login.jsx
 import React, { useState } from 'react';
-import { CurrencyRupeeIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
+import { ShieldCheckIcon, ChartBarIcon, BoltIcon } from '@heroicons/react/24/outline'; // Updated icons
 import AuthService from '../services/AuthService';
 import './Login.css';
 
 const Login = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false);
-  const [broker, setBroker] = useState('zerodha');
-  const [error, setError] = useState(null);
 
   const handleLogin = async () => {
-    setError(null);
     setIsLoading(true);
     try {
-      if (broker === 'zerodha') {
-        const loginUrl = AuthService.getLoginUrl();
-        window.location.href = loginUrl;
-        return;
-      }
-      // Breeze redirect style: obtain backend-generated login URL
-      const breezeUrl = await AuthService.getBreezeLoginUrl();
-      window.location.href = breezeUrl;
+      const loginUrl = AuthService.getLoginUrl();
+      window.location.href = loginUrl;
     } catch (e) {
       console.error('Login error:', e);
-      setError(e.message || 'Login failed');
-    } finally {
       setIsLoading(false);
     }
   };
 
   return (
     <div className="login-container">
-      <div className="login-card">
+      {/* Dynamic Background Elements */}
+      <div className="bg-orb orb-1"></div>
+      <div className="bg-orb orb-2"></div>
+      <div className="bg-orb orb-3"></div>
+
+      <div className="login-card-glass">
         <div className="login-header">
-          <div className="brand-logo">
-            <CurrencyRupeeIcon className="brand-icon" />
-            <h1>GoodBuck</h1>
+          <div className="brand-logo-glow">
+            <h1 className="brand-title">GoodBuck<span className="brand-dot">.</span></h1>
           </div>
           <p className="login-subtitle">
-            Professional Algorithmic Trading Platform
+            Next-Generation Algorithmic Trading Intelligence
           </p>
         </div>
 
         <div className="login-content">
-          <div className="login-features">
-            <div className="feature-item">
-              <ShieldCheckIcon className="feature-icon" />
-              <span>Secure Broker Integration</span>
+          <div className="feature-grid">
+            <div className="feature-card">
+              <BoltIcon className="feature-icon" />
+              <div className="feature-text">
+                <h3>Lightning Execution</h3>
+                <p>Zero-latency order routing directly to the exchange.</p>
+              </div>
             </div>
-            <div className="feature-item">
-              <CurrencyRupeeIcon className="feature-icon" />
-              <span>Real-time Market Data</span>
+            <div className="feature-card">
+              <ChartBarIcon className="feature-icon" />
+              <div className="feature-text">
+                <h3>Institutional Analytics</h3>
+                <p>Advanced charting, order flow, and market profiling.</p>
+              </div>
             </div>
-            <div className="feature-item">
+            <div className="feature-card">
               <ShieldCheckIcon className="feature-icon" />
-              <span>Automated Strategy Execution</span>
+              <div className="feature-text">
+                <h3>Bank-Grade Security</h3>
+                <p>Enterprise encryption with direct broker integration.</p>
+              </div>
             </div>
           </div>
 
-          <div className="broker-select-group">
-            <label htmlFor="broker-select">Select Broker</label>
-            <select
-              id="broker-select"
-              value={broker}
-              onChange={(e) => setBroker(e.target.value)}
-              className="broker-select"
+          <div className="login-action-section">
+            <button
+              className={`premium-login-button ${isLoading ? 'loading' : ''}`}
+              onClick={handleLogin}
               disabled={isLoading}
             >
-              <option value="zerodha">Zerodha</option>
-              <option value="breeze">ICICI Breeze</option>
-            </select>
-          </div>
-
-          {/* Breeze redirect flow hides secrets; no Breeze env vars used on frontend */}
-
-          <button
-            className="login-button"
-            onClick={handleLogin}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <div className="loading-spinner"></div>
-            ) : broker === 'zerodha' ? (
-              <>
-                <img
-                  src="https://zerodha.com/static/images/logo.svg"
-                  alt="Zerodha"
-                  className="zerodha-logo"
-                />
-                Login with Zerodha
-              </>
-            ) : (
-              <>
-                <span style={{ fontWeight: 600 }}>Login with Breeze</span>
-              </>
-            )}
-          </button>
-
-          <div className="login-info">
-            {broker === 'zerodha' ? (
-              <p>OAuth 2.0 authentication with Zerodha Kite Connect</p>
-            ) : (
-              <p>Redirect-based authentication with ICICI Breeze (keys stay on server)</p>
-            )}
-            {error && <p style={{ color: 'tomato', marginTop: '8px' }}>{error}</p>}
+              <div className="button-content">
+                {isLoading ? (
+                  <div className="spinner-ring"></div>
+                ) : (
+                  <>
+                    <img
+                      src="https://zerodha.com/static/images/logo.svg"
+                      alt="Zerodha Kite"
+                      className="broker-logo-svg"
+                    />
+                    <span>Authenticate with Kite</span>
+                  </>
+                )}
+              </div>
+              <div className="button-glow"></div>
+            </button>
+            <p className="login-disclaimer">
+              Secure OAuth 2.0 integration via Zerodha Kite Connect API. <br /> Your credentials never touch our servers.
+            </p>
           </div>
         </div>
       </div>
