@@ -384,22 +384,32 @@ function mergeTicksAndRecalculatePnL(positions, ticks) {
   });
 
   return positions.map(pos => {
+    // Return the original if no valid position object
     if (!pos) return pos;
 
     const livePrice = tickMap[pos.instrument_token];
-    if (livePrice !== undefined) {
-      pos.last_price = livePrice;
 
-      // Calculate P&L based on position type (long/short)
-      if (pos.quantity > 0) {
-        // Long position: current price - average buy price
-        pos.pnl = (livePrice - pos.average_price) * pos.quantity;
-      } else if (pos.quantity < 0) {
-        // Short position: average sell price - current price
-        pos.pnl = (pos.average_price - livePrice) * Math.abs(pos.quantity);
+    // Only update if we received a live price for this instrument
+    if (livePrice !== undefined) {
+      // Create a fresh copy to trigger React reactivity
+      const updatedPos = { ...pos, last_price: livePrice };
+
+      // Kite P&L Formula: (Sell Value - Buy Value) + (Net Qty * LTP * Multiplier)
+      const sellValue = updatedPos.sell_value || 0;
+      const buyValue = updatedPos.buy_value || 0;
+      const netQty = updatedPos.quantity || 0;
+      const multiplier = updatedPos.multiplier || 1;
+
+      if (netQty !== 0) {
+        // Active open position M2M
+        updatedPos.pnl = (sellValue - buyValue) + (netQty * livePrice * multiplier);
+        updatedPos.m2m = updatedPos.pnl; // M2M is synonymous for open positions
       } else {
-        pos.pnl = 0;
+        // Closed position realized P&L
+        updatedPos.pnl = sellValue - buyValue;
+        updatedPos.m2m = updatedPos.pnl;
       }
+      return updatedPos;
     }
 
     return pos;

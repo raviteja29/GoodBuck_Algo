@@ -651,7 +651,24 @@ const Analytics = () => {
                         <input
                           type="date"
                           value={fromDate}
-                          onChange={(e) => setFromDate(e.target.value)}
+                          onChange={(e) => {
+                            const newFrom = e.target.value;
+                            setFromDate(newFrom);
+                            if (newFrom) {
+                              const fromDateObj = new Date(newFrom);
+                              const toDateObj = new Date(fromDateObj);
+                              toDateObj.setDate(fromDateObj.getDate() + 6);
+
+                              const maxDate = new Date();
+                              maxDate.setDate(maxDate.getDate() - 2);
+
+                              if (toDateObj > maxDate) {
+                                setToDate(maxDate.toISOString().split('T')[0]);
+                              } else {
+                                setToDate(toDateObj.toISOString().split('T')[0]);
+                              }
+                            }
+                          }}
                           className="date-input compact"
                           max={(() => {
                             const maxDate = new Date();
@@ -766,19 +783,19 @@ const Analytics = () => {
                       <div className="fib-grid">
                         <div className="fib-item">
                           <div className="fib-label">0 (Low)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.low.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels[0].toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">0.5 (Mid)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.mid.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels[0.5].toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">1 (High)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.high.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels[1].toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">1.618 (Ext)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.ext.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels[1.618].toFixed(2)}` : '--'}</div>
                         </div>
                       </div>
                       <div className="hma-row">
@@ -822,19 +839,19 @@ const Analytics = () => {
                       <div className="fib-grid">
                         <div className="fib-item">
                           <div className="fib-label">0 (Low)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.low.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[0].toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">0.5 (Mid)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.mid.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[0.5].toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">1 (High)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.high.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[1].toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">1.618 (Ext)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.ext.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[1.618].toFixed(2)}` : '--'}</div>
                         </div>
                       </div>
                       <div className="hma-row">
