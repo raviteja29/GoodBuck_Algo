@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "node premiumtrader-backend/server.js"
+    "start": "node premiumtrader-backend/server.js",
+    "postinstall": "cd premiumtrader-backend && npm install"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
