@@ -34,7 +34,7 @@ class AuthService {
 
   async generateSession(requestToken) {
     console.log('[AuthService] Starting session generation with requestToken:', requestToken);
-    const response = await fetch('https://goodbuck-algo.onrender.com/api/generate_session', {
+    const response = await fetch('/api/generate_session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ request_token: requestToken })

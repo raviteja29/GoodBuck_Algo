@@ -25,7 +25,7 @@ function updateConnectionStatus(newStatus) {
   if (connectionStatus !== newStatus) {
     console.log(`[TradingService] WebSocket connection status changed: ${connectionStatus} -> ${newStatus}`);
     connectionStatus = newStatus;
-    
+
     // Notify all listeners
     connectionStatusListeners.forEach(listener => {
       try {
@@ -54,10 +54,10 @@ async function setupWebSocket() {
 
   updateConnectionStatus('connecting');
   console.log('Setting up WebSocket connection');
-  
+
   const accessToken = localStorage.getItem('access_token');
   console.log('Access token from localStorage:', accessToken ? 'Token found (not showing for security)' : 'No token found');
-  
+
   if (!accessToken) {
     console.warn('No access token found, skipping WebSocket connection');
     updateConnectionStatus('disconnected');
@@ -68,10 +68,12 @@ async function setupWebSocket() {
     // Format the token as expected by the server (apiKey:accessToken)
     const publicToken = `${apiKey}:${accessToken}`;
     console.log('Attempting to connect to WebSocket server with token');
-    
+
     // Create new WebSocket instance with the token as a query parameter
-    ws = new WebSocket(`wss://goodbuck-algo.onrender.com/ws?token=${encodeURIComponent(publicToken)}`);
-    
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = process.env.NODE_ENV === 'development' ? 'localhost:5000' : window.location.host;
+    ws = new WebSocket(`${wsProtocol}//${wsHost}/ws?token=${encodeURIComponent(publicToken)}`);
+
     // Keep track of ping interval
     let pingInterval;
 
@@ -79,17 +81,17 @@ async function setupWebSocket() {
     ws.onopen = () => {
       console.log('WebSocket connection established successfully');
       updateConnectionStatus('connected');
-      
+
       // Reset connection attempts on successful connection
       connectionAttempts = 0;
-      
+
       // Start ping interval (every 25 seconds) to keep the connection alive
       pingInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'pong' }));
         }
       }, 25000);
-      
+
       // Resubscribe to any existing instrument tokens
       if (instrumentTokens.size > 0) {
         console.log(`Resubscribing to ${instrumentTokens.size} instrument tokens`);
@@ -103,7 +105,7 @@ async function setupWebSocket() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
+
         switch (data.type) {
           case 'ping':
             ws.send(JSON.stringify({ type: 'pong' }));
@@ -120,7 +122,7 @@ async function setupWebSocket() {
                   });
                 }
               });
-              
+
               tickSubscribers.forEach(callback => {
                 try {
                   callback(data.data);
@@ -141,7 +143,7 @@ async function setupWebSocket() {
                 ohlc: quote.ohlc,
                 volume: quote.volume
               }));
-              
+
               // Update the lastQuotes cache with the formatted ticks
               formattedTicks.forEach(tick => {
                 if (tick.instrument_token) {
@@ -151,9 +153,9 @@ async function setupWebSocket() {
                   });
                 }
               });
-              
+
               console.log('Formatted quotes as ticks:', formattedTicks);
-              
+
               tickSubscribers.forEach(callback => {
                 try {
                   callback(formattedTicks);
@@ -165,7 +167,7 @@ async function setupWebSocket() {
               // Handle permission error for quotes
               console.warn(`Permission error receiving quotes: ${data.message}`);
               // Don't update connection status as the connection itself is working
-              
+
               // Generate more realistic mock data with small random changes
               // This will create the appearance of live updates even when we can't get real data
               const getRandomChange = () => {
@@ -173,7 +175,7 @@ async function setupWebSocket() {
                 const change = (Math.random() * 0.5).toFixed(2); // Random change up to 0.5%
                 return `${sign}${change}%`;
               };
-              
+
               // Use more realistic base values
               const mockTicks = [
                 {
@@ -192,7 +194,7 @@ async function setupWebSocket() {
                   change: getRandomChange()
                 }
               ];
-              
+
               // Send mock data to subscribers
               tickSubscribers.forEach(callback => {
                 try {
@@ -242,20 +244,20 @@ async function setupWebSocket() {
     ws.onclose = (event) => {
       console.log(`WebSocket connection closed: code=${event.code}, reason=${event.reason}`);
       updateConnectionStatus('disconnected');
-      
+
       // Clear ping interval
       if (pingInterval) {
         clearInterval(pingInterval);
       }
-      
+
       // Implement exponential backoff for reconnection attempts
       if (event.code !== 1000) { // Only reconnect if not intentionally closed
         connectionAttempts++;
-        
+
         if (connectionAttempts <= MAX_RECONNECT_ATTEMPTS) {
           const delay = Math.min(30000, RECONNECT_DELAY_BASE * Math.pow(2, connectionAttempts - 1));
-          console.log(`Attempting to reconnect in ${delay/1000}s... (Attempt ${connectionAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-          
+          console.log(`Attempting to reconnect in ${delay / 1000}s... (Attempt ${connectionAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+
           setTimeout(setupWebSocket, delay);
         } else {
           console.error(`Maximum reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Please refresh the page.`);
@@ -269,13 +271,13 @@ async function setupWebSocket() {
       // The WebSocket might still be functioning despite errors
       console.warn('WebSocket error event received:', error);
       console.log('WebSocket state:', ws.readyState);
-      
+
       // Only update status if the connection is actually closed
       if (ws.readyState === WebSocket.CLOSED) {
         updateConnectionStatus('error');
       }
     };
-    
+
     return true;
   } catch (error) {
     console.error('Error creating WebSocket connection:', error);
@@ -292,10 +294,10 @@ function subscribeToInstruments(tokens) {
     console.warn('No tokens provided for subscription');
     return;
   }
-  
+
   console.log(`Subscribing to ${tokens.length} instrument tokens:`, tokens);
   tokens.forEach(token => instrumentTokens.add(token));
-  
+
   if (ws && ws.readyState === WebSocket.OPEN) {
     try {
       ws.send(JSON.stringify({
@@ -316,9 +318,9 @@ function subscribeToInstruments(tokens) {
  */
 function unsubscribeFromInstruments(tokens) {
   if (!tokens || tokens.length === 0) return;
-  
+
   tokens.forEach(token => instrumentTokens.delete(token));
-  
+
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       type: 'unsubscribe',
@@ -334,12 +336,12 @@ function unsubscribeFromInstruments(tokens) {
 function subscribeToTicks(callback) {
   if (typeof callback !== 'function') {
     console.error('Tick subscriber must be a function');
-    return () => {};
+    return () => { };
   }
-  
+
   tickSubscribers.add(callback);
   console.log(`Added tick subscriber, total subscribers: ${tickSubscribers.size}`);
-  
+
   // Return unsubscribe function
   return () => {
     tickSubscribers.delete(callback);
@@ -352,17 +354,17 @@ function subscribeToTicks(callback) {
  * @returns {Function} Unsubscribe function
  */
 function addConnectionStatusListener(listener) {
-  if (typeof listener !== 'function') return () => {};
-  
+  if (typeof listener !== 'function') return () => { };
+
   connectionStatusListeners.add(listener);
-  
+
   // Immediately notify with current status
   try {
     listener(connectionStatus);
   } catch (err) {
     console.error('Error in new connection status listener:', err);
   }
-  
+
   return () => connectionStatusListeners.delete(listener);
 }
 
@@ -373,21 +375,21 @@ function mergeTicksAndRecalculatePnL(positions, ticks) {
   if (!positions || !ticks || !Array.isArray(positions) || !Array.isArray(ticks)) {
     return positions || [];
   }
-  
+
   const tickMap = {};
   ticks.forEach(tick => {
     if (tick && tick.instrument_token) {
       tickMap[tick.instrument_token] = tick.last_price;
     }
   });
-  
+
   return positions.map(pos => {
     if (!pos) return pos;
-    
+
     const livePrice = tickMap[pos.instrument_token];
     if (livePrice !== undefined) {
       pos.last_price = livePrice;
-      
+
       // Calculate P&L based on position type (long/short)
       if (pos.quantity > 0) {
         // Long position: current price - average buy price
@@ -399,7 +401,7 @@ function mergeTicksAndRecalculatePnL(positions, ticks) {
         pos.pnl = 0;
       }
     }
-    
+
     return pos;
   });
 }
@@ -418,7 +420,7 @@ class TradingService {
   getConnectionStatus() {
     return connectionStatus;
   }
-  
+
   /**
    * Listen for connection status changes
    */
@@ -480,17 +482,17 @@ class TradingService {
    * Get user profile information
    */
   async getProfile() {
-    const response = await fetch('https://goodbuck-algo.onrender.com/api/profile', {
+    const response = await fetch('/api/profile', {
       method: 'GET',
       credentials: 'include',
       headers: this.getAuthHeaders(),
     });
-    
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('[getProfile] Error:', errorData);
-        throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch profile');
-      }    return await response.json();
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('[getProfile] Error:', errorData);
+      throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch profile');
+    } return await response.json();
   }
 
   /**
@@ -498,7 +500,7 @@ class TradingService {
    */
   async getMargins() {
     try {
-      const response = await fetch('https://goodbuck-algo.onrender.com/api/margins', {
+      const response = await fetch('/api/margins', {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
@@ -522,31 +524,31 @@ class TradingService {
    */
   async getPositions() {
     try {
-      const response = await fetch('https://goodbuck-algo.onrender.com/api/positions', {
+      const response = await fetch('/api/positions', {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch positions');
       }
-      
+
       const positions = await response.json();
-      
+
       // If we have positions, subscribe to their instruments for real-time updates
       if (positions && positions.net && positions.net.length > 0) {
         const tokens = positions.net
           .filter(pos => pos.instrument_token)
           .map(pos => pos.instrument_token);
-        
+
         if (tokens.length > 0) {
           console.log(`Auto-subscribing to ${tokens.length} position instruments`);
           this.subscribeToInstruments(tokens);
         }
       }
-      
+
       return positions;
     } catch (error) {
       console.error('[getPositions] Error:', error);
@@ -558,17 +560,17 @@ class TradingService {
    * Get orders
    */
   async getOrders() {
-    const response = await fetch('https://goodbuck-algo.onrender.com/api/orders', {
+    const response = await fetch('/api/orders', {
       method: 'GET',
       credentials: 'include',
       headers: this.getAuthHeaders(),
     });
-    
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch orders');
     }
-    
+
     return await response.json();
   }
 
@@ -577,17 +579,17 @@ class TradingService {
    */
   async getHoldings() {
     try {
-      const response = await fetch('https://goodbuck-algo.onrender.com/api/holdings', {
+      const response = await fetch('/api/holdings', {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch holdings');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error('[getHoldings] Error:', error);
@@ -599,7 +601,7 @@ class TradingService {
    * Place an order
    */
   async placeOrder(orderParams) {
-    const response = await fetch('https://goodbuck-algo.onrender.com/api/orders', {
+    const response = await fetch('/api/orders', {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -608,12 +610,12 @@ class TradingService {
       },
       body: JSON.stringify(orderParams),
     });
-    
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData && errorData.error ? errorData.error : 'Failed to place order');
     }
-    
+
     return await response.json();
   }
 
@@ -626,17 +628,17 @@ class TradingService {
    * @returns {Promise<Object>} Historical data with candles array
    */
   async getHistoricalData(instrumentToken, fromDate, toDate, interval) {
-    const response = await fetch(`https://goodbuck-algo.onrender.com/api/historical?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}&interval=${interval}`, {
+    const response = await fetch(`/api/historical?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}&interval=${interval}`, {
       method: 'GET',
       credentials: 'include',
       headers: this.getAuthHeaders(),
     });
-    
+
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch historical data');
     }
-    
+
     return await response.json();
   }
 
@@ -646,19 +648,19 @@ class TradingService {
   async searchInstruments(query) {
     try {
       console.log(`[TradingService] Searching for instruments: ${query}`);
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/search?query=${encodeURIComponent(query)}`, {
+
+      const response = await fetch(`/api/instruments/search?query=${encodeURIComponent(query)}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         console.error(`[TradingService] Search error:`, errorData);
         throw new Error(errorData && errorData.error ? errorData.error : 'Failed to search instruments');
       }
-      
+
       const results = await response.json();
       console.log(`[TradingService] Found ${results.length} instruments`);
       return results;
@@ -676,18 +678,18 @@ class TradingService {
   async getAllInstruments(exchange) {
     try {
       console.log(`[TradingService] Fetching all instruments for ${exchange}`);
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments?exchange=${exchange}`, {
+
+      const response = await fetch(`/api/instruments?exchange=${exchange}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData && errorData.error ? errorData.error : `Failed to fetch instruments for ${exchange}`);
       }
-      
+
       const instruments = await response.json();
       console.log(`[TradingService] Fetched ${instruments.length} instruments for ${exchange}`);
       return instruments;
@@ -703,27 +705,27 @@ class TradingService {
   async getInstrumentDetails(name) {
     try {
       console.log(`[TradingService] Fetching details for instrument: ${name}`);
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/details?name=${encodeURIComponent(name)}`, {
+
+      const response = await fetch(`/api/instruments/details?name=${encodeURIComponent(name)}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         console.error(`[TradingService] Error response:`, errorData);
         throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch instrument details');
       }
-      
+
       const details = await response.json();
       console.log(`[TradingService] Received instrument details:`, details);
-      
+
       // Subscribe to real-time updates for this instrument
       if (details.token) {
         this.subscribeToInstruments([details.token]);
       }
-      
+
       return {
         name: details.name,
         token: details.token,
@@ -738,7 +740,7 @@ class TradingService {
       throw new Error(`Failed to fetch details for ${name}`);
     }
   }
-  
+
   /**
    * Get instruments by symbol
    * @param {string} symbol - Trading symbol
@@ -747,13 +749,13 @@ class TradingService {
   async getInstrumentsBySymbol(symbol) {
     try {
       console.log(`[TradingService] Fetching instruments for symbol: ${symbol}`);
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/symbol?symbol=${encodeURIComponent(symbol)}`, {
+
+      const response = await fetch(`/api/instruments/symbol?symbol=${encodeURIComponent(symbol)}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       let instruments = [];
       if (response.ok) {
         instruments = await response.json();
@@ -770,7 +772,7 @@ class TradingService {
           const searchResults = await this.searchInstruments(basePrefix);
           // Try exact match in search results
           const exact = searchResults.find(r => r.tradingsymbol === symbol.toUpperCase());
-            if (exact) return [exact];
+          if (exact) return [exact];
           // Heuristic partial: same strike & type at end
           const strikeMatch = symbol.match(/(\d{3,6})(CE|PE)$/);
           const strikeDigits = strikeMatch?.[1]; const optType = strikeMatch?.[2];
@@ -790,7 +792,7 @@ class TradingService {
       throw error;
     }
   }
-  
+
   /**
    * Get instrument by token
    * @param {number|string} token - Instrument token
@@ -799,18 +801,18 @@ class TradingService {
   async getInstrumentByToken(token) {
     try {
       console.log(`[TradingService] Fetching instrument for token: ${token}`);
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/token?token=${token}`, {
+
+      const response = await fetch(`/api/instruments/token?token=${token}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(errorData && errorData.error ? errorData.error : `Failed to fetch instrument for token ${token}`);
       }
-      
+
       const instrument = await response.json();
       return instrument;
     } catch (error) {
@@ -818,7 +820,7 @@ class TradingService {
       throw error;
     }
   }
-  
+
   /**
    * Get quote for a single instrument
    * @param {number|string} instrumentToken - The instrument token
@@ -827,13 +829,13 @@ class TradingService {
   async getQuote(instrumentToken) {
     try {
       console.log(`[TradingService] Fetching quote for instrument ${instrumentToken}`);
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/quote?token=${instrumentToken}`, {
+
+      const response = await fetch(`/api/quote?token=${instrumentToken}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error('[getQuote] Error:', errorData);
@@ -850,7 +852,7 @@ class TradingService {
       throw error;
     }
   }
-  
+
   /**
    * Get quotes for multiple instruments
    * @param {number[]|string[]} instrumentTokens - Array of instrument tokens
@@ -859,10 +861,10 @@ class TradingService {
   async getQuotes(instrumentTokens) {
     try {
       console.log(`[TradingService] Fetching quotes for ${instrumentTokens.length} instruments`);
-      
+
       // Create an object to store all quotes
       const quotes = {};
-      
+
       // For now, fetch quotes one by one until backend supports batch quotes
       for (const token of instrumentTokens) {
         try {
@@ -873,7 +875,7 @@ class TradingService {
           quotes[token] = { error: error.message };
         }
       }
-      
+
       return quotes;
     } catch (error) {
       console.error(`[TradingService] Error fetching quotes: ${error.message}`);
@@ -891,19 +893,19 @@ class TradingService {
   async getInstrumentHighLow(instrumentToken, fromDate, toDate) {
     try {
       console.log(`[TradingService] Fetching historical high/low for instrument ${instrumentToken} from ${fromDate} to ${toDate}`);
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/historical-high-low?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}`, {
+
+      const response = await fetch(`/api/instruments/historical-high-low?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error('[getInstrumentHighLow] Error:', errorData);
         throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch historical high/low data');
       }
-      
+
       const data = await response.json();
       console.log(`[TradingService] Received historical high/low data:`, data);
       return data;
@@ -912,7 +914,7 @@ class TradingService {
       throw error;
     }
   }
-  
+
   /**
    * Get last traded price (LTP) for instruments
    * @param {number[]|string[]} instrumentTokens - Array of instrument tokens
@@ -921,28 +923,28 @@ class TradingService {
   async getLTP(instrumentTokens) {
     try {
       console.log(`[TradingService] Fetching LTP for ${instrumentTokens.length} instruments`);
-      
+
       const tokensParam = instrumentTokens.join(',');
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/quote/ltp?i=${tokensParam}`, {
+
+      const response = await fetch(`/api/quote/ltp?i=${tokensParam}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error('[getLTP] Error:', errorData);
         throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch LTP');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error(`[TradingService] Error fetching LTP: ${error.message}`);
       throw error;
     }
   }
-  
+
   /**
    * Get OHLC and LTP for instruments
    * @param {number[]|string[]} instrumentTokens - Array of instrument tokens
@@ -951,28 +953,28 @@ class TradingService {
   async getOHLC(instrumentTokens) {
     try {
       console.log(`[TradingService] Fetching OHLC for ${instrumentTokens.length} instruments`);
-      
+
       const tokensParam = instrumentTokens.join(',');
-      
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/quote/ohlc?i=${tokensParam}`, {
+
+      const response = await fetch(`/api/quote/ohlc?i=${tokensParam}`, {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error('[getOHLC] Error:', errorData);
         throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch OHLC');
       }
-      
+
       return await response.json();
     } catch (error) {
       console.error(`[TradingService] Error fetching OHLC: ${error.message}`);
       throw error;
     }
   }
-  
+
   /**
    * Get market data for common indices (Nifty, Bank Nifty, India VIX)
    * @returns {Promise<Object>} Object with market data for each index
@@ -980,68 +982,68 @@ class TradingService {
   async getMarketIndices() {
     try {
       console.log('[TradingService] Fetching market indices data');
-      
+
       // Define the indices we want to track with their instrument tokens
       const indices = {
         nifty: { name: 'NIFTY 50', token: 256265 },
         banknifty: { name: 'BANK NIFTY', token: 260105 },
         indiavix: { name: 'INDIA VIX', token: 264969 }
       };
-      
+
       // Get access token
       const token = localStorage.getItem('access_token');
       if (!token) {
         throw new Error('Access token required');
       }
-      
+
       // Subscribe to real-time updates for these indices
       const tokens = Object.values(indices).map(index => index.token);
       this.subscribeToInstruments(tokens);
-      
+
       // Try to fetch real data from the server
       try {
         // Fetch quotes for each index token using Kite API
         const result = {};
-        
+
         // Request quotes for all tokens at once
         const tokensParam = tokens.join(',');
         console.log(`[TradingService] Requesting quotes for tokens: ${tokensParam}`);
-        console.log(`[TradingService] Making request to: https://goodbuck-algo.onrender.com/api/quotes?tokens=${tokensParam}`);
+        console.log(`[TradingService] Making request to: /api/quotes?tokens=${tokensParam}`);
         console.log(`[TradingService] Using headers:`, this.getAuthHeaders());
-        
-        const response = await fetch(`https://goodbuck-algo.onrender.com/api/quotes?tokens=${tokensParam}`, {
+
+        const response = await fetch(`/api/quotes?tokens=${tokensParam}`, {
           method: 'GET',
           credentials: 'include',
           headers: this.getAuthHeaders()
         });
-        
+
         console.log(`[TradingService] Response status: ${response.status}`);
         console.log(`[TradingService] Response ok: ${response.ok}`);
-        
+
         if (!response.ok) {
           const errorText = await response.text();
           console.error(`[TradingService] API Error Response: ${errorText}`);
           throw new Error(`Failed to fetch quotes: ${response.status} - ${errorText}`);
         }
-        
+
         const quotesData = await response.json();
         console.log('[TradingService] Received quotes data:', quotesData);
-        
+
         // Process each index with the received data
         Object.entries(indices).forEach(([key, index]) => {
           const quoteData = quotesData[index.token];
-          
+
           if (quoteData && quoteData.last_price) {
             // Calculate change percentage
-            const changePercent = quoteData.ohlc && quoteData.ohlc.close 
+            const changePercent = quoteData.ohlc && quoteData.ohlc.close
               ? ((quoteData.last_price - quoteData.ohlc.close) / quoteData.ohlc.close * 100).toFixed(2)
               : '0.00';
-              
+
             // Calculate absolute change
             const change = quoteData.ohlc && quoteData.ohlc.close
               ? (quoteData.last_price - quoteData.ohlc.close).toFixed(2)
               : '0.00';
-              
+
             result[key] = {
               value: quoteData.last_price.toString(),
               change: change,
@@ -1056,7 +1058,7 @@ class TradingService {
             };
           }
         });
-        
+
         console.log('[TradingService] Processed real indices data:', result);
         return result;
       } catch (quoteError) {
@@ -1066,35 +1068,35 @@ class TradingService {
       }
     } catch (error) {
       console.error('[TradingService] Error in getMarketIndices:', error);
-      
+
       // Check websocket cached data first, then throw error if none available
       console.log('[TradingService] Checking for cached data from websocket');
-      
+
       const result = {};
       const indices = {
         nifty: { name: 'NIFTY 50', token: 256265 },
         banknifty: { name: 'BANK NIFTY', token: 260105 },
         indiavix: { name: 'INDIA VIX', token: 264969 }
       };
-      
+
       let hasAnyData = false;
-      
+
       for (const [key, index] of Object.entries(indices)) {
         // Check if we have cached data from websocket
         const cachedData = lastQuotes.get(index.token);
-        
+
         if (cachedData && cachedData.last_price) {
           hasAnyData = true;
           // Calculate change percentage if previous close is available
-          const changePercent = cachedData.ohlc && cachedData.ohlc.close 
+          const changePercent = cachedData.ohlc && cachedData.ohlc.close
             ? ((cachedData.last_price - cachedData.ohlc.close) / cachedData.ohlc.close * 100).toFixed(2)
             : '0.00';
-            
+
           // Calculate absolute change
           const change = cachedData.ohlc && cachedData.ohlc.close
             ? (cachedData.last_price - cachedData.ohlc.close).toFixed(2)
             : '0.00';
-            
+
           result[key] = {
             value: cachedData.last_price.toString(),
             change: change,
@@ -1109,7 +1111,7 @@ class TradingService {
           };
         }
       }
-      
+
       if (hasAnyData) {
         console.log('[TradingService] Using cached websocket data');
         return result;
@@ -1144,26 +1146,26 @@ function processOrderUpdate(orderData) {
     console.warn('Invalid order data:', orderData);
     return false;
   }
-  
+
   const orderId = orderData.order_id;
-  
+
   // Generate a unique key for this specific update state
   // Combine order_id with status and filled_quantity to detect actual changes
   const updateKey = `${orderId}|${orderData.status}|${orderData.filled_quantity}`;
-  
+
   // Check if we've already processed this exact update recently
   const lastUpdateTime = processedOrderUpdates.get(updateKey);
   const now = Date.now();
-  
+
   if (lastUpdateTime && (now - lastUpdateTime < 5000)) {
     // Skip if same update was processed in the last 5 seconds
     console.log(`Skipping duplicate update for order ${orderId}`);
     return false;
   }
-  
+
   // Record this update
   processedOrderUpdates.set(updateKey, now);
-  
+
   // Extract relevant fields from the order data
   const orderUpdate = {
     order_id: orderData.order_id,
@@ -1191,15 +1193,15 @@ function processOrderUpdate(orderData) {
     placement_channel: orderData.placement_channel,
     tag: orderData.tag
   };
-  
+
   // Create a custom event to notify components about the order update
   const orderUpdateEvent = new CustomEvent('orderUpdate', {
     detail: orderUpdate
   });
-  
+
   // Dispatch the event globally so components can listen for it
   window.dispatchEvent(orderUpdateEvent);
-  
+
   return true;
 }
 
@@ -1213,51 +1215,51 @@ let lastOrderIds = [];
 /**
  * Start polling for order updates
  */
-tradingService.startOrderPolling = function(intervalMs = 5000) {
+tradingService.startOrderPolling = function (intervalMs = 5000) {
   // Clear any existing interval
   if (orderPollingInterval) {
     clearInterval(orderPollingInterval);
   }
-  
+
   // Poll for orders at the specified interval
   orderPollingInterval = setInterval(async () => {
     if (connectionStatus !== 'connected') {
       console.log('WebSocket not connected, skipping order poll');
       return;
     }
-    
+
     try {
       const orders = await this.getOrders();
-      
+
       if (!Array.isArray(orders)) {
         console.error('Invalid orders response:', orders);
         return;
       }
-      
+
       // Check for new or updated orders
       const currentOrderIds = orders.map(order => order.order_id);
-      
+
       // Find new orders that weren't in the last poll
       const newOrders = orders.filter(order => !lastOrderIds.includes(order.order_id));
-      
+
       // Find orders whose status might have changed
       const updatedOrders = orders.filter(current => {
         if (newOrders.some(o => o.order_id === current.order_id)) {
           return false; // Skip new orders as they're already included
         }
-        
+
         // Check if this order has updated since last poll
         // For simplicity, consider all existing orders as potentially updated
         return true;
       });
-      
+
       // Combine new and updated orders
       const changedOrders = [...newOrders, ...updatedOrders];
-      
+
       // If there are changes, process each order (with duplicate prevention)
       if (changedOrders.length > 0) {
         console.log(`Found ${changedOrders.length} orders to check in polling`);
-        
+
         // Process each order through the same handler used for webhooks
         let processedCount = 0;
         changedOrders.forEach(order => {
@@ -1266,20 +1268,20 @@ tradingService.startOrderPolling = function(intervalMs = 5000) {
             processedCount++;
           }
         });
-        
+
         if (processedCount > 0) {
           console.log(`Processed ${processedCount} new/updated orders from polling`);
         }
       }
-      
+
       // Update last order IDs for next comparison
       lastOrderIds = currentOrderIds;
-      
+
     } catch (error) {
       console.error('Error in order polling:', error);
     }
   }, intervalMs);
-  
+
   console.log(`Order polling started with ${intervalMs}ms interval`);
   return () => {
     clearInterval(orderPollingInterval);
@@ -1291,7 +1293,7 @@ tradingService.startOrderPolling = function(intervalMs = 5000) {
 /**
  * Stop polling for order updates
  */
-tradingService.stopOrderPolling = function() {
+tradingService.stopOrderPolling = function () {
   if (orderPollingInterval) {
     clearInterval(orderPollingInterval);
     orderPollingInterval = null;
