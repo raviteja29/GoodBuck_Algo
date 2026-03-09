@@ -124,9 +124,13 @@ let globalLastAccessToken = null;
 
 // 1) Enable CORS with explicit origin and credentials
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? 'https://goodbuck-algo.onrender.com'
-    : 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin || origin.startsWith('http://localhost:') || origin.endsWith('.onrender.com')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
