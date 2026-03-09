@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  ChartBarIcon, 
-  CalendarDaysIcon, 
+import {
+  ChartBarIcon,
+  CalendarDaysIcon,
   MagnifyingGlassIcon,
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
@@ -31,22 +31,22 @@ const Analytics = () => {
   const [debugInfo, setDebugInfo] = useState({ pe: { candidates: [], resolved: null }, ce: { candidates: [], resolved: null } });
   const peSubscribed = useRef(false);
   const ceSubscribed = useRef(false);
-  
+
   // Set default dates to a week ago (more likely to have data)
   const getDefaultDates = () => {
     const today = new Date();
     const oneWeekAgo = new Date();
     const twoWeeksAgo = new Date();
-    
+
     oneWeekAgo.setDate(today.getDate() - 7);
     twoWeeksAgo.setDate(today.getDate() - 14);
-    
+
     return {
       from: twoWeeksAgo.toISOString().split('T')[0],
       to: oneWeekAgo.toISOString().split('T')[0]
     };
   };
-  
+
   const defaultDates = getDefaultDates();
   const [fromDate, setFromDate] = useState(defaultDates.from);
   const [toDate, setToDate] = useState(defaultDates.to);
@@ -77,7 +77,7 @@ const Analytics = () => {
     const fromDateObj = new Date(fromDate);
     const toDateObj = new Date(toDate);
     const today = new Date();
-    
+
     if (fromDateObj >= toDateObj) {
       setError('From date must be earlier than to date');
       return;
@@ -86,7 +86,7 @@ const Analytics = () => {
     // Check if the date range is too recent (less than 2 days ago for more flexibility)
     const twoDaysAgo = new Date();
     twoDaysAgo.setDate(today.getDate() - 2);
-    
+
     if (toDateObj > twoDaysAgo) {
       setError('Please select a date range that ends at least 2 days ago. Recent data may not be available due to processing delays.');
       return;
@@ -108,9 +108,9 @@ const Analytics = () => {
       // To date: 3:30 PM (market closing)
       const fromDateTime = `${fromDate} 09:15:00`;
       const toDateTime = `${toDate} 15:30:00`;
-      
+
       console.log(`Analyzing ${selectedInstrument.tradingsymbol} from ${fromDateTime} to ${toDateTime}`);
-      
+
       const data = await TradingService.getInstrumentHighLow(
         selectedInstrument.instrument_token,
         fromDateTime,
@@ -121,14 +121,14 @@ const Analytics = () => {
       console.log('High/Low data received:', data);
     } catch (err) {
       console.error('Error fetching high/low data:', err);
-      
+
       // Provide more helpful error messages
       let errorMessage = err.message || 'Failed to fetch historical data';
-      
+
       if (errorMessage.includes('No historical data found')) {
         errorMessage = `No data available for the selected period (${fromDate} to ${toDate}). This could be due to market holidays, weekends, or data availability. Try selecting a weekday range from at least a week ago.`;
       }
-      
+
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -157,12 +157,12 @@ const Analytics = () => {
   // Calculate date range duration
   const getDateRangeDuration = () => {
     if (!fromDate || !toDate) return null;
-    
+
     const start = new Date(fromDate);
     const end = new Date(toDate);
     const diffTime = Math.abs(end - start);
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
+
     return diffDays;
   };
 
@@ -176,8 +176,8 @@ const Analytics = () => {
   // Normalize potential key name variations (defensive)
   const normalizeHighLow = (data) => {
     if (!data) return { high: null, low: null };
-    const highCandidates = ['high','highest','max'];
-    const lowCandidates = ['low','lowest','min'];
+    const highCandidates = ['high', 'highest', 'max'];
+    const lowCandidates = ['low', 'lowest', 'min'];
     let high = null; let low = null;
     for (const k of highCandidates) { if (data[k] != null) { high = data[k]; break; } }
     for (const k of lowCandidates) { if (data[k] != null) { low = data[k]; break; } }
@@ -213,6 +213,13 @@ const Analytics = () => {
     return { currentWeek, nextWeek };
   };
 
+  const formatExpiryCode = (date) => {
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mmm = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
+    const yy = String(date.getFullYear()).slice(-2);
+    return `${dd}${mmm}${yy}`; // e.g. 26SEP24
+  };
+
   // Memo-like derived expiry info (recomputed each render – lightweight)
   const { currentWeek: _currWeek, nextWeek: _nextWeek } = getWeeklyExpiryDates();
   const selectedExpiryDate = optionExpiry === 'next' ? _nextWeek : _currWeek;
@@ -221,23 +228,16 @@ const Analytics = () => {
     : '—';
   const expiryCode = selectedExpiryDate ? formatExpiryCode(selectedExpiryDate) : null;
 
-  const formatExpiryCode = (date) => {
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mmm = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
-    const yy = String(date.getFullYear()).slice(-2);
-    return `${dd}${mmm}${yy}`; // e.g. 26SEP24
-  };
-
   const buildOptionSymbolCandidates = (underlyingSymbol, strike, type, expiryChoice) => {
     if (!underlyingSymbol || !strike || !type) return [];
-    const base = baseSymbolForUnderlying(underlyingSymbol)?.replace(/\s+/g,'');
+    const base = baseSymbolForUnderlying(underlyingSymbol)?.replace(/\s+/g, '');
     const strikeStr = String(strike).replace(/\.\d+/, '');
-  const { currentWeek, nextWeek } = getWeeklyExpiryDates();
-  const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
-    const dd = String(expiryDate.getDate()).padStart(2,'0');
+    const { currentWeek, nextWeek } = getWeeklyExpiryDates();
+    const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
+    const dd = String(expiryDate.getDate()).padStart(2, '0');
     const mmm = expiryDate.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
     const yy = String(expiryDate.getFullYear()).slice(-2);
-    const monthNum = String(expiryDate.getMonth()+1).padStart(2,'0');
+    const monthNum = String(expiryDate.getMonth() + 1).padStart(2, '0');
     const yearFull = expiryDate.getFullYear();
 
     // Candidate formats (descending likelihood):
@@ -268,18 +268,18 @@ const Analytics = () => {
   useEffect(() => {
     let cancelled = false;
     async function resolveTokens() {
-  setPeOptionToken(null); setCeOptionToken(null);
+      setPeOptionToken(null); setCeOptionToken(null);
       setPeFibLevels(null); setCeFibLevels(null);
       peSubscribed.current = false; ceSubscribed.current = false;
-  setPeLtp(null); setCeLtp(null);
+      setPeLtp(null); setCeLtp(null);
       if (!selectedInstrument || !peStrike || !ceStrike) return;
       const under = selectedInstrument.tradingsymbol;
       // Capture expiry context for this resolution cycle
       const { currentWeek, nextWeek } = getWeeklyExpiryDates();
       const chosenExpiryDate = optionExpiry === 'next' ? nextWeek : currentWeek;
       const chosenExpiryCode = chosenExpiryDate ? formatExpiryCode(chosenExpiryDate) : null;
-  const peSymbols = buildOptionSymbolCandidates(under, peStrike, 'PE', optionExpiry);
-  const ceSymbols = buildOptionSymbolCandidates(under, ceStrike, 'CE', optionExpiry);
+      const peSymbols = buildOptionSymbolCandidates(under, peStrike, 'PE', optionExpiry);
+      const ceSymbols = buildOptionSymbolCandidates(under, ceStrike, 'CE', optionExpiry);
       setDebugInfo(prev => ({
         ...prev,
         pe: { ...prev.pe, candidates: peSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } },
@@ -300,9 +300,9 @@ const Analytics = () => {
                 const q = await TradingService.getQuote(token);
                 if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
                 if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
-                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
-              } catch(_) {
-                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } } }));
+              } catch (_) {
+                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } } }));
               }
               return;
             }
@@ -319,9 +319,9 @@ const Analytics = () => {
                   const q = await TradingService.getQuote(token);
                   if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
                   if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
-                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
-                } catch(_) {
-                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } } }));
+                } catch (_) {
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } } }));
                 }
                 return;
               }
@@ -337,9 +337,9 @@ const Analytics = () => {
                   const q = await TradingService.getQuote(token);
                   if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
                   if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
-                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
-                } catch(_) {
-                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } } }));
+                } catch (_) {
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } } }));
                 }
                 return;
               }
@@ -372,15 +372,15 @@ const Analytics = () => {
         const toDateTime = `${toDate} 15:30:00`;
         const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, 'day');
         const candles = data?.candles || [];
-        if (!candles.length) { if(!cancelled) setter(null); return; }
+        if (!candles.length) { if (!cancelled) setter(null); return; }
         let low = Infinity, high = -Infinity;
         candles.forEach(c => { if (c[3] < low) low = c[3]; if (c[2] > high) high = c[2]; });
-        if (low === Infinity || high === -Infinity) { if(!cancelled) setter(null); return; }
+        if (low === Infinity || high === -Infinity) { if (!cancelled) setter(null); return; }
         const diff = high - low;
         const fibs = { 0: low, 0.5: low + diff * 0.5, 1: high, 1.618: low + diff * 1.618 };
         fibCacheRef.current[key] = fibs;
         if (!cancelled) setter(fibs);
-      } catch(e) {
+      } catch (e) {
         console.warn('Fib fetch failed', e.message);
       }
     }
@@ -406,7 +406,7 @@ const Analytics = () => {
           const q = await TradingService.getQuote(ceOptionToken);
           if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
         }
-      } catch(err) { console.warn('Initial option quote fetch failed', err.message); }
+      } catch (err) { console.warn('Initial option quote fetch failed', err.message); }
       pollRef.current = setInterval(async () => {
         const now = Date.now();
         const needPe = peOptionToken && (!lastTickRef.current.pe || now - lastTickRef.current.pe > 20000);
@@ -421,10 +421,10 @@ const Analytics = () => {
             const q = await TradingService.getQuote(ceOptionToken);
             if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
           }
-        } catch(e){ console.warn('Polling option quote failed', e.message); }
+        } catch (e) { console.warn('Polling option quote failed', e.message); }
       }, 15000);
     })();
-    return () => { cancelled = true; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current=null; } };
+    return () => { cancelled = true; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   }, [peOptionToken, ceOptionToken]);
 
   // Subscribe to real-time option ticks (once per token)
@@ -467,7 +467,7 @@ const Analytics = () => {
     return wsum / weightSum;
   };
 
-  const computeHMA = (closes, period=50) => {
+  const computeHMA = (closes, period = 50) => {
     if (!closes || closes.length < period) return null;
     const half = Math.floor(period / 2);
     const sqrtP = Math.floor(Math.sqrt(period));
@@ -516,10 +516,10 @@ const Analytics = () => {
             <ChartBarIcon className="title-icon" />
             Historical Analysis
           </h1>
-          
+
         </div>
       </div>
-      <div className="debug-toggle" onClick={() => setDebugOpen(o=>!o)}>{debugOpen ? 'Hide Option Debug' : 'Show Option Debug'}</div>
+      <div className="debug-toggle" onClick={() => setDebugOpen(o => !o)}>{debugOpen ? 'Hide Option Debug' : 'Show Option Debug'}</div>
       {debugOpen && (
         <div className="option-debug-panel">
           <h4>Option Resolution Debug</h4>
@@ -527,14 +527,14 @@ const Analytics = () => {
           <div className="debug-row">
             <div className="debug-block">
               <h5>PE Candidates</h5>
-              <ul>{debugInfo.pe.candidates.map(c => <li key={c} className={debugInfo.pe.resolved?.symbol===c? 'resolved':''}>{c}</li>)}</ul>
+              <ul>{debugInfo.pe.candidates.map(c => <li key={c} className={debugInfo.pe.resolved?.symbol === c ? 'resolved' : ''}>{c}</li>)}</ul>
               <div className="resolved-line">Resolved: {debugInfo.pe.resolved ? `${debugInfo.pe.resolved.symbol} -> ${debugInfo.pe.resolved.token} (${debugInfo.pe.resolved.method})` : '—'}</div>
               {debugInfo.pe.resolved?.expiry && <div className="expiry-line">Expiry Code: {debugInfo.pe.resolved.expiry.code}</div>}
               <div className="ltp-line">LTP: {peLtp != null ? peLtp : '—'}</div>
             </div>
             <div className="debug-block">
               <h5>CE Candidates</h5>
-              <ul>{debugInfo.ce.candidates.map(c => <li key={c} className={debugInfo.ce.resolved?.symbol===c? 'resolved':''}>{c}</li>)}</ul>
+              <ul>{debugInfo.ce.candidates.map(c => <li key={c} className={debugInfo.ce.resolved?.symbol === c ? 'resolved' : ''}>{c}</li>)}</ul>
               <div className="resolved-line">Resolved: {debugInfo.ce.resolved ? `${debugInfo.ce.resolved.symbol} -> ${debugInfo.ce.resolved.token} (${debugInfo.ce.resolved.method})` : '—'}</div>
               {debugInfo.ce.resolved?.expiry && <div className="expiry-line">Expiry Code: {debugInfo.ce.resolved.expiry.code}</div>}
               <div className="ltp-line">LTP: {ceLtp != null ? ceLtp : '—'}</div>
@@ -558,7 +558,7 @@ const Analytics = () => {
                     <div className="panel-block">
                       <h4 className="panel-label">Quick Select</h4>
                       <div className="quick-select-buttons vertical tight">
-                        <button 
+                        <button
                           className="quick-btn"
                           onClick={() => handleInstrumentSelect({
                             tradingsymbol: 'NIFTY 50',
@@ -569,12 +569,12 @@ const Analytics = () => {
                         >
                           NIFTY 50
                         </button>
-                        <button 
+                        <button
                           className="quick-btn"
                           onClick={() => handleInstrumentSelect({
                             tradingsymbol: 'BANK NIFTY',
                             name: 'Bank Nifty',
-                            exchange: 'NSE', 
+                            exchange: 'NSE',
                             instrument_token: '260105'
                           })}
                         >
@@ -614,7 +614,7 @@ const Analytics = () => {
                             )}
                             <span className="instrument-exchange">{selectedInstrument.exchange}</span>
                           </div>
-                          <button 
+                          <button
                             className="change-instrument-btn ghost"
                             aria-label="Change instrument"
                             onClick={() => setShowInstrumentSearch(true)}
@@ -623,7 +623,7 @@ const Analytics = () => {
                           </button>
                         </div>
                       ) : (
-                        <button 
+                        <button
                           className="select-instrument-btn"
                           onClick={() => setShowInstrumentSearch(true)}
                         >
@@ -640,7 +640,7 @@ const Analytics = () => {
                     <div className="group-header">
                       <span className="group-title">Date Range</span>
                       {duration && (
-                        <span className="duration-chip" aria-live="polite">{duration} day{duration>1?'s':''}</span>
+                        <span className="duration-chip" aria-live="polite">{duration} day{duration > 1 ? 's' : ''}</span>
                       )}
                     </div>
                     <div className="date-grid">
@@ -657,7 +657,7 @@ const Analytics = () => {
                             const maxDate = new Date();
                             maxDate.setDate(maxDate.getDate() - 2);
                             return maxDate.toISOString().split('T')[0];
-                          })()} 
+                          })()}
                           aria-label="From date (must be earlier than To date)"
                         />
                       </div>
@@ -675,7 +675,7 @@ const Analytics = () => {
                             const maxDate = new Date();
                             maxDate.setDate(maxDate.getDate() - 2);
                             return maxDate.toISOString().split('T')[0];
-                          })()} 
+                          })()}
                           aria-label="To date (must be after From date)"
                         />
                       </div>
@@ -689,14 +689,14 @@ const Analytics = () => {
 
                   {/* Actions */}
                   <div className="form-actions compact-actions">
-                    <button 
+                    <button
                       className="action-btn secondary subtle"
                       onClick={handleClear}
                       disabled={!selectedInstrument && !fromDate && !toDate}
                     >
                       Clear
                     </button>
-                    <button 
+                    <button
                       className="action-btn primary"
                       onClick={handleAnalyze}
                       disabled={loading || !selectedInstrument || !fromDate || !toDate}
@@ -735,63 +735,63 @@ const Analytics = () => {
           {highLowData && (
             <div className="results-section">
               <h3 className="results-title">Analysis Results</h3>
-              
+
               <div className="results-grid">
-                              {/* High Price Card */}
-              <div className="result-card high-card">
-                <div className="card-header">
-                  <h4 className="card-title">Index high</h4>
-                  <ArrowTrendingUpIcon className="card-icon high-icon" />
-                </div>
-                <div className="card-value high-value">
-                  ₹{normalizedHigh?.toLocaleString?.()}
-                </div>
-                
-                {peStrike && (
-                  <div className="strike-line pe-strike">
-                    <div className="strike-header">
-                      <span className="strike-label">PE Strike</span>
-                      <span className="strike-value">₹{peStrike}</span>
-                    </div>
-                    <div className="strike-controls">
-                      <div className="strike-ltp">LTP: {peLtp != null ? `₹${peLtp.toFixed(2)}` : '--'}</div>
-                      <div className="expiry-select-wrap">
-                        <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
-                          <option value="current">Current Wk</option>
-                          <option value="next">Next Wk</option>
-                        </select>
-                        <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
-                      </div>
-                    </div>
-                    <div className="fib-grid">
-                      <div className="fib-item">
-                        <div className="fib-label">0 (Low)</div>
-                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels.low.toFixed(2)}` : '--'}</div>
-                      </div>
-                      <div className="fib-item">
-                        <div className="fib-label">0.5 (Mid)</div>
-                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels.mid.toFixed(2)}` : '--'}</div>
-                      </div>
-                      <div className="fib-item">
-                        <div className="fib-label">1 (High)</div>
-                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels.high.toFixed(2)}` : '--'}</div>
-                      </div>
-                      <div className="fib-item">
-                        <div className="fib-label">1.618 (Ext)</div>
-                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels.ext.toFixed(2)}` : '--'}</div>
-                      </div>
-                    </div>
-                    <div className="hma-row">
-                      <select className="hma-select" value={peTimeframe} onChange={e=>setPeTimeframe(e.target.value)}>
-                        <option value="15m">15m</option>
-                        <option value="1h">1h</option>
-                        <option value="1d">1d</option>
-                      </select>
-                      <div className="hma-value">HMA50: {peHma[peTimeframe] != null ? peHma[peTimeframe].toFixed(2) : '--'}</div>
-                    </div>
+                {/* High Price Card */}
+                <div className="result-card high-card">
+                  <div className="card-header">
+                    <h4 className="card-title">Index high</h4>
+                    <ArrowTrendingUpIcon className="card-icon high-icon" />
                   </div>
-                )}
-              </div>
+                  <div className="card-value high-value">
+                    ₹{normalizedHigh?.toLocaleString?.()}
+                  </div>
+
+                  {peStrike && (
+                    <div className="strike-line pe-strike">
+                      <div className="strike-header">
+                        <span className="strike-label">PE Strike</span>
+                        <span className="strike-value">₹{peStrike}</span>
+                      </div>
+                      <div className="strike-controls">
+                        <div className="strike-ltp">LTP: {peLtp != null ? `₹${peLtp.toFixed(2)}` : '--'}</div>
+                        <div className="expiry-select-wrap">
+                          <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
+                            <option value="current">Current Wk</option>
+                            <option value="next">Next Wk</option>
+                          </select>
+                          <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
+                        </div>
+                      </div>
+                      <div className="fib-grid">
+                        <div className="fib-item">
+                          <div className="fib-label">0 (Low)</div>
+                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.low.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">0.5 (Mid)</div>
+                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.mid.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">1 (High)</div>
+                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.high.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">1.618 (Ext)</div>
+                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.ext.toFixed(2)}` : '--'}</div>
+                        </div>
+                      </div>
+                      <div className="hma-row">
+                        <select className="hma-select" value={peTimeframe} onChange={e => setPeTimeframe(e.target.value)}>
+                          <option value="15m">15m</option>
+                          <option value="1h">1h</option>
+                          <option value="1d">1d</option>
+                        </select>
+                        <div className="hma-value">HMA50: {peHma[peTimeframe] != null ? peHma[peTimeframe].toFixed(2) : '--'}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* Low Price Card */}
                 <div className="result-card low-card">
@@ -802,7 +802,7 @@ const Analytics = () => {
                   <div className="card-value low-value">
                     ₹{normalizedLow?.toLocaleString?.()}
                   </div>
-                  
+
                   {ceStrike && (
                     <div className="strike-line ce-strike">
                       <div className="strike-header">
@@ -812,7 +812,7 @@ const Analytics = () => {
                       <div className="strike-controls">
                         <div className="strike-ltp">LTP: {ceLtp != null ? `₹${ceLtp.toFixed(2)}` : '--'}</div>
                         <div className="expiry-select-wrap">
-                          <select className="expiry-select small" value={optionExpiry} onChange={e=>setOptionExpiry(e.target.value)}>
+                          <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
                             <option value="current">Current Wk</option>
                             <option value="next">Next Wk</option>
                           </select>
@@ -838,7 +838,7 @@ const Analytics = () => {
                         </div>
                       </div>
                       <div className="hma-row">
-                        <select className="hma-select" value={ceTimeframe} onChange={e=>setCeTimeframe(e.target.value)}>
+                        <select className="hma-select" value={ceTimeframe} onChange={e => setCeTimeframe(e.target.value)}>
                           <option value="15m">15m</option>
                           <option value="1h">1h</option>
                           <option value="1d">1d</option>
