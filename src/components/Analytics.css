@@ -1166,17 +1166,6 @@
 
 @media (max-width:600px) { .strike-ohlc { grid-template-columns:repeat(2,1fr); } }
 
-/* Fyers API Integration Styles */
-.fyers-section {
-  margin: 1rem 0;
-  background: rgba(15, 23, 42, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 1rem;
-  position: relative;
-  z-index: 1;
-}
-
 .fyers-header {
   display: flex;
   justify-content: space-between;

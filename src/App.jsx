@@ -3,10 +3,6 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import Login from './components/Login-new';
 import AuthCallback from './components/AuthCallback';
-import FyersCallback from './components/FyersCallback';
-import FyersDebugCallback from './components/FyersDebugCallback';
-import FyersTest from './components/FyersTest';
-import FyersDebug from './components/FyersDebug';
 import SimpleLoginTest from './components/SimpleLoginTest';
 import Dashboard from './components/layout/Dashboard';
 import WebSocketDebugger from './components/WebSocketDebugger';
@@ -29,18 +25,18 @@ function App() {
   useEffect(() => {
     const checkAuthStatus = async () => {
       try {
-        // Skip auth check for Fyers-specific routes
-        if (location.pathname === '/fyers-test' || location.pathname === '/fyers-callback' || location.pathname === '/fyers-debug-callback' || location.pathname === '/fyers-debug' || location.pathname === '/simple-login-test') {
+        // Skip auth check for test routes
+        if (location.pathname === '/simple-login-test') {
           setIsLoading(false);
           return;
         }
 
         if (AuthService.isAuthenticated()) {
           const userInfo = AuthService.getUserInfo();
-          
+
           // Initialize WebSocket connection after authentication
           await TradingService.setupWebSocket();
-          
+
           try {
             const profile = await TradingService.getProfile();
             setUserInfo({ ...userInfo, ...profile });
@@ -48,9 +44,9 @@ function App() {
             console.error('Failed to load profile:', profileError);
             setUserInfo(userInfo);
           }
-          
+
           setIsAuthenticated(true);
-          
+
           // Redirect to dashboard if on login page
           if (location.pathname === '/' || location.pathname === '/login') {
             navigate('/dashboard');
@@ -72,7 +68,7 @@ function App() {
     try {
       // Initialize WebSocket connection after successful login
       await TradingService.setupWebSocket();
-      
+
       try {
         const profile = await TradingService.getProfile();
         setUserInfo({ ...authResponse, ...profile });
@@ -80,7 +76,7 @@ function App() {
         console.error('Failed to load user profile:', profileError);
         setUserInfo(authResponse);
       }
-      
+
       setIsAuthenticated(true);
       navigate('/dashboard');
     } catch (error) {
@@ -110,7 +106,7 @@ function App() {
         setShowDebugger(prev => !prev);
       }
     };
-    
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
@@ -127,57 +123,42 @@ function App() {
   return (
     <>
       <Routes>
-        <Route 
-          path="/" 
+        <Route
+          path="/"
           element={
-            isAuthenticated ? 
-            <Dashboard userInfo={userInfo} onLogout={handleLogout} /> : 
-            <Login onLoginSuccess={handleLoginSuccess} />
-          } 
+            isAuthenticated ?
+              <Dashboard userInfo={userInfo} onLogout={handleLogout} /> :
+              <Login onLoginSuccess={handleLoginSuccess} />
+          }
         />
-        <Route 
-          path="/login" 
-          element={<Login onLoginSuccess={handleLoginSuccess} />} 
+        <Route
+          path="/login"
+          element={<Login onLoginSuccess={handleLoginSuccess} />}
         />
-        <Route 
-          path="/callback" 
+        <Route
+          path="/callback"
           element={
-            <AuthCallback 
+            <AuthCallback
               onAuthSuccess={handleLoginSuccess}
               onAuthError={handleLoginError}
             />
-          } 
+          }
         />
-        <Route 
-          path="/fyers-callback" 
-          element={<FyersCallback />} 
+
+        <Route
+          path="/simple-login-test"
+          element={<SimpleLoginTest />}
         />
-        <Route 
-          path="/fyers-debug-callback" 
-          element={<FyersDebugCallback />} 
-        />
-        <Route 
-          path="/fyers-test" 
-          element={<FyersTest />} 
-        />
-        <Route 
-          path="/fyers-debug" 
-          element={<FyersDebug />} 
-        />
-        <Route 
-          path="/simple-login-test" 
-          element={<SimpleLoginTest />} 
-        />
-        <Route 
-          path="/dashboard" 
+        <Route
+          path="/dashboard"
           element={
-            isAuthenticated ? 
-            <Dashboard userInfo={userInfo} onLogout={handleLogout} /> : 
-            <Login onLoginSuccess={handleLoginSuccess} />
-          } 
+            isAuthenticated ?
+              <Dashboard userInfo={userInfo} onLogout={handleLogout} /> :
+              <Login onLoginSuccess={handleLoginSuccess} />
+          }
         />
       </Routes>
-      
+
       {/* WebSocket Debugger - only shown when authenticated */}
       {isAuthenticated && showDebugger && <WebSocketDebugger />}
     </>

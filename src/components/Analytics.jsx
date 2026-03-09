@@ -10,7 +10,6 @@ import {
 } from '@heroicons/react/24/outline';
 import InstrumentSearch from './InstrumentSearch';
 import TradingService from '../services/TradingService';
-import { useFyersAuth } from '../hooks/useFyersAuth';
 import './Analytics.css';
 
 const Analytics = () => {
@@ -33,13 +32,6 @@ const Analytics = () => {
   const peSubscribed = useRef(false);
   const ceSubscribed = useRef(false);
   
-  // Fyers integration
-  const { isAuthenticated: fyersAuth, login: fyersLogin, error: fyersError, userProfile, fyersService } = useFyersAuth();
-  const [fyersData, setFyersData] = useState(null);
-  const [fyersLoading, setFyersLoading] = useState(false);
-  const [peFyersSymbol, setPeFyersSymbol] = useState(null);
-  const [ceFyersSymbol, setCeFyersSymbol] = useState(null);
-  
   // Set default dates to a week ago (more likely to have data)
   const getDefaultDates = () => {
     const today = new Date();
@@ -61,54 +53,6 @@ const Analytics = () => {
   const [loading, setLoading] = useState(false);
   const [highLowData, setHighLowData] = useState(null);
   const [error, setError] = useState(null);
-
-  // Date adjustment helper functions
-  const addDaysToDate = (dateString, days) => {
-    const date = new Date(dateString);
-    date.setDate(date.getDate() + days);
-    return date.toISOString().split('T')[0];
-  };
-
-  const getMaxAllowedDate = () => {
-    const maxDate = new Date();
-    maxDate.setDate(maxDate.getDate() - 2);
-    return maxDate.toISOString().split('T')[0];
-  };
-
-  // Handle from date change with automatic to date adjustment
-  const handleFromDateChange = (newFromDate) => {
-    setFromDate(newFromDate);
-    
-    // Calculate new to date (from date + 6 days) - trading week Wednesday to Tuesday
-    const newToDate = addDaysToDate(newFromDate, 6);
-    const maxDate = getMaxAllowedDate();
-    
-    // Ensure the new to date doesn't exceed the maximum allowed date
-    if (newToDate <= maxDate) {
-      setToDate(newToDate);
-    } else {
-      setToDate(maxDate);
-    }
-    
-    // Clear previous results when dates change
-    setHighLowData(null);
-    setError(null);
-  };
-
-  // Handle to date change with automatic from date adjustment
-  const handleToDateChange = (newToDate) => {
-    setToDate(newToDate);
-    
-    // Calculate new from date (to date - 6 days) - trading week Wednesday to Tuesday
-    const newFromDate = addDaysToDate(newToDate, -6);
-    
-    // Ensure the new from date is not in the future relative to current constraints
-    setFromDate(newFromDate);
-    
-    // Clear previous results when dates change
-    setHighLowData(null);
-    setError(null);
-  };
 
   // Handle instrument selection
   const handleInstrumentSelect = (instrument) => {
@@ -269,13 +213,6 @@ const Analytics = () => {
     return { currentWeek, nextWeek };
   };
 
-  const formatExpiryCode = (date) => {
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mmm = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
-    const yy = String(date.getFullYear()).slice(-2);
-    return `${dd}${mmm}${yy}`; // e.g. 26SEP24
-  };
-
   // Memo-like derived expiry info (recomputed each render – lightweight)
   const { currentWeek: _currWeek, nextWeek: _nextWeek } = getWeeklyExpiryDates();
   const selectedExpiryDate = optionExpiry === 'next' ? _nextWeek : _currWeek;
@@ -284,182 +221,150 @@ const Analytics = () => {
     : '—';
   const expiryCode = selectedExpiryDate ? formatExpiryCode(selectedExpiryDate) : null;
 
-  // Build exact option symbol based on Kite format: NIFTY25O07{strike}{type}
-  const searchForOption = async (underlying, strike, optionType, expiryChoice) => {
-    try {
-      const underlyingMap = {
-        'NIFTY 50': 'NIFTY',
-        'BANKNIFTY': 'BANKNIFTY', 
-        'FINNIFTY': 'FINNIFTY'
-      };
-      
-      const searchUnderlying = underlyingMap[underlying] || underlying;
-      
-      // Get expiry date and build the date code
-      const { currentWeek: _currWeek, nextWeek: _nextWeek } = getWeeklyExpiryDates();
-      const selectedExpiryDate = expiryChoice === 'next' ? _nextWeek : _currWeek;
-      
-      // Build expiry code based on Kite format
-      // Weekly: NIFTY25O07, NIFTY25O14, NIFTY25O20 (first letter + date)
-      // Monthly: NIFTY25OCT (full month for last week)
-      let expiryCode = '';
-      if (selectedExpiryDate) {
-        const year = selectedExpiryDate.getFullYear().toString().slice(-2); // "25"
-        const day = selectedExpiryDate.getDate();
-        const month = selectedExpiryDate.getMonth(); // 0-based, so October = 9
-        
-        // Check if this is the last week of the month (monthly expiry)
-        const lastDayOfMonth = new Date(selectedExpiryDate.getFullYear(), month + 1, 0).getDate();
-        const isLastWeek = day > lastDayOfMonth - 7;
-        
-        if (isLastWeek) {
-          // Monthly expiry: use full month name
-          const monthName = selectedExpiryDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
-          expiryCode = `${year}${monthName}`;
-        } else {
-          // Weekly expiry: use first letter of month + date
-          const monthLetter = selectedExpiryDate.toLocaleDateString('en-US', { month: 'short' }).toUpperCase().charAt(0);
-          const dayPadded = day.toString().padStart(2, '0');
-          expiryCode = `${year}${monthLetter}${dayPadded}`;
-        }
-      }
-      
-      console.log(`[OptionSearch] Generated expiry code: ${expiryCode} for date: ${selectedExpiryDate?.toDateString()}`);
-      
-      // Build the exact symbol: NIFTY25O07{strike}{type}
-      const expectedSymbol = `${searchUnderlying}${expiryCode}${strike}${optionType}`;
-      console.log(`[OptionSearch] Looking for exact symbol: ${expectedSymbol}`);
-      
-      // Search with the expiry code to get more targeted results
-      const searchTerm = `${searchUnderlying}${expiryCode}`;
-      console.log(`[OptionSearch] Searching with term: ${searchTerm}`);
-      
-      // Search for instruments
-      const searchResults = await TradingService.searchInstruments(searchTerm);
-      console.log(`[OptionSearch] Found ${searchResults.length} total instruments for ${searchTerm}`);
-      
-      if (!searchResults.length) return null;
-      
-      // First try exact match
-      let exactMatch = searchResults.find(instrument => 
-        instrument.tradingsymbol === expectedSymbol
-      );
-      
-      if (exactMatch) {
-        console.log(`[OptionSearch] Found exact match: ${exactMatch.tradingsymbol}`);
-        return exactMatch;
-      }
-      
-      // If no exact match, try partial matching with strike and type
-      const partialMatches = searchResults.filter(instrument => {
-        const symbol = instrument.tradingsymbol || '';
-        const isOption = instrument.instrument_type === 'OPT' || symbol.includes('CE') || symbol.includes('PE');
-        const hasStrike = symbol.includes(String(strike));
-        const hasType = symbol.includes(optionType);
-        
-        return isOption && hasStrike && hasType;
-      });
-      
-      console.log(`[OptionSearch] Partial matches for ${strike}${optionType}:`, 
-        partialMatches.map(c => c.tradingsymbol));
-      
-      if (partialMatches.length > 0) {
-        const bestMatch = partialMatches[0]; // Take first match
-        console.log(`[OptionSearch] Using partial match: ${bestMatch.tradingsymbol}`);
-        return bestMatch;
-      }
-      
-      console.log(`[OptionSearch] No matches found for ${expectedSymbol}`);
-      return null;
-      
-    } catch (error) {
-      console.error(`[OptionSearch] Search failed:`, error);
-      return null;
-    }
+  const formatExpiryCode = (date) => {
+    const dd = String(date.getDate()).padStart(2, '0');
+    const mmm = date.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
+    const yy = String(date.getFullYear()).slice(-2);
+    return `${dd}${mmm}${yy}`; // e.g. 26SEP24
   };
 
-  // Resolve option instrument identifiers when strikes and instrument selected or expiry changes
+  const buildOptionSymbolCandidates = (underlyingSymbol, strike, type, expiryChoice) => {
+    if (!underlyingSymbol || !strike || !type) return [];
+    const base = baseSymbolForUnderlying(underlyingSymbol)?.replace(/\s+/g,'');
+    const strikeStr = String(strike).replace(/\.\d+/, '');
+  const { currentWeek, nextWeek } = getWeeklyExpiryDates();
+  const expiryDate = expiryChoice === 'next' ? nextWeek : currentWeek;
+    const dd = String(expiryDate.getDate()).padStart(2,'0');
+    const mmm = expiryDate.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
+    const yy = String(expiryDate.getFullYear()).slice(-2);
+    const monthNum = String(expiryDate.getMonth()+1).padStart(2,'0');
+    const yearFull = expiryDate.getFullYear();
+
+    // Candidate formats (descending likelihood):
+    // 1. Weekly full: BASE + DD + MMM + YY + strike + type  (NIFTY30SEP25 24500 CE => NIFTY30SEP2524500CE)
+    // 2. Weekly no year: BASE + DD + MMM + strike + type    (NIFTY30SEP24500CE)
+    // 3. Compact year first two digits + strike + type? (Legacy examples like NIFTY159500CE appear to be year(15)+strike+type NO month) -> BASE + YY + strike + type
+    // 4. Monthly style: BASE + MMM + YY + strike + type      (NIFTYSEP2524500CE)
+    // 5. Alt numeric date: BASE + DD + MM + YY + strike + type (NIFTY30092524500CE)
+    const candidates = [
+      `${base}${dd}${mmm}${yy}${strikeStr}${type}`,
+      `${base}${dd}${mmm}${strikeStr}${type}`,
+      `${base}${yy}${strikeStr}${type}`,
+      `${base}${mmm}${yy}${strikeStr}${type}`,
+      `${base}${dd}${monthNum}${yy}${strikeStr}${type}`
+    ];
+    if (mmm === 'SEP') {
+      // Some data sources may list September as SEPT
+      candidates.push(
+        `${base}${dd}SEPT${yy}${strikeStr}${type}`,
+        `${base}${dd}SEPT${strikeStr}${type}`,
+        `${base}SEPT${yy}${strikeStr}${type}`
+      );
+    }
+    return Array.from(new Set(candidates));
+  };
+
+  // Resolve option instrument tokens when strikes and instrument selected or expiry changes
   useEffect(() => {
     let cancelled = false;
     async function resolveTokens() {
-      setPeOptionToken(null); setCeOptionToken(null);
+  setPeOptionToken(null); setCeOptionToken(null);
       setPeFibLevels(null); setCeFibLevels(null);
       peSubscribed.current = false; ceSubscribed.current = false;
-      setPeLtp(null); setCeLtp(null);
-      setPeFyersSymbol(null); setCeFyersSymbol(null);
+  setPeLtp(null); setCeLtp(null);
       if (!selectedInstrument || !peStrike || !ceStrike) return;
-      
       const under = selectedInstrument.tradingsymbol;
       // Capture expiry context for this resolution cycle
       const { currentWeek, nextWeek } = getWeeklyExpiryDates();
       const chosenExpiryDate = optionExpiry === 'next' ? nextWeek : currentWeek;
       const chosenExpiryCode = chosenExpiryDate ? formatExpiryCode(chosenExpiryDate) : null;
-      
+  const peSymbols = buildOptionSymbolCandidates(under, peStrike, 'PE', optionExpiry);
+  const ceSymbols = buildOptionSymbolCandidates(under, ceStrike, 'CE', optionExpiry);
       setDebugInfo(prev => ({
         ...prev,
-        pe: { ...prev.pe, candidates: [`Searching for ${under} ${peStrike}PE options...`], resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } },
-        ce: { ...prev.ce, candidates: [`Searching for ${under} ${ceStrike}CE options...`], resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } }
+        pe: { ...prev.pe, candidates: peSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } },
+        ce: { ...prev.ce, candidates: ceSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } }
       }));
-      // If Fyers is authenticated, build Fyers symbols; else use Zerodha token resolution
-      if (fyersAuth) {
-        try {
-          const underlying = baseSymbolForUnderlying(under);
-          const fyersPe = fyersService.buildOptionSymbol(underlying, chosenExpiryDate, peStrike, 'PE');
-          const fyersCe = fyersService.buildOptionSymbol(underlying, chosenExpiryDate, ceStrike, 'CE');
-          setPeFyersSymbol(fyersPe);
-          setCeFyersSymbol(fyersCe);
-          setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { symbol: fyersPe, method: 'fyers-symbol' } }, ce: { ...prev.ce, resolved: { symbol: fyersCe, method: 'fyers-symbol' } } }));
-          // Use last close via history as initial LTP
+      async function resolveOne(symbolList, setter, side) {
+        for (const sym of symbolList) {
+          if (cancelled) return;
           try {
-            const [peHist, ceHist] = await Promise.all([
-              fyersService.getHistoricalData(fyersPe, `${fromDate}`, `${toDate}`, '15'),
-              fyersService.getHistoricalData(fyersCe, `${fromDate}`, `${toDate}`, '15')
-            ]);
-            const peLast = Array.isArray(peHist) && peHist.length ? peHist[peHist.length-1].close : null;
-            const ceLast = Array.isArray(ceHist) && ceHist.length ? ceHist[ceHist.length-1].close : null;
-            if (peLast != null) setPeLtp(peLast);
-            if (ceLast != null) setCeLtp(ceLast);
-          } catch(_) {}
-        } catch (error) {
-          console.error('[OptionResolve][FYERS] Symbol build failed:', error);
+            console.log(`[OptionResolve] Trying ${side} symbol candidate: ${sym}`);
+            let res = await TradingService.getInstrumentsBySymbol(sym);
+            if (!cancelled && Array.isArray(res) && res.length) {
+              const token = res[0].instrument_token || res[0].token;
+              console.log(`[OptionResolve] ${side} resolved via direct symbol: ${sym} -> token ${token}`);
+              setter(token);
+              // Fetch initial LTP immediately
+              try {
+                const q = await TradingService.getQuote(token);
+                if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
+                if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
+                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+              } catch(_) {
+                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+              }
+              return;
+            }
+            // Fallback: broader search prefix of base + strike part
+            const basePrefix = sym.slice(0, Math.min(8, sym.length));
+            const searchRes = await TradingService.searchInstruments(basePrefix);
+            if (!cancelled && Array.isArray(searchRes)) {
+              const exact = searchRes.find(r => r.tradingsymbol === sym);
+              if (exact) {
+                const token = exact.instrument_token || exact.token;
+                console.log(`[OptionResolve] ${side} resolved via search exact: ${sym} -> token ${token}`);
+                setter(token);
+                try {
+                  const q = await TradingService.getQuote(token);
+                  if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
+                  if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                } catch(_) {
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'search-exact', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                }
+                return;
+              }
+              const strikeMatch = sym.match(/(\d{3,6})(CE|PE)$/);
+              const strikePart = String(strikeMatch?.[1] || '');
+              const typePart = strikeMatch?.[2] || (sym.endsWith('CE') ? 'CE' : sym.endsWith('PE') ? 'PE' : '');
+              const partial = searchRes.find(r => r.tradingsymbol?.includes(strikePart) && r.tradingsymbol?.endsWith(typePart));
+              if (partial) {
+                const token = partial.instrument_token || partial.token;
+                console.log(`[OptionResolve] ${side} resolved via search partial: ${partial.tradingsymbol} -> token ${token}`);
+                setter(token);
+                try {
+                  const q = await TradingService.getQuote(token);
+                  if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
+                  if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                } catch(_) {
+                  setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: partial.tradingsymbol, token, method: 'search-partial', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } }}));
+                }
+                return;
+              }
+            }
+          } catch (err) {
+            console.warn(`[OptionResolve] Error for candidate ${sym}:`, err.message);
+          }
         }
-        return;
+        console.warn(`[OptionResolve] Failed to resolve any candidate for ${side}`);
       }
-      // Zerodha path (original)
-      try {
-        const peOption = await searchForOption(under, peStrike, 'PE', optionExpiry);
-        if (peOption) {
-          const token = peOption.instrument_token || peOption.token;
-          setPeOptionToken(token);
-          try { const q = await TradingService.getQuote(token); if (q?.last_price != null) setPeLtp(q.last_price); } catch(_) {}
-          setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { symbol: peOption.tradingsymbol, token, method: 'direct-search' } }}));
-        } else { setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { error: 'No PE option found' } }})); }
-
-        const ceOption = await searchForOption(under, ceStrike, 'CE', optionExpiry);
-        if (ceOption) {
-          const token = ceOption.instrument_token || ceOption.token;
-          setCeOptionToken(token);
-          try { const q = await TradingService.getQuote(token); if (q?.last_price != null) setCeLtp(q.last_price); } catch(_) {}
-          setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { symbol: ceOption.tradingsymbol, token, method: 'direct-search' } }}));
-        } else { setDebugInfo(prev => ({ ...prev, ce: { ...prev.ce, resolved: { error: 'No CE option found' } }})); }
-      } catch (error) {
-        console.error('[OptionResolve] Resolution failed:', error);
-        setDebugInfo(prev => ({ ...prev, pe: { ...prev.pe, resolved: { error: error.message } }, ce: { ...prev.ce, resolved: { error: error.message } } }));
-      }
+      await Promise.all([
+        resolveOne(peSymbols, setPeOptionToken, 'PE'),
+        resolveOne(ceSymbols, setCeOptionToken, 'CE')
+      ]);
     }
     resolveTokens();
     return () => { cancelled = true; };
-  }, [selectedInstrument, peStrike, ceStrike, optionExpiry, fyersAuth]);
+  }, [selectedInstrument, peStrike, ceStrike, optionExpiry]);
 
   // Static Fibonacci levels (per option token + date range). Cached so they don't change with live LTP.
   const fibCacheRef = useRef({}); // key: token|fromDate|toDate
   useEffect(() => {
     let cancelled = false;
     async function computeFib(token, setter) {
-      if (!fromDate || !toDate) return;
-      // FYERS path uses symbol instead of token
-      if (fyersAuth) return;
-      if (!token) return;
+      if (!token || !fromDate || !toDate) return;
       const key = `${token}|${fromDate}|${toDate}`;
       if (fibCacheRef.current[key]) { setter(fibCacheRef.current[key]); return; }
       try {
@@ -479,153 +384,76 @@ const Analytics = () => {
         console.warn('Fib fetch failed', e.message);
       }
     }
-    async function computeFibFyers(symbol, setter) {
-      if (!symbol || !fromDate || !toDate) return;
-      const key = `${symbol}|FYERS|${fromDate}|${toDate}`;
-      if (fibCacheRef.current[key]) { setter(fibCacheRef.current[key]); return; }
-      try {
-        // Use daily resolution for fibs; Fyers resolution 'D'
-        const hist = await fyersService.getHistoricalData(symbol, fromDate, toDate, 'D');
-        const candles = Array.isArray(hist) ? hist : [];
-        if (!candles.length) { setter(null); return; }
-        let low = Infinity, high = -Infinity;
-        candles.forEach(c => { if (c.low < low) low = c.low; if (c.high > high) high = c.high; });
-        if (!isFinite(low) || !isFinite(high)) { setter(null); return; }
-        const diff = high - low;
-        const fibs = { 0: low, 0.5: low + diff * 0.5, 1: high, 1.618: low + diff * 1.618 };
-        fibCacheRef.current[key] = fibs;
-        setter(fibs);
-      } catch(e) { console.warn('[FYERS] Fib fetch failed', e.message); }
-    }
-    if (!fyersAuth) {
-      if (peOptionToken && !peFibLevels) computeFib(peOptionToken, setPeFibLevels);
-      if (ceOptionToken && !ceFibLevels) computeFib(ceOptionToken, setCeFibLevels);
-    } else {
-      if (peFyersSymbol && !peFibLevels) computeFibFyers(peFyersSymbol, setPeFibLevels);
-      if (ceFyersSymbol && !ceFibLevels) computeFibFyers(ceFyersSymbol, setCeFibLevels);
-    }
+    if (peOptionToken && !peFibLevels) computeFib(peOptionToken, setPeFibLevels);
+    if (ceOptionToken && !ceFibLevels) computeFib(ceOptionToken, setCeFibLevels);
     return () => { cancelled = true; };
-  }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate, fyersAuth, peFyersSymbol, ceFyersSymbol]);
+  }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate]);
 
-  // Subscribe to real-time option data with fallback when WebSocket fails
+  // LTP initial quote & polling fallback if ticks absent
   const lastTickRef = useRef({ pe: null, ce: null });
-  const fallbackIntervalRef = useRef(null);
-
-  // Fallback quote fetching when WebSocket is unavailable
+  const pollRef = useRef(null);
   useEffect(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     if (!peOptionToken && !ceOptionToken) return;
-    if (fyersAuth) return; // Skip WS when using Fyers data
-    
     let cancelled = false;
-    
-    // Initial quote fetch
-    const fetchInitialQuotes = async () => {
+    (async () => {
       try {
         if (peOptionToken) {
-          const peQuote = await TradingService.getQuote(peOptionToken);
-          if (!cancelled && peQuote?.last_price != null) {
-            setPeLtp(peQuote.last_price);
-            console.log(`[Analytics] PE initial LTP: ${peQuote.last_price}`);
-          }
+          const q = await TradingService.getQuote(peOptionToken);
+          if (!cancelled && q?.last_price != null) setPeLtp(q.last_price);
         }
         if (ceOptionToken) {
-          const ceQuote = await TradingService.getQuote(ceOptionToken);
-          if (!cancelled && ceQuote?.last_price != null) {
-            setCeLtp(ceQuote.last_price);
-            console.log(`[Analytics] CE initial LTP: ${ceQuote.last_price}`);
-          }
+          const q = await TradingService.getQuote(ceOptionToken);
+          if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
         }
-      } catch (err) {
-        console.warn('[Analytics] Initial quote fetch failed:', err.message);
-      }
-    };
-
-    // Start with initial fetch
-    fetchInitialQuotes();
-
-    // Set up fallback polling for when WebSocket fails
-    fallbackIntervalRef.current = setInterval(async () => {
-      try {
-        if (peOptionToken) {
-          const peQuote = await TradingService.getQuote(peOptionToken);
-          if (!cancelled && peQuote?.last_price != null) {
-            setPeLtp(peQuote.last_price);
+      } catch(err) { console.warn('Initial option quote fetch failed', err.message); }
+      pollRef.current = setInterval(async () => {
+        const now = Date.now();
+        const needPe = peOptionToken && (!lastTickRef.current.pe || now - lastTickRef.current.pe > 20000);
+        const needCe = ceOptionToken && (!lastTickRef.current.ce || now - lastTickRef.current.ce > 20000);
+        if (!needPe && !needCe) return;
+        try {
+          if (needPe) {
+            const q = await TradingService.getQuote(peOptionToken);
+            if (!cancelled && q?.last_price != null) setPeLtp(q.last_price);
           }
-        }
-        if (ceOptionToken) {
-          const ceQuote = await TradingService.getQuote(ceOptionToken);
-          if (!cancelled && ceQuote?.last_price != null) {
-            setCeLtp(ceQuote.last_price);
+          if (needCe) {
+            const q = await TradingService.getQuote(ceOptionToken);
+            if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
           }
-        }
-      } catch (err) {
-        console.warn('[Analytics] Fallback quote polling failed:', err.message);
-      }
-    }, 10000); // Poll every 10 seconds as fallback
+        } catch(e){ console.warn('Polling option quote failed', e.message); }
+      }, 15000);
+    })();
+    return () => { cancelled = true; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current=null; } };
+  }, [peOptionToken, ceOptionToken]);
 
-    return () => {
-      cancelled = true;
-      if (fallbackIntervalRef.current) {
-        clearInterval(fallbackIntervalRef.current);
-        fallbackIntervalRef.current = null;
-      }
-    };
-  }, [peOptionToken, ceOptionToken, fyersAuth]);
-
-  // Subscribe to real-time option ticks (with graceful WebSocket failure handling)
+  // Subscribe to real-time option ticks (once per token)
   useEffect(() => {
     const unsubscribers = [];
-    
-    // Real-time tick handler
     function handleTicks(ticks) {
       if (!Array.isArray(ticks)) return;
-      console.log(`[Analytics] Received ${ticks.length} ticks via WebSocket`);
-      
-      ticks.forEach(tick => {
-        if (!tick || !tick.instrument_token) return;
-        
-        // Update PE option LTP
-        if (tick.instrument_token === peOptionToken && tick.last_price != null) {
-          console.log(`[Analytics] PE LTP from WebSocket: ${tick.last_price}`);
-          setPeLtp(tick.last_price);
+      ticks.forEach(t => {
+        if (t.instrument_token === peOptionToken && t.last_price != null) {
+          setPeLtp(t.last_price);
           lastTickRef.current.pe = Date.now();
         }
-        
-        // Update CE option LTP  
-        if (tick.instrument_token === ceOptionToken && tick.last_price != null) {
-          console.log(`[Analytics] CE LTP from WebSocket: ${tick.last_price}`);
-          setCeLtp(tick.last_price);
+        if (t.instrument_token === ceOptionToken && t.last_price != null) {
+          setCeLtp(t.last_price);
           lastTickRef.current.ce = Date.now();
         }
       });
     }
-    
-    // Try to subscribe to WebSocket (will fail gracefully if server unavailable)
-    const tokens = [];
     if (peOptionToken && !peSubscribed.current) {
-      tokens.push(peOptionToken);
-      peSubscribed.current = true;
+      TradingService.subscribeToInstruments([peOptionToken]);
+      const unsub = TradingService.subscribeToTicks(handleTicks); // reused handler
+      unsubscribers.push(unsub); peSubscribed.current = true;
     }
     if (ceOptionToken && !ceSubscribed.current) {
-      tokens.push(ceOptionToken);
-      ceSubscribed.current = true;
+      TradingService.subscribeToInstruments([ceOptionToken]);
+      const unsub = TradingService.subscribeToTicks(handleTicks);
+      unsubscribers.push(unsub); ceSubscribed.current = true;
     }
-    
-    if (tokens.length > 0) {
-      console.log(`[Analytics] Attempting WebSocket subscription to tokens:`, tokens);
-      try {
-        TradingService.subscribeToInstruments(tokens);
-        const unsub = TradingService.subscribeToTicks(handleTicks);
-        unsubscribers.push(unsub);
-        console.log(`[Analytics] WebSocket subscription successful`);
-      } catch (error) {
-        console.warn(`[Analytics] WebSocket subscription failed, using fallback polling:`, error.message);
-      }
-    }
-    
-    return () => { 
-      unsubscribers.forEach(u => u && u()); 
-    };
+    return () => { unsubscribers.forEach(u => u && u()); };
   }, [peOptionToken, ceOptionToken]);
 
   // HMA computation helpers
@@ -661,89 +489,24 @@ const Analytics = () => {
   };
 
   const timeframeToInterval = { '15m': '15minute', '1h': '60minute', '1d': 'day' };
-  const timeframeToFyers = { '15m': '15', '1h': '60', '1d': 'D' };
 
-  const fetchHMAIfNeeded = async (tokenOrSymbol, timeframe, stateObj, setStateObj) => {
-    if (!tokenOrSymbol) return;
+  const fetchHMAIfNeeded = async (token, timeframe, stateObj, setStateObj) => {
+    if (!token) return;
     if (stateObj[timeframe] != null) return; // already computed
     try {
-      let closes = [];
-      if (!fyersAuth) {
-        const fromDateTime = `${fromDate} 09:15:00`;
-        const toDateTime = `${toDate} 15:30:00`;
-        const interval = timeframeToInterval[timeframe];
-        const data = await TradingService.getHistoricalData(tokenOrSymbol, fromDateTime, toDateTime, interval);
-        const candles = data?.candles || [];
-        closes = candles.map(c => c[4]);
-      } else {
-        const res = timeframeToFyers[timeframe] || '15';
-        const hist = await fyersService.getHistoricalData(tokenOrSymbol, fromDate, toDate, res);
-        closes = Array.isArray(hist) ? hist.map(c => c.close) : [];
-      }
+      const fromDateTime = `${fromDate} 09:15:00`;
+      const toDateTime = `${toDate} 15:30:00`;
+      const interval = timeframeToInterval[timeframe];
+      const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, interval);
+      const candles = data?.candles || [];
+      const closes = candles.map(c => c[4]);
       const hmaVal = computeHMA(closes, 50);
       setStateObj(prev => ({ ...prev, [timeframe]: hmaVal }));
     } catch (e) { console.warn('HMA fetch failed', e.message); }
   };
 
-  useEffect(() => { 
-    const id = fyersAuth ? peFyersSymbol : peOptionToken; 
-    if (id) fetchHMAIfNeeded(id, peTimeframe, peHma, setPeHma); 
-  }, [peOptionToken, peFyersSymbol, peTimeframe, fyersAuth]);
-  useEffect(() => { 
-    const id = fyersAuth ? ceFyersSymbol : ceOptionToken; 
-    if (id) fetchHMAIfNeeded(id, ceTimeframe, ceHma, setCeHma); 
-  }, [ceOptionToken, ceFyersSymbol, ceTimeframe, fyersAuth]);
-  
-  // Fyers Integration Functions
-  const fetchFyersOptionData = async () => {
-    if (!fyersAuth) {
-      fyersLogin();
-      return;
-    }
-
-    setFyersLoading(true);
-    try {
-      // Example: Fetch NIFTY option data
-      const expiry = new Date('2024-10-17'); // Adjust based on current week
-      const underlying = 'NIFTY';
-      const strike = 25000; // Adjust based on current market price
-      
-      const [callData, putData] = await Promise.all([
-        fyersService.getOptionData(underlying, expiry, strike, 'CE', fromDate, toDate),
-        fyersService.getOptionData(underlying, expiry, strike, 'PE', fromDate, toDate)
-      ]);
-
-      setFyersData({
-        call: callData,
-        put: putData,
-        symbol: `${underlying} ${strike} ${expiry.toLocaleDateString()}`,
-        strike,
-        expiry
-      });
-
-    } catch (error) {
-      console.error('Error fetching Fyers option data:', error);
-    } finally {
-      setFyersLoading(false);
-    }
-  };
-
-  const fetchFyersOptionChain = async () => {
-    if (!fyersAuth) {
-      fyersLogin();
-      return;
-    }
-
-    try {
-      const optionChain = await fyersService.getOptionChain('NSE:NIFTY50-INDEX', 10);
-      console.log('Fyers Option Chain:', optionChain);
-    } catch (error) {
-      console.error('Error fetching option chain:', error);
-    }
-  };
-  
-
-
+  useEffect(() => { if (peOptionToken) fetchHMAIfNeeded(peOptionToken, peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe]);
+  useEffect(() => { if (ceOptionToken) fetchHMAIfNeeded(ceOptionToken, ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe]);
   return (
     <div className="analytics-section">
       {/* Header */}
@@ -780,75 +543,6 @@ const Analytics = () => {
           <div className="debug-notes">If no resolution, verify actual contract symbol via backend search endpoint. Strike or expiry formatting may differ.</div>
         </div>
       )}
-
-      {/* Fyers API Integration Section */}
-      <div className="fyers-section">
-        <div className="fyers-header">
-          <h3>Fyers API - Options Data</h3>
-          {fyersAuth ? (
-            <div className="fyers-status">
-              <span className="status-indicator success">Connected</span>
-              {userProfile && <span className="user-info">Welcome, {userProfile.name}</span>}
-            </div>
-          ) : (
-            <button onClick={fyersLogin} className="fyers-login-btn">
-              Connect to Fyers
-            </button>
-          )}
-        </div>
-        
-        {fyersAuth && (
-          <div className="fyers-controls">
-            <button 
-              onClick={fetchFyersOptionData}
-              disabled={fyersLoading}
-              className="fyers-action-btn"
-            >
-              {fyersLoading ? 'Loading...' : 'Fetch Option Data'}
-            </button>
-            
-            <button 
-              onClick={fetchFyersOptionChain}
-              className="fyers-action-btn"
-            >
-              Get Option Chain
-            </button>
-          </div>
-        )}
-        
-        {fyersData && (
-          <div className="fyers-data-display">
-            <h4>Option Data: {fyersData.symbol}</h4>
-            <div className="option-data-grid">
-              <div className="option-data-card">
-                <h5>Call Option (CE)</h5>
-                <div className="data-count">{fyersData.call?.length || 0} data points</div>
-                {fyersData.call?.length > 0 && (
-                  <div className="price-info">
-                    <span>Latest Close: ₹{fyersData.call[fyersData.call.length - 1]?.close}</span>
-                  </div>
-                )}
-              </div>
-              
-              <div className="option-data-card">
-                <h5>Put Option (PE)</h5>
-                <div className="data-count">{fyersData.put?.length || 0} data points</div>
-                {fyersData.put?.length > 0 && (
-                  <div className="price-info">
-                    <span>Latest Close: ₹{fyersData.put[fyersData.put.length - 1]?.close}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {fyersError && (
-          <div className="fyers-error">
-            <p>Error: {fyersError}</p>
-          </div>
-        )}
-      </div>
 
       {/* Main Content Grid */}
       <div className="analytics-main">
@@ -953,30 +647,28 @@ const Analytics = () => {
                       <div className="date-cell">
                         <label className="config-label small-label">
                           <CalendarDaysIcon className="label-icon" /> From
-                          <span className="auto-adjust-hint" title="Automatically adjusts To date to +6 days">📅</span>
                         </label>
                         <input
                           type="date"
                           value={fromDate}
-                          onChange={(e) => handleFromDateChange(e.target.value)}
+                          onChange={(e) => setFromDate(e.target.value)}
                           className="date-input compact"
                           max={(() => {
                             const maxDate = new Date();
                             maxDate.setDate(maxDate.getDate() - 2);
                             return maxDate.toISOString().split('T')[0];
                           })()} 
-                          aria-label="From date (automatically adjusts To date to +6 days)"
+                          aria-label="From date (must be earlier than To date)"
                         />
                       </div>
                       <div className="date-cell">
                         <label className="config-label small-label">
                           <CalendarDaysIcon className="label-icon" /> To
-                          <span className="auto-adjust-hint" title="Automatically adjusts From date to -6 days">📅</span>
                         </label>
                         <input
                           type="date"
                           value={toDate}
-                          onChange={(e) => handleToDateChange(e.target.value)}
+                          onChange={(e) => setToDate(e.target.value)}
                           className="date-input compact"
                           min={fromDate}
                           max={(() => {
@@ -984,7 +676,7 @@ const Analytics = () => {
                             maxDate.setDate(maxDate.getDate() - 2);
                             return maxDate.toISOString().split('T')[0];
                           })()} 
-                          aria-label="To date (automatically adjusts From date to -6 days)"
+                          aria-label="To date (must be after From date)"
                         />
                       </div>
                     </div>
@@ -993,7 +685,6 @@ const Analytics = () => {
                   {/* Inline Extended Tips (optional expansion could be future) */}
                   <div className="inline-help" role="note">
                     <p>Market hours applied automatically (09:15–15:30). Holidays excluded.</p>
-                    <p>💡 Tip: Selecting a date automatically adjusts the other date by ±6 days (trading week: Wed-Tue).</p>
                   </div>
 
                   {/* Actions */}
