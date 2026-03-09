@@ -57,8 +57,8 @@ const BrokerSelector = ({ onBrokerChange }) => {
             key={broker.id}
             className={`broker-option ${currentBroker === broker.id ? 'active' : ''} ${!broker.isAvailable ? 'disabled' : ''}`}
             onClick={() => handleBrokerChange(broker.id)}
-            disabled={!broker.isAvailable || switching}
-            title={!broker.isAvailable ? 'Broker not configured' : ''}
+            disabled={switching}
+            title={!broker.isAvailable ? 'Broker not configured (click to view login/help)' : ''}
           >
             <div className="broker-info">
               <span className="broker-name">{broker.name}</span>

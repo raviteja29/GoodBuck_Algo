@@ -320,3 +320,34 @@
     font-size: 2.5rem;
   }
 }
+
+/* Fyers Test Link Styles */
+.fyers-test-link {
+  margin-top: 2rem;
+  padding: 1rem;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.test-link {
+  display: inline-block;
+  color: #3b82f6;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  transition: color 0.2s ease;
+}
+
+.test-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.test-link-description {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.85rem;
+  margin: 0;
+}

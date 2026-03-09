@@ -15,6 +15,56 @@ const connectionStatusListeners = new Set();
 // Cache for quotes data
 let lastQuotes = new Map();
 
+// Instruments cache with daily refresh
+const instrumentsCache = {
+  data: null,
+  date: null,
+  exchanges: new Map(), // Cache per exchange
+  
+  // Check if cache is valid for today
+  isValid() {
+    const today = new Date().toDateString();
+    return this.date === today && this.data !== null;
+  },
+  
+  // Check if exchange-specific cache is valid
+  isExchangeValid(exchange) {
+    const today = new Date().toDateString();
+    const exchangeCache = this.exchanges.get(exchange);
+    return exchangeCache && exchangeCache.date === today && exchangeCache.data !== null;
+  },
+  
+  // Clear cache
+  clear() {
+    this.data = null;
+    this.date = null;
+    this.exchanges.clear();
+    console.log('[InstrumentsCache] Cache cleared');
+  },
+  
+  // Set cache data
+  set(data) {
+    this.data = data;
+    this.date = new Date().toDateString();
+    console.log(`[InstrumentsCache] Cached ${data?.length || 0} instruments for ${this.date}`);
+  },
+  
+  // Set exchange-specific cache
+  setExchange(exchange, data) {
+    this.exchanges.set(exchange, {
+      data: data,
+      date: new Date().toDateString()
+    });
+    console.log(`[InstrumentsCache] Cached ${data?.length || 0} instruments for ${exchange}`);
+  },
+  
+  // Get exchange-specific cache
+  getExchange(exchange) {
+    const exchangeCache = this.exchanges.get(exchange);
+    return exchangeCache?.data || null;
+  }
+};
+
 // Kite API key (replace with your actual API key or move to environment variables)
 const apiKey = 'mt23bk4vqz8uryv2';
 
@@ -54,10 +104,10 @@ async function setupWebSocket() {
 
   updateConnectionStatus('connecting');
   console.log('Setting up WebSocket connection');
-  
+
   const accessToken = localStorage.getItem('access_token');
   console.log('Access token from localStorage:', accessToken ? 'Token found (not showing for security)' : 'No token found');
-  
+
   if (!accessToken) {
     console.warn('No access token found, skipping WebSocket connection');
     updateConnectionStatus('disconnected');
@@ -68,10 +118,9 @@ async function setupWebSocket() {
     // Format the token as expected by the server (apiKey:accessToken)
     const publicToken = `${apiKey}:${accessToken}`;
     console.log('Attempting to connect to WebSocket server with token');
-    
-    // Create new WebSocket instance with the token as a query parameter
+
     ws = new WebSocket(`wss://goodbuck-algo.onrender.com/ws?token=${encodeURIComponent(publicToken)}`);
-    
+
     // Keep track of ping interval
     let pingInterval;
 
@@ -79,18 +128,12 @@ async function setupWebSocket() {
     ws.onopen = () => {
       console.log('WebSocket connection established successfully');
       updateConnectionStatus('connected');
-      
-      // Reset connection attempts on successful connection
       connectionAttempts = 0;
-      
-      // Start ping interval (every 25 seconds) to keep the connection alive
       pingInterval = setInterval(() => {
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'pong' }));
         }
       }, 25000);
-      
-      // Resubscribe to any existing instrument tokens
       if (instrumentTokens.size > 0) {
         console.log(`Resubscribing to ${instrumentTokens.size} instrument tokens`);
         ws.send(JSON.stringify({
@@ -103,7 +146,6 @@ async function setupWebSocket() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
         switch (data.type) {
           case 'ping':
             ws.send(JSON.stringify({ type: 'pong' }));
@@ -242,23 +284,19 @@ async function setupWebSocket() {
     ws.onclose = (event) => {
       console.log(`WebSocket connection closed: code=${event.code}, reason=${event.reason}`);
       updateConnectionStatus('disconnected');
-      
-      // Clear ping interval
       if (pingInterval) {
         clearInterval(pingInterval);
       }
-      
-      // Implement exponential backoff for reconnection attempts
-      if (event.code !== 1000) { // Only reconnect if not intentionally closed
+      // Only retry if not intentionally closed and not a fatal error
+      if (event.code !== 1000) {
         connectionAttempts++;
-        
         if (connectionAttempts <= MAX_RECONNECT_ATTEMPTS) {
           const delay = Math.min(30000, RECONNECT_DELAY_BASE * Math.pow(2, connectionAttempts - 1));
           console.log(`Attempting to reconnect in ${delay/1000}s... (Attempt ${connectionAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
-          
           setTimeout(setupWebSocket, delay);
         } else {
-          console.error(`Maximum reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Please refresh the page.`);
+          // Show user-friendly error after max attempts
+          alert('Live market data connection failed. Please check your network or try again later. The analysis page will still work with delayed/static data.');
           updateConnectionStatus('failed');
         }
       }
@@ -269,15 +307,15 @@ async function setupWebSocket() {
       // The WebSocket might still be functioning despite errors
       console.warn('WebSocket error event received:', error);
       console.log('WebSocket state:', ws.readyState);
-      
       // Only update status if the connection is actually closed
       if (ws.readyState === WebSocket.CLOSED) {
         updateConnectionStatus('error');
       }
     };
-    
     return true;
   } catch (error) {
+    // Show user-friendly error if connection cannot be established at all
+    alert('Could not connect to live market data server. The analysis page will still work with delayed/static data.');
     console.error('Error creating WebSocket connection:', error);
     updateConnectionStatus('failed');
     return false;
@@ -438,6 +476,30 @@ class TradingService {
         resolve(result);
       }, 500);
     });
+  }
+
+  /**
+   * Clear instruments cache (e.g., for manual refresh or debugging)
+   */
+  clearInstrumentsCache() {
+    instrumentsCache.clear();
+    console.log('[TradingService] Instruments cache cleared manually');
+  }
+
+  /**
+   * Get cache status for debugging
+   */
+  getCacheStatus() {
+    return {
+      isValid: instrumentsCache.isValid(),
+      date: instrumentsCache.date,
+      itemCount: instrumentsCache.data?.length || 0,
+      exchanges: Array.from(instrumentsCache.exchanges.keys()).map(exchange => ({
+        exchange,
+        isValid: instrumentsCache.isExchangeValid(exchange),
+        itemCount: instrumentsCache.getExchange(exchange)?.length || 0
+      }))
+    };
   }
 
   /**
@@ -641,27 +703,163 @@ class TradingService {
   }
 
   /**
-   * Search for instruments
+   * Get fresh instruments from Kite API with daily caching
+   * @returns {Promise<Array>} Array of all instruments
    */
-  async searchInstruments(query) {
+  async getFreshInstruments() {
     try {
-      console.log(`[TradingService] Searching for instruments: ${query}`);
+      // Check if we have valid cached data
+      if (instrumentsCache.isValid()) {
+        console.log(`[TradingService] Using cached instruments (${instrumentsCache.data.length} items)`);
+        return instrumentsCache.data;
+      }
       
-      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/search?query=${encodeURIComponent(query)}`, {
+      console.log('[TradingService] Fetching fresh instruments from Kite API');
+      
+      const response = await fetch('https://goodbuck-algo.onrender.com/api/instruments/fresh', {
         method: 'GET',
         credentials: 'include',
         headers: this.getAuthHeaders(),
       });
       
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error(`[TradingService] Search error:`, errorData);
-        throw new Error(errorData && errorData.error ? errorData.error : 'Failed to search instruments');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch fresh instruments');
       }
       
-      const results = await response.json();
-      console.log(`[TradingService] Found ${results.length} instruments`);
-      return results;
+      const instruments = await response.json();
+      console.log(`[TradingService] Fetched ${instruments.length} fresh instruments`);
+      
+      // Cache the data
+      instrumentsCache.set(instruments);
+      
+      return instruments;
+    } catch (error) {
+      console.error('[TradingService] Error fetching fresh instruments:', error);
+      
+      // If we have stale cached data, use it as fallback
+      if (instrumentsCache.data) {
+        console.warn('[TradingService] Using stale cached instruments as fallback');
+        return instrumentsCache.data;
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Get instruments filtered by exchange with caching
+   * @param {string} exchange - Exchange name (NSE, BSE, NFO, etc.)
+   * @returns {Promise<Array>} Array of instruments for the exchange
+   */
+  async getInstrumentsByExchange(exchange) {
+    try {
+      // Check if we have valid cached data for this exchange
+      if (instrumentsCache.isExchangeValid(exchange)) {
+        const cached = instrumentsCache.getExchange(exchange);
+        console.log(`[TradingService] Using cached instruments for ${exchange} (${cached.length} items)`);
+        return cached;
+      }
+      
+      console.log(`[TradingService] Fetching fresh instruments for ${exchange}`);
+      
+      const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/fresh?exchange=${exchange}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: this.getAuthHeaders(),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData && errorData.error ? errorData.error : `Failed to fetch instruments for ${exchange}`);
+      }
+      
+      const instruments = await response.json();
+      console.log(`[TradingService] Fetched ${instruments.length} fresh instruments for ${exchange}`);
+      
+      // Cache the exchange-specific data
+      instrumentsCache.setExchange(exchange, instruments);
+      
+      return instruments;
+    } catch (error) {
+      console.error(`[TradingService] Error fetching instruments for ${exchange}:`, error);
+      
+      // If we have stale cached data for this exchange, use it as fallback
+      const staleData = instrumentsCache.getExchange(exchange);
+      if (staleData) {
+        console.warn(`[TradingService] Using stale cached instruments for ${exchange} as fallback`);
+        return staleData;
+      }
+      
+      throw error;
+    }
+  }
+
+  /**
+   * Search for instruments with smart caching and filtering
+   */
+  async searchInstruments(query) {
+    try {
+      console.log(`[TradingService] Searching for instruments: ${query}`);
+      
+      // For specific patterns like "NIFTY25O07", use targeted search
+      const isOptionPattern = /^[A-Z]+\d{2}[A-Z]\d{2}/.test(query);
+      
+      if (isOptionPattern) {
+        // Extract the underlying and use NFO exchange for options
+        const underlying = query.match(/^([A-Z]+)/)?.[1];
+        console.log(`[TradingService] Detected option pattern, targeting NFO for underlying: ${underlying}`);
+        
+        try {
+          // Get NFO instruments (options exchange)
+          const nfoInstruments = await this.getInstrumentsByExchange('NFO');
+          
+          // Filter for the specific query pattern
+          const matches = nfoInstruments.filter(instrument => {
+            const symbol = instrument.tradingsymbol || '';
+            return symbol.includes(query) || symbol.startsWith(query);
+          });
+          
+          console.log(`[TradingService] Found ${matches.length} NFO matches for ${query}`);
+          return matches;
+        } catch (nfoError) {
+          console.warn('[TradingService] NFO search failed, falling back to general search');
+        }
+      }
+      
+      // For general queries, try the search endpoint first
+      try {
+        const response = await fetch(`https://goodbuck-algo.onrender.com/api/instruments/search?query=${encodeURIComponent(query)}`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: this.getAuthHeaders(),
+        });
+        
+        if (response.ok) {
+          const results = await response.json();
+          console.log(`[TradingService] Search endpoint found ${results.length} instruments for ${query}`);
+          return results;
+        }
+      } catch (searchError) {
+        console.warn('[TradingService] Search endpoint failed, falling back to cached search');
+      }
+      
+      // Fallback: search in cached instruments
+      const allInstruments = await this.getFreshInstruments();
+      const queryLower = query.toLowerCase();
+      
+      const matches = allInstruments.filter(instrument => {
+        const symbol = (instrument.tradingsymbol || '').toLowerCase();
+        const name = (instrument.name || '').toLowerCase();
+        
+        return symbol.includes(queryLower) || 
+               name.includes(queryLower) ||
+               symbol.startsWith(queryLower);
+      });
+      
+      console.log(`[TradingService] Cached search found ${matches.length} instruments for ${query}`);
+      return matches;
+      
     } catch (error) {
       console.error('Error searching instruments:', error);
       throw error;

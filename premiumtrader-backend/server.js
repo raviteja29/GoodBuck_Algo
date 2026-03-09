@@ -20,6 +20,11 @@ const __dirname = path.dirname(__filename);
 
 // In-memory cache for used request_tokens
 const usedTokens = new Set();
+// Fyers auth state tracking
+const fyersIssuedStates = new Map(); // state -> { timestamp, clientInfo }
+const fyersUsedCodes = new Set(); // prevent code reuse (persisted used)
+const fyersCodesInFlight = new Set(); // prevent concurrent exchanges
+const FYERS_STATE_TTL = 10 * 60 * 1000; // 10 minutes
 // Quote cache and ticker state
 const quoteCache = new Map(); // instrument_token -> tick with cacheTs
 const subscribedTokens = new Set();
@@ -68,7 +73,8 @@ function initTickerIfPossible(accessToken) {
   }
 }
 
-dotenv.config();
+// Load .env from parent directory (root of project)
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 console.log('Using API Key:', process.env.KITE_API_KEY);
 console.log('Using API Secret:', process.env.KITE_API_SECRET ? '***secret redacted***' : 'MISSING');
@@ -965,6 +971,44 @@ app.get('/api/instruments/cache/status', (req, res) => {
     warmed: instrumentCache.warmed,
     ttlMs: INSTRUMENT_TTL_MS
   });
+});
+
+// Fresh instruments endpoint with daily caching
+app.get('/api/instruments/fresh', async (req, res) => {
+  try {
+    const { exchange } = req.query;
+    
+    console.log(`[/api/instruments/fresh] Fetching fresh instruments${exchange ? ` for ${exchange}` : ''}`);
+    
+    // Force fresh load to ensure we get the latest instruments
+    const instruments = await loadInstruments(true, 'fresh-request');
+    
+    if (!instruments || !Array.isArray(instruments)) {
+      return res.status(500).json({ error: 'Failed to load instruments data' });
+    }
+    
+    // Filter by exchange if specified
+    let filteredInstruments = instruments;
+    if (exchange) {
+      filteredInstruments = instruments.filter(inst => 
+        inst.exchange && inst.exchange.toUpperCase() === exchange.toUpperCase()
+      );
+      console.log(`[/api/instruments/fresh] Filtered ${filteredInstruments.length} instruments for ${exchange}`);
+    }
+    
+    // Sort by tradingsymbol for consistent results
+    filteredInstruments.sort((a, b) => (a.tradingsymbol || '').localeCompare(b.tradingsymbol || ''));
+    
+    console.log(`[/api/instruments/fresh] Returning ${filteredInstruments.length} instruments`);
+    res.json(filteredInstruments);
+    
+  } catch (error) {
+    console.error('[/api/instruments/fresh] Error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch fresh instruments',
+      details: error.message 
+    });
+  }
 });
 
 // Ticker status endpoint

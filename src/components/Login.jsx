@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ShieldCheckIcon, ChartBarIcon, BoltIcon } from '@heroicons/react/24/outline'; // Updated icons
 import AuthService from '../services/AuthService';
+import { useFyersAuth } from '../hooks/useFyersAuth';
 import './Login.css';
 
 const Login = ({ onLoginSuccess }) => {
