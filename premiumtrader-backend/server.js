@@ -1144,54 +1144,28 @@ const wss = new WebSocketServer({
   server,
   path: '/ws',
   perMessageDeflate: false,
-  verifyClient: async ({ req }, done) => {
+  verifyClient: ({ req }, done) => {
     try {
-      const url = new URL(req.url, `http://${req.headers.host}`);
-      console.log('WebSocket connection attempt from:', req.socket.remoteAddress);
-      console.log('Request URL:', req.url);
-
+      // Use a fixed host for parsing the URL relative path
+      const url = new URL(req.url, 'http://localhost');
       const token = url.searchParams.get('token');
-      console.log('Token present:', !!token);
+      console.log(`[WS-HANDSHAKE] Connection attempt. Token present: ${!!token}`);
 
       if (!token) {
-        console.log('WebSocket connection rejected: No token provided');
+        console.warn('[WS-HANDSHAKE] Rejected: No token provided');
         return done(false, 401, 'Unauthorized');
       }
 
-      // Expect token in format api_key:access_token
-      const [apiKey, accessToken] = token.split(':');
-      console.log('API key present:', !!apiKey);
-      console.log('Access token present:', !!accessToken);
-
-      if (!apiKey || !accessToken) {
-        console.log('WebSocket connection rejected: Malformed public token');
+      // Basic format check (api_key:access_token)
+      if (!token.includes(':') || token.split(':').length !== 2) {
+        console.warn('[WS-HANDSHAKE] Rejected: Malformed token format');
         return done(false, 401, 'Unauthorized');
       }
-      const kc = new KiteConnect({ api_key: apiKey });
-      kc.setAccessToken(accessToken);
 
-      try {
-        console.log('Attempting to validate token with Kite API...');
-        // Use a simple method like getProfile to check if the token is valid
-        const profile = await kc.getProfile();
-        console.log('WebSocket authentication successful for user:', profile.user_id);
-        done(true);
-      } catch (error) {
-        console.log('WebSocket authentication failed:', error.message);
-        console.log('Error type:', error.error_type || 'Unknown');
-
-        if (error.message && error.message.includes('Insufficient permission')) {
-          console.log('This appears to be a permission error. Check that the API key has appropriate permissions.');
-        }
-
-        if (error.message && error.message.includes('Invalid access token')) {
-          console.log('The access token appears to be invalid or expired.');
-        }
-
-        done(false, 401, 'Unauthorized');
-      }
+      console.log('[WS-HANDSHAKE] Accepted (pending post-connect validation)');
+      done(true);
     } catch (error) {
-      console.error('Error during WebSocket authentication:', error);
+      console.error('[WS-HANDSHAKE] Error:', error);
       done(false, 500, 'Internal Server Error');
     }
   }
@@ -1224,41 +1198,69 @@ wss.on('close', () => {
 // Log WebSocket server status
 console.log('WebSocket server initialized');
 
-wss.on('connection', (ws, req) => {
-  // Generate unique ID for client
+wss.on('connection', async (ws, req) => {
   const clientId = uuidv4();
-  console.log(`New WebSocket client connected [ID: ${clientId}] from:`, req.socket.remoteAddress);
+  console.log(`[WS] Connection opened [ID: ${clientId}] from: ${req.socket.remoteAddress}`);
 
-  // Get token from URL
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  // Use a fixed host for parsing the URL relative path
+  const url = new URL(req.url, 'http://localhost');
   const token = url.searchParams.get('token');
+  const [apiKey, accessToken] = (token || '').split(':');
 
-  // Extract access token from the public token format (api_key:access_token)
-  const [, accessToken] = token.split(':');
+  if (!accessToken) {
+    console.error(`[WS] Client ${clientId} connected without valid token format. Closing.`);
+    ws.close(1008, 'Malformed token');
+    return;
+  }
 
-  // Store client info
-  clients.set(clientId, {
-    ws,
-    token: accessToken, // Store only the access token
-    subscribedTokens: new Set(),
-    lastPong: Date.now(),
-    kiteClient: new KiteConnect({ api_key: process.env.KITE_API_KEY })
-  });
+  // Set up Kite client and try to validate
+  const kc = new KiteConnect({ api_key: apiKey || process.env.KITE_API_KEY });
+  kc.setAccessToken(accessToken);
 
-  // Initialize Kite client for this connection
-  const clientInfo = clients.get(clientId);
-  clientInfo.kiteClient.setAccessToken(accessToken);
-
-  // Send immediate confirmation
   try {
+    console.log(`[WS] ID: ${clientId} Validating token...`);
+    // Validation: attempt to get profile
+    const profile = await kc.getProfile();
+    console.log(`[WS] ID: ${clientId} Auth SUCCESS (User: ${profile.user_id})`);
+
+    // Store client info
+    clients.set(clientId, {
+      ws,
+      token: accessToken,
+      subscribedTokens: new Set(),
+      lastPong: Date.now(),
+      kiteClient: kc,
+      profile
+    });
+
+    // Ensure ticker is initialized for this token if needed
+    globalLastAccessToken = accessToken;
+    initTickerIfPossible(accessToken);
+
+    // Send success results
+    ws.send(JSON.stringify({
+      type: 'auth_result',
+      success: true,
+      user_id: profile.user_id,
+      clientId
+    }));
+
     ws.send(JSON.stringify({
       type: 'connection',
       status: 'connected',
-      message: 'Successfully connected to WebSocket server',
-      clientId
+      message: 'Authenticated and connected'
     }));
-  } catch (error) {
-    console.error('Error sending connection confirmation:', error);
+
+  } catch (err) {
+    console.error(`[WS] ID: ${clientId} Auth FAILED: ${err.message}`);
+    ws.send(JSON.stringify({
+      type: 'auth_result',
+      success: false,
+      message: err.message
+    }));
+    // Close after a short delay so client gets the message
+    setTimeout(() => ws.close(1008, 'Authentication failed'), 1000);
+    return;
   }
 
   // Handle incoming messages
