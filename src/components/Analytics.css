@@ -534,8 +534,8 @@
 
 .results-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.75rem;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.25rem;
   margin-bottom: 1.5rem;
 }
 
@@ -1727,84 +1727,150 @@
   font-weight: 600;
 }
 
-.option-data-grid {
-  grid-template-columns: 1fr;
-}
+@media (max-width: 768px) {
+  .fyers-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .fyers-controls {
+    flex-direction: column;
+  }
+
+  .option-data-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
-/* GIFT NIFTY Card Styles */
-.gift-nifty-card {
-  margin-top: 1rem;
-  border-color: rgba(59, 130, 246, 0.3) !important;
-  background: linear-gradient(135deg, rgba(30, 41, 59, 0.95) 0%, rgba(15, 23, 42, 0.95) 100%) !important;
+/* GIFT NIFTY Card Refinements */
+.gift-card {
+  border-left: 4px solid #60a5fa !important;
 }
 
-.gift-nifty-card .symbol-badge {
-  font-size: 0.7rem;
-  padding: 0.2rem 0.5rem;
-  background: rgba(59, 130, 246, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  border-radius: 4px;
-  text-transform: uppercase;
+.gift-range-row {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.gift-high {
+  color: #4ade80;
+}
+
+.gift-low {
+  color: #f87171;
+}
+
+.gift-divider {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+/* Strike Selection & Editing */
+.strike-selection-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.strike-label-mini {
+  font-size: 0.65rem;
   font-weight: 700;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
 }
 
-.gift-grid {
+.strike-edit-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 1.1rem;
+  font-weight: 700;
+  padding: 0.2rem 0;
+  outline: none;
+  transition: all 0.3s ease;
+  width: 100%;
+}
+
+.strike-edit-input:focus {
+  border-bottom-color: var(--accent-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.strike-edit-input.pe {
+  color: #f87171;
+}
+
+.strike-edit-input.ce {
+  color: #4ade80;
+}
+
+.strike-details {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ltp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ltp-label {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.ltp-value {
+  font-weight: 600;
+  color: #fff;
+}
+
+/* Merged Stats Card */
+.stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
-  padding: 0.5rem 0;
+  margin-top: 1rem;
 }
 
-.gift-stat {
+.stat-unit {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
 .stat-label {
-  font-size: 0.75rem;
-  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.4);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .stat-value {
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 700;
-  color: #ffffff;
+  color: #fff;
 }
 
-.stat-value.high {
-  color: #4ade80;
-}
-
-.stat-value.low {
-  color: #f87171;
-}
-
-.full-width {
-  grid-column: 1 / -1;
-}
-
-.card-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  padding: 2rem;
-  color: rgba(255, 255, 255, 0.6);
-  font-style: italic;
-}
-
-.loading-spinner.small {
-  width: 1.25rem;
-  height: 1.25rem;
-  border: 2px solid rgba(255, 255, 255, 0.1);
-  border-top-color: var(--accent-primary);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
+.stat-desc {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 @keyframes spin {

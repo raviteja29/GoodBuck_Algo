@@ -23,8 +23,12 @@ const Analytics = () => {
   const [ceFibLevels, setCeFibLevels] = useState(null);
   const [peTimeframe, setPeTimeframe] = useState('15m');
   const [ceTimeframe, setCeTimeframe] = useState('15m');
-  const [peHma, setPeHma] = useState({ '15m': null, '1h': null, '1d': null });
   const [ceHma, setCeHma] = useState({ '15m': null, '1h': null, '1d': null });
+  const [giftNiftyHma, setGiftNiftyHma] = useState({ '15m': null, '1h': null, '1d': null });
+  const [giftNiftyFibLevels, setGiftNiftyFibLevels] = useState(null);
+  const [giftNiftyTimeframe, setGiftNiftyTimeframe] = useState('15m');
+  const [manualPeStrike, setManualPeStrike] = useState(null);
+  const [manualCeStrike, setManualCeStrike] = useState(null);
   const [peLtp, setPeLtp] = useState(null);
   const [ceLtp, setCeLtp] = useState(null);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -122,6 +126,20 @@ const Analytics = () => {
 
     setLoading(true);
     setError(null);
+    setHighLowData(null);
+    setPeOptionToken(null);
+    setCeOptionToken(null);
+    setPeFibLevels(null);
+    setCeFibLevels(null);
+    setPeLtp(null);
+    setCeLtp(null);
+    setPeHma({ '15m': null, '1h': null, '1d': null });
+    setCeHma({ '15m': null, '1h': null, '1d': null });
+    setGiftNiftyData(null);
+    setGiftNiftyFibLevels(null);
+    setGiftNiftyHma({ '15m': null, '1h': null, '1d': null });
+    setManualPeStrike(null);
+    setManualCeStrike(null);
 
     try {
       // Append market hours to dates as per Kite API requirement
@@ -151,6 +169,17 @@ const Analytics = () => {
             toDateTime
           );
           setGiftNiftyData(gnData);
+
+          // Calculate GIFT Nifty Fibonacci levels
+          if (gnData.high && gnData.low) {
+            const diff = gnData.high - gnData.low;
+            setGiftNiftyFibLevels({
+              0: gnData.low,
+              0.5: gnData.low + diff * 0.5,
+              1: gnData.high,
+              1.618: gnData.low + diff * 1.618
+            });
+          }
         } catch (gnErr) {
           console.warn('GIFT Nifty analysis failed:', gnErr.message);
         } finally {
@@ -225,8 +254,8 @@ const Analytics = () => {
 
   const { high: normalizedHigh, low: normalizedLow } = normalizeHighLow(highLowData);
   const strikeStep = getStrikeStep(selectedInstrument?.tradingsymbol);
-  const peStrike = normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null; // Put strike from High (round up)
-  const ceStrike = normalizedLow != null ? roundDownTo(normalizedLow, strikeStep) : null; // Call strike from Low (round down)
+  const peStrike = manualPeStrike || (normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null);
+  const ceStrike = manualCeStrike || (normalizedLow != null ? roundDownTo(normalizedLow, strikeStep) : null);
 
   // ================= Option Helpers (Minimal) =================
   const baseSymbolForUnderlying = (sym) => {
@@ -411,8 +440,23 @@ const Analytics = () => {
       try {
         const fromDateTime = `${fromDate} 09:15:00`;
         const toDateTime = `${toDate} 15:30:00`;
-        const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, 'day');
-        const candles = data?.candles || [];
+
+        let data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, 'day');
+        let candles = data?.candles || [];
+
+        // Fallback to 15m if day data is unavailable
+        if (!candles.length) {
+          console.log(`[FibCompute] No day candles for ${token}, trying 60minute...`);
+          data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, '60minute');
+          candles = data?.candles || [];
+        }
+
+        if (!candles.length) {
+          console.log(`[FibCompute] No 60m candles for ${token}, trying 15minute...`);
+          data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, '15minute');
+          candles = data?.candles || [];
+        }
+
         if (!candles.length) { if (!cancelled) setter(null); return; }
         let low = Infinity, high = -Infinity;
         candles.forEach(c => { if (c[3] < low) low = c[3]; if (c[2] > high) high = c[2]; });
@@ -548,6 +592,7 @@ const Analytics = () => {
 
   useEffect(() => { if (peOptionToken) fetchHMAIfNeeded(peOptionToken, peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe]);
   useEffect(() => { if (ceOptionToken) fetchHMAIfNeeded(ceOptionToken, ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe]);
+  useEffect(() => { if (giftNiftyInstrument) fetchHMAIfNeeded(giftNiftyInstrument.instrument_token, giftNiftyTimeframe, giftNiftyHma, setGiftNiftyHma); }, [giftNiftyInstrument, giftNiftyTimeframe]);
   return (
     <div className="analytics-section">
       {/* Header */}
@@ -795,189 +840,191 @@ const Analytics = () => {
               <h3 className="results-title">Analysis Results</h3>
 
               <div className="results-grid">
-                {/* High Price Card */}
-                <div className="result-card high-card">
+                {/* Index High Card (PE) */}
+                <div className="result-card pe-card">
                   <div className="card-header">
-                    <h4 className="card-title">Index high</h4>
+                    <h4 className="card-title">Index High</h4>
                     <ArrowTrendingUpIcon className="card-icon high-icon" />
                   </div>
-                  <div className="card-value high-value">
-                    ₹{normalizedHigh?.toLocaleString?.()}
+                  <div className="card-value high-value">₹{normalizedHigh?.toLocaleString?.()}</div>
+
+                  <div className="strike-selection-row">
+                    <div className="strike-label-mini">PE STRIKE</div>
+                    <input
+                      type="number"
+                      className="strike-edit-input pe"
+                      value={peStrike || ''}
+                      onChange={(e) => setManualPeStrike(Number(e.target.value))}
+                      step={strikeStep}
+                    />
                   </div>
 
-                  {peStrike && (
-                    <div className="strike-line pe-strike">
-                      <div className="strike-header">
-                        <span className="strike-label">PE Strike</span>
-                        <span className="strike-value">₹{peStrike}</span>
+                  <div className="strike-details">
+                    <div className="ltp-row">
+                      <span className="ltp-label">LTP:</span>
+                      <span className="ltp-value">₹{peLtp || '--'}</span>
+                    </div>
+                    <div className="fib-grid">
+                      <div className="fib-item">
+                        <div className="fib-label">0</div>
+                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels[0].toFixed(2)}` : '--'}</div>
                       </div>
-                      <div className="strike-controls">
-                        <div className="strike-ltp">LTP: {peLtp != null ? `₹${peLtp.toFixed(2)}` : '--'}</div>
-                        <div className="expiry-select-wrap">
-                          <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
-                            <option value="current">Current Wk</option>
-                            <option value="next">Next Wk</option>
-                          </select>
-                          <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
-                        </div>
+                      <div className="fib-item">
+                        <div className="fib-label">0.5</div>
+                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels[0.5].toFixed(2)}` : '--'}</div>
                       </div>
-                      <div className="fib-grid">
-                        <div className="fib-item">
-                          <div className="fib-label">0 (Low)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels[0].toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">0.5 (Mid)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels[0.5].toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">1 (High)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels[1].toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">1.618 (Ext)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels[1.618].toFixed(2)}` : '--'}</div>
-                        </div>
+                      <div className="fib-item">
+                        <div className="fib-label">1</div>
+                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels[1].toFixed(2)}` : '--'}</div>
                       </div>
-                      <div className="hma-row">
-                        <select className="hma-select" value={peTimeframe} onChange={e => setPeTimeframe(e.target.value)}>
-                          <option value="15m">15m</option>
-                          <option value="1h">1h</option>
-                          <option value="1d">1d</option>
-                        </select>
-                        <div className="hma-value">
-                          HMA50: {peHma[peTimeframe] != null
-                            ? peHma[peTimeframe].toFixed(2)
-                            : (peOptionToken ? 'Calculating/Insufficient Data' : '--')}
-                        </div>
+                      <div className="fib-item">
+                        <div className="fib-label">1.618</div>
+                        <div className="fib-value">{peFibLevels ? `₹${peFibLevels[1.618].toFixed(2)}` : '--'}</div>
                       </div>
                     </div>
-                  )}
+                    <div className="hma-row">
+                      <select className="hma-select" value={peTimeframe} onChange={e => setPeTimeframe(e.target.value)}>
+                        <option value="15m">15m</option>
+                        <option value="1h">1h</option>
+                        <option value="1d">1d</option>
+                      </select>
+                      <div className="hma-value">
+                        HMA50: {peHma[peTimeframe] != null
+                          ? peHma[peTimeframe].toFixed(2)
+                          : (peOptionToken ? 'Calculating...' : '--')}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                {/* Low Price Card */}
-                <div className="result-card low-card">
+                {/* Lowest Price Card (CE) */}
+                <div className="result-card ce-card">
                   <div className="card-header">
                     <h4 className="card-title">Lowest Price</h4>
                     <ArrowTrendingDownIcon className="card-icon low-icon" />
                   </div>
-                  <div className="card-value low-value">
-                    ₹{normalizedLow?.toLocaleString?.()}
+                  <div className="card-value low-value">₹{normalizedLow?.toLocaleString?.()}</div>
+
+                  <div className="strike-selection-row">
+                    <div className="strike-label-mini">CE STRIKE</div>
+                    <input
+                      type="number"
+                      className="strike-edit-input ce"
+                      value={ceStrike || ''}
+                      onChange={(e) => setManualCeStrike(Number(e.target.value))}
+                      step={strikeStep}
+                    />
                   </div>
 
-                  {ceStrike && (
-                    <div className="strike-line ce-strike">
-                      <div className="strike-header">
-                        <span className="strike-label">CE Strike</span>
-                        <span className="strike-value">₹{ceStrike}</span>
+                  <div className="strike-details">
+                    <div className="ltp-row">
+                      <span className="ltp-label">LTP:</span>
+                      <span className="ltp-value">₹{ceLtp || '--'}</span>
+                    </div>
+                    <div className="fib-grid">
+                      <div className="fib-item">
+                        <div className="fib-label">0</div>
+                        <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[0].toFixed(2)}` : '--'}</div>
                       </div>
-                      <div className="strike-controls">
-                        <div className="strike-ltp">LTP: {ceLtp != null ? `₹${ceLtp.toFixed(2)}` : '--'}</div>
-                        <div className="expiry-select-wrap">
-                          <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
-                            <option value="current">Current Wk</option>
-                            <option value="next">Next Wk</option>
-                          </select>
-                          <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
-                        </div>
+                      <div className="fib-item">
+                        <div className="fib-label">0.5</div>
+                        <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[0.5].toFixed(2)}` : '--'}</div>
                       </div>
-                      <div className="fib-grid">
-                        <div className="fib-item">
-                          <div className="fib-label">0 (Low)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[0].toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">0.5 (Mid)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[0.5].toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">1 (High)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[1].toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">1.618 (Ext)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[1.618].toFixed(2)}` : '--'}</div>
-                        </div>
+                      <div className="fib-item">
+                        <div className="fib-label">1</div>
+                        <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[1].toFixed(2)}` : '--'}</div>
                       </div>
-                      <div className="hma-row">
-                        <select className="hma-select" value={ceTimeframe} onChange={e => setCeTimeframe(e.target.value)}>
-                          <option value="15m">15m</option>
-                          <option value="1h">1h</option>
-                          <option value="1d">1d</option>
-                        </select>
-                        <div className="hma-value">
-                          HMA50: {ceHma[ceTimeframe] != null
-                            ? ceHma[ceTimeframe].toFixed(2)
-                            : (ceOptionToken ? 'Calculating/Insufficient Data' : '--')}
-                        </div>
+                      <div className="fib-item">
+                        <div className="fib-label">1.618</div>
+                        <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels[1.618].toFixed(2)}` : '--'}</div>
                       </div>
                     </div>
-                  )}
-                </div>
-
-                {/* Range Card */}
-                <div className="result-card range-card">
-                  <div className="card-header">
-                    <h4 className="card-title">Price Range</h4>
-                    <ChartBarIcon className="card-icon range-icon" />
-                  </div>
-                  <div className="card-value range-value">
-                    ₹{(highLowData.high - highLowData.low).toLocaleString()}
-                  </div>
-                  <div className="card-subtitle">
-                    {(((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)}% variation
+                    <div className="hma-row">
+                      <select className="hma-select" value={ceTimeframe} onChange={e => setCeTimeframe(e.target.value)}>
+                        <option value="15m">15m</option>
+                        <option value="1h">1h</option>
+                        <option value="1d">1d</option>
+                      </select>
+                      <div className="hma-value">
+                        HMA50: {ceHma[ceTimeframe] != null
+                          ? ceHma[ceTimeframe].toFixed(2)
+                          : (ceOptionToken ? 'Calculating...' : '--')}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                {/* Data Points Card */}
-                <div className="result-card data-card">
+                {/* GIFT NIFTY Card (Repositioned) */}
+                {(giftNiftyData || giftNiftyLoading) && (
+                  <div className="result-card gift-card">
+                    <div className="card-header">
+                      <h4 className="card-title">GIFT NIFTY</h4>
+                      <div className="symbol-badge">NSEIX</div>
+                    </div>
+                    {giftNiftyLoading ? (
+                      <div className="card-loading">Analyzing...</div>
+                    ) : (
+                      <div className="strike-details">
+                        <div className="gift-range-row">
+                          <span className="gift-high">H: ₹{giftNiftyData.high?.toLocaleString()}</span>
+                          <span className="gift-divider">|</span>
+                          <span className="gift-low">L: ₹{giftNiftyData.low?.toLocaleString()}</span>
+                        </div>
+                        <div className="fib-grid">
+                          <div className="fib-item">
+                            <div className="fib-label">0</div>
+                            <div className="fib-value">{giftNiftyFibLevels ? `₹${giftNiftyFibLevels[0].toFixed(2)}` : '--'}</div>
+                          </div>
+                          <div className="fib-item">
+                            <div className="fib-label">0.5</div>
+                            <div className="fib-value">{giftNiftyFibLevels ? `₹${giftNiftyFibLevels[0.5].toFixed(2)}` : '--'}</div>
+                          </div>
+                          <div className="fib-item">
+                            <div className="fib-label">1</div>
+                            <div className="fib-value">{giftNiftyFibLevels ? `₹${giftNiftyFibLevels[1].toFixed(2)}` : '--'}</div>
+                          </div>
+                          <div className="fib-item">
+                            <div className="fib-label">1.618</div>
+                            <div className="fib-value">{giftNiftyFibLevels ? `₹${giftNiftyFibLevels[1.618].toFixed(2)}` : '--'}</div>
+                          </div>
+                        </div>
+                        <div className="hma-row">
+                          <select className="hma-select" value={giftNiftyTimeframe} onChange={e => setGiftNiftyTimeframe(e.target.value)}>
+                            <option value="15m">15m</option>
+                            <option value="1h">1h</option>
+                            <option value="1d">1d</option>
+                          </select>
+                          <div className="hma-value">
+                            HMA50: {giftNiftyHma[giftNiftyTimeframe] != null
+                              ? giftNiftyHma[giftNiftyTimeframe].toFixed(2)
+                              : 'Calculating...'}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Merged Stats Card */}
+                <div className="result-card stats-card">
                   <div className="card-header">
-                    <h4 className="card-title">Data Points</h4>
-                    <ClockIcon className="card-icon data-icon" />
+                    <h4 className="card-title">Market Stats</h4>
+                    <InformationCircleIcon className="card-icon stats-icon" />
                   </div>
-                  <div className="card-value data-value">
-                    {highLowData.dataPoints}
-                  </div>
-                  <div className="card-subtitle">
-                    Trading days analyzed
+                  <div className="stats-grid">
+                    <div className="stat-unit">
+                      <span className="stat-label">Range</span>
+                      <span className="stat-value">₹{(highLowData.high - highLowData.low).toLocaleString()}</span>
+                      <span className="stat-desc">{(((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)}% variation</span>
+                    </div>
+                    <div className="stat-unit">
+                      <span className="stat-label">Days</span>
+                      <span className="stat-value">{highLowData.dataPoints}</span>
+                      <span className="stat-desc">Trading sessions</span>
+                    </div>
                   </div>
                 </div>
               </div>
-
-              {/* GIFT NIFTY Card */}
-              {(giftNiftyData || giftNiftyLoading) && (
-                <div className="result-card gift-nifty-card full-width">
-                  <div className="card-header">
-                    <h4 className="card-title">GIFT NIFTY Analysis</h4>
-                    <div className="symbol-badge">NSEIX</div>
-                  </div>
-                  {giftNiftyLoading ? (
-                    <div className="card-loading">
-                      <div className="loading-spinner small"></div>
-                      Analyzing GIFT NIFTY...
-                    </div>
-                  ) : (
-                    <div className="gift-grid">
-                      <div className="gift-stat">
-                        <span className="stat-label">High</span>
-                        <span className="stat-value high">₹{giftNiftyData?.high?.toLocaleString()}</span>
-                      </div>
-                      <div className="gift-stat">
-                        <span className="stat-label">Low</span>
-                        <span className="stat-value low">₹{giftNiftyData?.low?.toLocaleString()}</span>
-                      </div>
-                      <div className="gift-stat">
-                        <span className="stat-label">Range</span>
-                        <span className="stat-value">₹{((giftNiftyData?.high || 0) - (giftNiftyData?.low || 0)).toLocaleString()}</span>
-                      </div>
-                      <div className="gift-stat">
-                        <span className="stat-label">Days</span>
-                        <span className="stat-value">{giftNiftyData?.dataPoints}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* Summary Info */}
               <div className="results-summary">
