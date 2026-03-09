@@ -1,9 +1,8 @@
 // src/App.jsx
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import Login from './components/Login-new';
+import Login from './components/Login';
 import AuthCallback from './components/AuthCallback';
-import SimpleLoginTest from './components/SimpleLoginTest';
 import Dashboard from './components/layout/Dashboard';
 import WebSocketDebugger from './components/WebSocketDebugger';
 import AuthService from './services/AuthService';
@@ -145,10 +144,6 @@ function App() {
           }
         />
 
-        <Route
-          path="/simple-login-test"
-          element={<SimpleLoginTest />}
-        />
         <Route
           path="/dashboard"
           element={
