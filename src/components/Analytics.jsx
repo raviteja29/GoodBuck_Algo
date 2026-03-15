@@ -580,6 +580,17 @@ const Analytics = () => {
                         >
                           BANK NIFTY
                         </button>
+                        <button
+                          className="quick-btn"
+                          onClick={() => handleInstrumentSelect({
+                            tradingsymbol: 'GIFT NIFTY',
+                            name: 'Gift Nifty',
+                            exchange: 'NSEIX',
+                            instrument_token: '291849'
+                          })}
+                        >
+                          GIFT NIFTY
+                        </button>
                       </div>
                     </div>
                     <div className="panel-block tips-block">
