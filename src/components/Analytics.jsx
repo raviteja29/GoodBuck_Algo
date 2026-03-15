@@ -651,7 +651,24 @@ const Analytics = () => {
                         <input
                           type="date"
                           value={fromDate}
-                          onChange={(e) => setFromDate(e.target.value)}
+                          onChange={(e) => {
+                            const newFromDate = e.target.value;
+                            setFromDate(newFromDate);
+                            if (newFromDate) {
+                              const fromDateObj = new Date(newFromDate);
+                              const newToDateObj = new Date(fromDateObj);
+                              newToDateObj.setDate(newToDateObj.getDate() + 7);
+
+                              const maxDate = new Date();
+                              maxDate.setDate(maxDate.getDate() - 2);
+
+                              if (newToDateObj > maxDate) {
+                                setToDate(maxDate.toISOString().split('T')[0]);
+                              } else {
+                                setToDate(newToDateObj.toISOString().split('T')[0]);
+                              }
+                            }
+                          }}
                           className="date-input compact"
                           max={(() => {
                             const maxDate = new Date();
