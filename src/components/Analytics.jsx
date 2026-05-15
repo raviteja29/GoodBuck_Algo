@@ -681,7 +681,7 @@ const Analytics = () => {
                             if (newFromDate) {
                               const fromDateObj = new Date(newFromDate);
                               const newToDateObj = new Date(fromDateObj);
-                              newToDateObj.setDate(newToDateObj.getDate() + 6);
+                              newToDateObj.setDate(newToDateObj.getDate() + 7);
 
                               const maxDate = new Date();
                               maxDate.setDate(maxDate.getDate() - 2);
