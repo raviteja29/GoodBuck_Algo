@@ -198,6 +198,37 @@ function getAccessToken(req) {
   return req.query.access_token;
 }
 
+function normalizeHistoricalPayload(data) {
+  const source = Array.isArray(data) ? data : (Array.isArray(data?.candles) ? data.candles : []);
+  const candles = source
+    .map(candle => {
+      if (Array.isArray(candle)) {
+        const rawTime = candle[0];
+        const epoch = typeof rawTime === 'number'
+          ? rawTime
+          : Math.floor(new Date(rawTime).getTime() / 1000);
+        return [epoch, candle[1], candle[2], candle[3], candle[4], candle[5]];
+      }
+
+      if (candle && typeof candle === 'object') {
+        const epoch = Math.floor(new Date(candle.date || candle.timestamp).getTime() / 1000);
+        return [epoch, candle.open, candle.high, candle.low, candle.close, candle.volume];
+      }
+
+      return null;
+    })
+    .filter(Boolean)
+    .filter(candle => Number.isFinite(candle[0]));
+
+  return { candles, rawCount: source.length };
+}
+
+async function getInstrumentByTokenFromCache(token) {
+  const tokenString = String(token);
+  const list = await loadInstruments(false, 'token-lookup');
+  return list.find(inst => String(inst.instrument_token) === tokenString);
+}
+
 // Proxy route for user profile
 app.get('/api/profile', async (req, res) => {
   try {
@@ -413,7 +444,14 @@ app.get('/api/historical/:instrumentToken/:interval', async (req, res) => {
         params.oi = oi === '1' || oi === 'true';
       }
       const data = await kc.getHistoricalData(instrumentToken, interval, params.from, params.to, params.continuous, params.oi);
-      res.json(data);
+      const normalized = normalizeHistoricalPayload(data);
+      res.json({
+        ...normalized,
+        interval,
+        instrumentToken,
+        from: params.from,
+        to: params.to
+      });
     } catch (apiErr) {
       console.error('[HISTORICAL] Error from KiteConnect:', apiErr);
       res.status(500).json({ error: apiErr.message, details: apiErr });
@@ -557,16 +595,23 @@ app.get('/api/historical', async (req, res) => {
 
       // Call KiteConnect method with all parameters
       const data = await kc.getHistoricalData(instrumentToken, interval, params.from, params.to, params.continuous, params.oi);
+      const normalized = normalizeHistoricalPayload(data);
 
       console.log('[HISTORICAL-COMPAT] Data fetched:', {
         hasData: !!data,
-        hasCandlesArray: Array.isArray(data.candles),
-        candlesCount: data.candles ? data.candles.length : 0,
-        sampleCandle: data.candles && data.candles[0] ? data.candles[0] : null,
-        includesOI: params.oi && data.candles && data.candles[0] ? data.candles[0].length === 7 : false
+        isDirectArray: Array.isArray(data),
+        candlesCount: normalized.candles.length,
+        sampleCandle: normalized.candles[0] || null,
+        includesOI: params.oi && normalized.candles[0] ? normalized.candles[0].length === 7 : false
       });
 
-      res.json(data);
+      res.json({
+        ...normalized,
+        interval,
+        instrumentToken,
+        from: params.from,
+        to: params.to
+      });
     } catch (apiErr) {
       console.error('[HISTORICAL-COMPAT] Error from KiteConnect:', apiErr);
       res.status(500).json({ error: apiErr.message, details: apiErr });
@@ -902,13 +947,19 @@ app.get('/api/quote', async (req, res) => {
     if (cached && (Date.now() - cached.cacheTs) < freshWindow) {
       return res.json({ source: 'cache', quote: cached });
     }
+    const instrument = await getInstrumentByTokenFromCache(instrumentToken);
+    if (!instrument) {
+      return res.status(404).json({ error: `Instrument not found for token ${instrumentToken}` });
+    }
+
+    const kiteSymbol = `${instrument.exchange}:${instrument.tradingsymbol}`;
     const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
     kc.setAccessToken(access_token);
     try {
-      const q = await kc.getQuote([instrumentToken]);
-      const data = q[instrumentToken];
+      const q = await kc.getQuote([kiteSymbol]);
+      const data = q[kiteSymbol] || q[instrument.tradingsymbol] || q[instrumentToken];
       if (data) quoteCache.set(instrumentToken, { ...data, cacheTs: Date.now() });
-      return res.json({ source: 'api', quote: data || null });
+      return res.json({ source: 'api', symbol: kiteSymbol, quote: data || null });
     } catch (e) {
       if (cached) return res.json({ source: 'stale-cache', quote: cached, warning: e.message });
       return res.status(500).json({ error: e.message });
@@ -1333,4 +1384,3 @@ server.listen(port, '0.0.0.0', () => {
   // Warm instrument cache in background (non-blocking)
   loadInstruments(false, 'warm-start').catch(e => console.warn('[INSTRUMENTS] Warm load failed:', e.message));
 });
-
