@@ -782,7 +782,7 @@ const Analytics = () => {
                         <span className="strike-value">₹{peStrike}</span>
                       </div>
                       <div className="strike-controls">
-                        <div className="strike-ltp">LTP: {peLtp != null ? `₹${peLtp.toFixed(2)}` : '--'}</div>
+                        <div className="strike-ltp">LTP: {typeof peLtp === 'number' ? `₹${peLtp.toFixed(2)}` : '--'}</div>
                         <div className="expiry-select-wrap">
                           <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
                             <option value="current">Current Wk</option>
@@ -794,19 +794,19 @@ const Analytics = () => {
                       <div className="fib-grid">
                         <div className="fib-item">
                           <div className="fib-label">0 (Low)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.low.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{peFibLevels && typeof peFibLevels.low === 'number' ? `₹${peFibLevels.low.toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">0.5 (Mid)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.mid.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{peFibLevels && typeof peFibLevels.mid === 'number' ? `₹${peFibLevels.mid.toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">1 (High)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.high.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{peFibLevels && typeof peFibLevels.high === 'number' ? `₹${peFibLevels.high.toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">1.618 (Ext)</div>
-                          <div className="fib-value">{peFibLevels ? `₹${peFibLevels.ext.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{peFibLevels && typeof peFibLevels.ext === 'number' ? `₹${peFibLevels.ext.toFixed(2)}` : '--'}</div>
                         </div>
                       </div>
                       <div className="hma-row">
@@ -815,7 +815,7 @@ const Analytics = () => {
                           <option value="1h">1h</option>
                           <option value="1d">1d</option>
                         </select>
-                        <div className="hma-value">HMA50: {peHma[peTimeframe] != null ? peHma[peTimeframe].toFixed(2) : '--'}</div>
+                        <div className="hma-value">HMA50: {typeof peHma[peTimeframe] === 'number' ? peHma[peTimeframe].toFixed(2) : '--'}</div>
                       </div>
                     </div>
                   )}
@@ -838,7 +838,7 @@ const Analytics = () => {
                         <span className="strike-value">₹{ceStrike}</span>
                       </div>
                       <div className="strike-controls">
-                        <div className="strike-ltp">LTP: {ceLtp != null ? `₹${ceLtp.toFixed(2)}` : '--'}</div>
+                        <div className="strike-ltp">LTP: {typeof ceLtp === 'number' ? `₹${ceLtp.toFixed(2)}` : '--'}</div>
                         <div className="expiry-select-wrap">
                           <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
                             <option value="current">Current Wk</option>
@@ -850,19 +850,19 @@ const Analytics = () => {
                       <div className="fib-grid">
                         <div className="fib-item">
                           <div className="fib-label">0 (Low)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.low.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.low === 'number' ? `₹${ceFibLevels.low.toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">0.5 (Mid)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.mid.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.mid === 'number' ? `₹${ceFibLevels.mid.toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">1 (High)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.high.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.high === 'number' ? `₹${ceFibLevels.high.toFixed(2)}` : '--'}</div>
                         </div>
                         <div className="fib-item">
                           <div className="fib-label">1.618 (Ext)</div>
-                          <div className="fib-value">{ceFibLevels ? `₹${ceFibLevels.ext.toFixed(2)}` : '--'}</div>
+                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.ext === 'number' ? `₹${ceFibLevels.ext.toFixed(2)}` : '--'}</div>
                         </div>
                       </div>
                       <div className="hma-row">
@@ -871,7 +871,7 @@ const Analytics = () => {
                           <option value="1h">1h</option>
                           <option value="1d">1d</option>
                         </select>
-                        <div className="hma-value">HMA50: {ceHma[ceTimeframe] != null ? ceHma[ceTimeframe].toFixed(2) : '--'}</div>
+                        <div className="hma-value">HMA50: {typeof ceHma[ceTimeframe] === 'number' ? ceHma[ceTimeframe].toFixed(2) : '--'}</div>
                       </div>
                     </div>
                   )}
@@ -887,7 +887,9 @@ const Analytics = () => {
                     ₹{(highLowData.high - highLowData.low).toLocaleString()}
                   </div>
                   <div className="card-subtitle">
-                    {(((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)}% variation
+                    {(typeof highLowData.high === 'number' && typeof highLowData.low === 'number' && highLowData.low !== 0)
+                      ? (((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)
+                      : '--'}% variation
                   </div>
                 </div>
 
@@ -918,7 +920,9 @@ const Analytics = () => {
                     </p>
                     <p>
                       The price range represents a{' '}
-                      <strong>{(((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)}%</strong> variation
+                      <strong>{(typeof highLowData.high === 'number' && typeof highLowData.low === 'number' && highLowData.low !== 0)
+                        ? (((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)
+                        : '--'}%</strong> variation
                       over <strong>{duration} calendar days</strong> with <strong>{highLowData.dataPoints}</strong> trading sessions.
                     </p>
                   </div>
