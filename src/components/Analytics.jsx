@@ -27,6 +27,8 @@ const Analytics = () => {
   const [ceHma, setCeHma] = useState({ '15m': null, '1h': null, '1d': null });
   const [peLtp, setPeLtp] = useState(null);
   const [ceLtp, setCeLtp] = useState(null);
+  const [peLastClose, setPeLastClose] = useState(null);
+  const [ceLastClose, setCeLastClose] = useState(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugInfo, setDebugInfo] = useState({ pe: { candidates: [], resolved: null }, ce: { candidates: [], resolved: null } });
   const peSubscribed = useRef(false);
@@ -35,15 +37,15 @@ const Analytics = () => {
   // Set default dates to a week ago (more likely to have data)
   const getDefaultDates = () => {
     const today = new Date();
-    const oneWeekAgo = new Date();
+    const endOfWeek = new Date();
     const twoWeeksAgo = new Date();
 
-    oneWeekAgo.setDate(today.getDate() - 7);
+    endOfWeek.setDate(today.getDate() - 8);
     twoWeeksAgo.setDate(today.getDate() - 14);
 
     return {
       from: twoWeeksAgo.toISOString().split('T')[0],
-      to: oneWeekAgo.toISOString().split('T')[0]
+      to: endOfWeek.toISOString().split('T')[0]
     };
   };
 
@@ -238,15 +240,19 @@ const Analytics = () => {
     const mmm = expiryDate.toLocaleString('en-GB', { month: 'short' }).toUpperCase();
     const yy = String(expiryDate.getFullYear()).slice(-2);
     const monthNum = String(expiryDate.getMonth() + 1).padStart(2, '0');
-    const yearFull = expiryDate.getFullYear();
+    const kiteMonthCode = expiryDate.getMonth() + 1 <= 9
+      ? String(expiryDate.getMonth() + 1)
+      : ({ 10: 'O', 11: 'N', 12: 'D' }[expiryDate.getMonth() + 1]);
 
     // Candidate formats (descending likelihood):
+    // 0. Kite weekly format: BASE + YY + month-code + DD + strike + type (NIFTY2651924500PE)
     // 1. Weekly full: BASE + DD + MMM + YY + strike + type  (NIFTY30SEP25 24500 CE => NIFTY30SEP2524500CE)
     // 2. Weekly no year: BASE + DD + MMM + strike + type    (NIFTY30SEP24500CE)
     // 3. Compact year first two digits + strike + type? (Legacy examples like NIFTY159500CE appear to be year(15)+strike+type NO month) -> BASE + YY + strike + type
     // 4. Monthly style: BASE + MMM + YY + strike + type      (NIFTYSEP2524500CE)
     // 5. Alt numeric date: BASE + DD + MM + YY + strike + type (NIFTY30092524500CE)
     const candidates = [
+      `${base}${yy}${kiteMonthCode}${dd}${strikeStr}${type}`,
       `${base}${dd}${mmm}${yy}${strikeStr}${type}`,
       `${base}${dd}${mmm}${strikeStr}${type}`,
       `${base}${yy}${strikeStr}${type}`,
@@ -272,6 +278,7 @@ const Analytics = () => {
       setPeFibLevels(null); setCeFibLevels(null);
       peSubscribed.current = false; ceSubscribed.current = false;
       setPeLtp(null); setCeLtp(null);
+      setPeLastClose(null); setCeLastClose(null);
       if (!selectedInstrument || !peStrike || !ceStrike) return;
       const under = selectedInstrument.tradingsymbol;
       // Capture expiry context for this resolution cycle
@@ -363,7 +370,7 @@ const Analytics = () => {
   const fibCacheRef = useRef({}); // key: token|fromDate|toDate
   useEffect(() => {
     let cancelled = false;
-    async function computeFib(token, setter) {
+    async function computeFib(token, setter, lastCloseSetter) {
       if (!token || !fromDate || !toDate) return;
       const key = `${token}|${fromDate}|${toDate}`;
       if (fibCacheRef.current[key]) { setter(fibCacheRef.current[key]); return; }
@@ -373,6 +380,7 @@ const Analytics = () => {
         const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, 'day');
         const candles = data?.candles || [];
         if (!candles.length) { if (!cancelled) setter(null); return; }
+        if (!cancelled) lastCloseSetter(candles[candles.length - 1]?.[4] ?? null);
         let low = Infinity, high = -Infinity;
         candles.forEach(c => { if (c[3] < low) low = c[3]; if (c[2] > high) high = c[2]; });
         if (low === Infinity || high === -Infinity) { if (!cancelled) setter(null); return; }
@@ -384,8 +392,8 @@ const Analytics = () => {
         console.warn('Fib fetch failed', e.message);
       }
     }
-    if (peOptionToken && !peFibLevels) computeFib(peOptionToken, setPeFibLevels);
-    if (ceOptionToken && !ceFibLevels) computeFib(ceOptionToken, setCeFibLevels);
+    if (peOptionToken && !peFibLevels) computeFib(peOptionToken, setPeFibLevels, setPeLastClose);
+    if (ceOptionToken && !ceFibLevels) computeFib(ceOptionToken, setCeFibLevels, setCeLastClose);
     return () => { cancelled = true; };
   }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate]);
 
@@ -499,6 +507,11 @@ const Analytics = () => {
       const interval = timeframeToInterval[timeframe];
       const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, interval);
       const candles = data?.candles || [];
+      if (candles.length) {
+        const lastClose = candles[candles.length - 1]?.[4] ?? null;
+        if (token === peOptionToken) setPeLastClose(lastClose);
+        if (token === ceOptionToken) setCeLastClose(lastClose);
+      }
       const closes = candles.map(c => c[4]);
       const hmaVal = computeHMA(closes, 50);
       setStateObj(prev => ({ ...prev, [timeframe]: hmaVal }));
@@ -782,7 +795,9 @@ const Analytics = () => {
                         <span className="strike-value">₹{peStrike}</span>
                       </div>
                       <div className="strike-controls">
-                        <div className="strike-ltp">LTP: {peLtp != null ? `₹${peLtp.toFixed(2)}` : '--'}</div>
+                        <div className="strike-ltp">
+                          {peLtp != null ? `Live LTP: ₹${peLtp.toFixed(2)}` : peLastClose != null ? `Last close: ₹${peLastClose.toFixed(2)}` : 'LTP: --'}
+                        </div>
                         <div className="expiry-select-wrap">
                           <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
                             <option value="current">Current Wk</option>
@@ -838,7 +853,9 @@ const Analytics = () => {
                         <span className="strike-value">₹{ceStrike}</span>
                       </div>
                       <div className="strike-controls">
-                        <div className="strike-ltp">LTP: {ceLtp != null ? `₹${ceLtp.toFixed(2)}` : '--'}</div>
+                        <div className="strike-ltp">
+                          {ceLtp != null ? `Live LTP: ₹${ceLtp.toFixed(2)}` : ceLastClose != null ? `Last close: ₹${ceLastClose.toFixed(2)}` : 'LTP: --'}
+                        </div>
                         <div className="expiry-select-wrap">
                           <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
                             <option value="current">Current Wk</option>
@@ -891,10 +908,10 @@ const Analytics = () => {
                   </div>
                 </div>
 
-                {/* Data Points Card */}
+                {/* Trading Days Card */}
                 <div className="result-card data-card">
                   <div className="card-header">
-                    <h4 className="card-title">Data Points</h4>
+                    <h4 className="card-title">Trading Days</h4>
                     <ClockIcon className="card-icon data-icon" />
                   </div>
                   <div className="card-value data-value">
