@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon,
@@ -24,6 +24,8 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   const [margins, setMargins] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
+  const lastTickAtRef = useRef(0);
+  const positionsRef = useRef([]);
 
   // Helper functions to extract margin values from different possible API structures
   const getAvailableMargin = (margins) => {
@@ -76,6 +78,64 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
       return TradingService.mergeTicksAndRecalculatePnL([...currentPositions], ticks);
     });
   }, [positions.length]);
+
+  const applyTickUpdates = useCallback((ticks) => {
+    if (!ticks || !Array.isArray(ticks) || ticks.length === 0) return;
+
+    lastTickAtRef.current = Date.now();
+
+    setRealTimeData(prev => {
+      const updates = {};
+      ticks.forEach(tick => {
+        const token = Number(tick?.instrument_token);
+        const ltp = Number(tick?.last_price);
+        if (!Number.isFinite(token) || !Number.isFinite(ltp)) return;
+
+        updates[token] = {
+          ltp,
+          change: tick.change ||
+            ((ltp && tick.ohlc && tick.ohlc.open) ?
+              ((ltp - tick.ohlc.open) / tick.ohlc.open * 100).toFixed(2) + '%' :
+              '0%'),
+          volume: tick.volume || 0
+        };
+      });
+      return Object.keys(updates).length ? { ...prev, ...updates } : prev;
+    });
+
+    updatePositionsWithRealTimeData(ticks);
+  }, [updatePositionsWithRealTimeData]);
+
+  const pollPositionQuotes = useCallback(async () => {
+    const tokens = Array.from(new Set(
+      positionsRef.current
+        .filter(pos => Number(pos?.instrument_token))
+        .map(pos => Number(pos.instrument_token))
+    ));
+
+    if (!tokens.length) return;
+
+    try {
+      const quotes = await TradingService.getQuotes(tokens);
+      const ticks = Object.entries(quotes || {})
+        .map(([token, quote]) => ({
+          instrument_token: Number(token),
+          last_price: Number(quote?.last_price),
+          ohlc: quote?.ohlc,
+          volume: quote?.volume,
+          timestamp: new Date()
+        }))
+        .filter(tick => Number.isFinite(tick.instrument_token) && Number.isFinite(tick.last_price));
+
+      applyTickUpdates(ticks);
+    } catch (error) {
+      console.warn('[DashboardGrid] Position quote polling failed:', error.message);
+    }
+  }, [applyTickUpdates]);
+
+  useEffect(() => {
+    positionsRef.current = positions;
+  }, [positions]);
 
   // Fetch positions and orders data on component mount
   useEffect(() => {
@@ -159,34 +219,28 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
     console.log('Setting up real-time tick subscription');
     
     // Subscribe to real-time ticks
-    const unsubscribe = TradingService.subscribeToTicks(ticks => {
-      // Update real-time data state
-      setRealTimeData(prev => {
-        const updates = {};
-        ticks.forEach(tick => {
-          if (!tick || !tick.instrument_token) return;
-          
-          updates[tick.instrument_token] = {
-            ltp: tick.last_price,
-            change: tick.change || 
-              ((tick.last_price && tick.ohlc && tick.ohlc.open) ? 
-                ((tick.last_price - tick.ohlc.open) / tick.ohlc.open * 100).toFixed(2) + '%' : 
-                '0%'),
-            volume: tick.volume || 0
-          };
-        });
-        return { ...prev, ...updates };
-      });
-      
-      // Update positions with real-time data
-      updatePositionsWithRealTimeData(ticks);
-    });
+    const unsubscribe = TradingService.subscribeToTicks(applyTickUpdates);
 
     return () => {
       console.log('Cleaning up real-time tick subscription');
       unsubscribe();
     };
-  }, [updatePositionsWithRealTimeData]);
+  }, [applyTickUpdates]);
+
+  useEffect(() => {
+    if (!positions.length) return undefined;
+
+    pollPositionQuotes();
+
+    const intervalId = setInterval(() => {
+      const tickIsStale = !lastTickAtRef.current || Date.now() - lastTickAtRef.current > 5000;
+      if (connectionStatus !== 'connected' || tickIsStale) {
+        pollPositionQuotes();
+      }
+    }, 3000);
+
+    return () => clearInterval(intervalId);
+  }, [positions.length, connectionStatus, pollPositionQuotes]);
 
   // Calculate total P&L from positions
   // Try different P&L fields that Kite API might use

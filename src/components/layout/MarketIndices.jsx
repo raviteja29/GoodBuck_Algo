@@ -14,6 +14,8 @@ const MarketIndices = ({ className = "" }) => {
   const [updatedIndex, setUpdatedIndex] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const timeoutRef = useRef(null);
+  const lastTickAtRef = useRef(0);
+  const connectionStatusRef = useRef(tradingService.getConnectionStatus());
   const previousValues = useRef({});
 
   // Market indices token mapping
@@ -32,7 +34,7 @@ const MarketIndices = ({ className = "" }) => {
     };
 
     // Initial data fetch
-    const fetchIndices = async () => {
+    const fetchIndices = async (silent = false) => {
       try {
         console.log('[MarketIndices] Initial fetch of market indices...');
         const data = await tradingService.getMarketIndices();
@@ -48,12 +50,16 @@ const MarketIndices = ({ className = "" }) => {
         });
       } catch (err) {
         console.error('Error fetching initial market indices:', err);
-        setError('Unable to fetch market data. Please check your connection and login status.');
+        if (!silent) setError('Unable to fetch market data. Please check your connection and login status.');
         setLoading(false);
       }
     };
 
     fetchIndices();
+
+    const unsubscribeStatus = tradingService.onConnectionStatusChange(status => {
+      connectionStatusRef.current = status;
+    });
 
     // Subscribe to real-time market data for instant updates
     console.log('[MarketIndices] Setting up real-time subscriptions...');
@@ -72,13 +78,15 @@ const MarketIndices = ({ className = "" }) => {
       const updates = {};
 
       ticks.forEach(tick => {
-        if (!tick || !tick.instrument_token) return;
+        const token = Number(tick?.instrument_token);
+        if (!Number.isFinite(token)) return;
         
-        const indexKey = indicesTokens[tick.instrument_token];
+        const indexKey = indicesTokens[token];
         if (!indexKey) return;
 
         // Calculate change percentage
-        const currentPrice = tick.last_price;
+        const currentPrice = Number(tick.last_price);
+        if (!Number.isFinite(currentPrice)) return;
         const previousClose = tick.ohlc?.close || currentPrice;
         const change = currentPrice - previousClose;
         const changePercent = previousClose !== 0 ? (change / previousClose * 100) : 0;
@@ -113,6 +121,7 @@ const MarketIndices = ({ className = "" }) => {
       });
 
       if (hasUpdates) {
+        lastTickAtRef.current = Date.now();
         console.log('[MarketIndices] Applying real-time updates:', updates);
         setIndices(prev => ({ ...prev, ...updates }));
         setLastUpdated(new Date());
@@ -120,9 +129,18 @@ const MarketIndices = ({ className = "" }) => {
       }
     });
 
+    const pollInterval = setInterval(() => {
+      const tickIsStale = !lastTickAtRef.current || Date.now() - lastTickAtRef.current > 5000;
+      if (connectionStatusRef.current !== 'connected' || tickIsStale) {
+        fetchIndices(true);
+      }
+    }, 3000);
+
     return () => {
       console.log('[MarketIndices] Cleaning up subscriptions...');
       unsubscribe();
+      unsubscribeStatus();
+      clearInterval(pollInterval);
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }

@@ -387,29 +387,45 @@ const Analytics = () => {
       try {
         if (peOptionToken) {
           const q = await TradingService.getQuote(peOptionToken);
-          if (!cancelled && q?.last_price != null) setPeLtp(q.last_price);
+          const price = Number(q?.last_price);
+          if (!cancelled && Number.isFinite(price)) {
+            setPeLtp(price);
+            applyLiveTickToHma('PE', peTimeframeRef.current, price, new Date());
+          }
         }
         if (ceOptionToken) {
           const q = await TradingService.getQuote(ceOptionToken);
-          if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
+          const price = Number(q?.last_price);
+          if (!cancelled && Number.isFinite(price)) {
+            setCeLtp(price);
+            applyLiveTickToHma('CE', ceTimeframeRef.current, price, new Date());
+          }
         }
       } catch (err) { console.warn('Initial option quote fetch failed', err.message); }
       pollRef.current = setInterval(async () => {
         const now = Date.now();
-        const needPe = peOptionToken && (!lastTickRef.current.pe || now - lastTickRef.current.pe > 20000);
-        const needCe = ceOptionToken && (!lastTickRef.current.ce || now - lastTickRef.current.ce > 20000);
+        const needPe = peOptionToken && (!lastTickRef.current.pe || now - lastTickRef.current.pe > 5000);
+        const needCe = ceOptionToken && (!lastTickRef.current.ce || now - lastTickRef.current.ce > 5000);
         if (!needPe && !needCe) return;
         try {
           if (needPe) {
             const q = await TradingService.getQuote(peOptionToken);
-            if (!cancelled && q?.last_price != null) setPeLtp(q.last_price);
+            const price = Number(q?.last_price);
+            if (!cancelled && Number.isFinite(price)) {
+              setPeLtp(price);
+              applyLiveTickToHma('PE', peTimeframeRef.current, price, new Date());
+            }
           }
           if (needCe) {
             const q = await TradingService.getQuote(ceOptionToken);
-            if (!cancelled && q?.last_price != null) setCeLtp(q.last_price);
+            const price = Number(q?.last_price);
+            if (!cancelled && Number.isFinite(price)) {
+              setCeLtp(price);
+              applyLiveTickToHma('CE', ceTimeframeRef.current, price, new Date());
+            }
           }
         } catch (e) { console.warn('Polling option quote failed', e.message); }
-      }, 15000);
+      }, 3000);
     })();
     return () => { cancelled = true; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   }, [peOptionToken, ceOptionToken]);
