@@ -244,8 +244,8 @@ const Analytics = () => {
     : false;
 
   const { high: normalizedHigh, low: normalizedLow } = normalizeHighLow(highLowData);
-  const normalizedMid = Number.isFinite(Number(normalizedHigh)) && Number.isFinite(Number(normalizedLow))
-    ? (Number(normalizedHigh) + Number(normalizedLow)) / 2
+  const normalizedMid = (typeof normalizedHigh === 'number' && typeof normalizedLow === 'number')
+    ? (normalizedHigh + normalizedLow) / 2
     : null;
   const strikeStep = getStrikeStep(selectedInstrument?.tradingsymbol);
   const peStrike = isOptionEligibleInstrument && normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null; // Put strike from High (round up)
@@ -256,67 +256,66 @@ const Analytics = () => {
       title: 'Index High',
       value: normalizedHigh,
       strike: isOptionEligibleInstrument && normalizedHigh != null ? roundUpTo(Number(normalizedHigh), strikeStep) : null,
-      cardClass: 'high-card',
-      valueClass: 'high-value',
-      Icon: ArrowTrendingUpIcon,
-      iconClass: 'high-icon'
-    },
-    {
-      key: 'mid',
-      title: 'Index Mid',
-      value: normalizedMid,
-      strike: isOptionEligibleInstrument && normalizedMid != null ? roundNearestTo(Number(normalizedMid), strikeStep) : null,
-      cardClass: 'range-card',
-      valueClass: 'range-value',
-      Icon: ChartBarIcon,
-      iconClass: 'range-icon',
-      subtitle: 'Midpoint of selected high and low'
-    },
-    {
-      key: 'low',
-      title: 'Index Low',
-      value: normalizedLow,
-      strike: isOptionEligibleInstrument && normalizedLow != null ? roundDownTo(Number(normalizedLow), strikeStep) : null,
-      cardClass: 'low-card',
-      valueClass: 'low-value',
-      Icon: ArrowTrendingDownIcon,
-      iconClass: 'low-icon'
-    }
-  ];
-
-  const formatRupee = (value, options = {}) => {
-    const numberValue = Number(value);
-    if (!Number.isFinite(numberValue)) return '--';
-    return `₹${numberValue.toLocaleString('en-IN', {
-      maximumFractionDigits: options.maximumFractionDigits ?? 2,
-      minimumFractionDigits: options.minimumFractionDigits ?? 0
-    })}`;
-  };
-
-  // ================= Option Helpers (Minimal) =================
-  const baseSymbolForUnderlying = (sym) => {
-    if (!sym) return null;
-    const key = normalizeInstrumentKey(sym);
-    if (key === 'BANKNIFTY') return 'BANKNIFTY';
-    if (key === 'NIFTY' || key === 'NIFTY50') return 'NIFTY';
-    return null;
-  };
-
-  const getWeeklyExpiryDates = () => {
-    const today = new Date();
-    const current = new Date(today);
-    // Weekly expiry (post change) Tuesday; if today > Tuesday (i.e., Wed-Fri), currentWeek = next Tuesday
-    // If today is Tuesday before market close treat today as current; else roll.
-    if (current.getDay() > 2 || (current.getDay() === 2 && current.getHours() >= 16)) {
-      // Move to next Tuesday baseline
-      while (current.getDay() !== 2) current.setDate(current.getDate() + 1);
-    } else if (current.getDay() < 2) {
-      while (current.getDay() !== 2) current.setDate(current.getDate() + 1);
-    }
-    const currentWeek = new Date(current);
-    const nextWeek = new Date(current);
-    nextWeek.setDate(nextWeek.getDate() + 7);
-    return { currentWeek, nextWeek };
+                {/* High Price Card */}
+                <div className="result-card high-card">
+                  <div className="card-header">
+                    <h4 className="card-title">Index high</h4>
+                    <ArrowTrendingUpIcon className="card-icon high-icon" />
+                  </div>
+                  <div className="card-value high-value">
+                    ₹{normalizedHigh?.toLocaleString?.()}
+                  </div>
+                  {isOptionEligibleInstrument && peStrike && (
+                    <div className="strike-line pe-strike">
+                      <div className="strike-header">
+                        <span className="strike-label">PE Strike</span>
+                        <span className="strike-value">₹{peStrike}</span>
+                      </div>
+                      <div className="strike-controls">
+                        <div className="strike-ltp">
+                          {typeof peLtp === 'number'
+                            ? `Live LTP: ₹${peLtp.toFixed(2)}`
+                            : (typeof peLastClose === 'number'
+                              ? `Last close: ₹${peLastClose.toFixed(2)}`
+                              : 'LTP: --')}
+                        </div>
+                        <div className="expiry-select-wrap">
+                          <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
+                            <option value="current">Current Wk</option>
+                            <option value="next">Next Wk</option>
+                          </select>
+                          <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
+                        </div>
+                      </div>
+                      <div className="fib-grid">
+                        <div className="fib-item">
+                          <div className="fib-label">0 (Low)</div>
+                          <div className="fib-value">{peFibLevels && typeof peFibLevels.low === 'number' ? `₹${peFibLevels.low.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">0.5 (Mid)</div>
+                          <div className="fib-value">{peFibLevels && typeof peFibLevels.mid === 'number' ? `₹${peFibLevels.mid.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">1 (High)</div>
+                          <div className="fib-value">{peFibLevels && typeof peFibLevels.high === 'number' ? `₹${peFibLevels.high.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">1.618 (Ext)</div>
+                          <div className="fib-value">{peFibLevels && typeof peFibLevels.ext === 'number' ? `₹${peFibLevels.ext.toFixed(2)}` : '--'}</div>
+                        </div>
+                      </div>
+                      <div className="hma-row">
+                        <select className="hma-select" value={peTimeframe} onChange={e => setPeTimeframe(e.target.value)}>
+                          <option value="15m">15m</option>
+                          <option value="1h">1h</option>
+                          <option value="1d">1d</option>
+                        </select>
+                        <div className="hma-value">HMA50: {typeof peHma[peTimeframe] === 'number' ? peHma[peTimeframe].toFixed(2) : '--'}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
   };
 
   const formatExpiryCode = (date) => {
@@ -355,67 +354,76 @@ const Analytics = () => {
     // 3. Compact year first two digits + strike + type? (Legacy examples like NIFTY159500CE appear to be year(15)+strike+type NO month) -> BASE + YY + strike + type
     // 4. Monthly style: BASE + MMM + YY + strike + type      (NIFTYSEP2524500CE)
     // 5. Alt numeric date: BASE + DD + MM + YY + strike + type (NIFTY30092524500CE)
-    const candidates = [
-      `${base}${yy}${kiteMonthCode}${dd}${strikeStr}${type}`,
-      `${base}${dd}${mmm}${yy}${strikeStr}${type}`,
-      `${base}${dd}${mmm}${strikeStr}${type}`,
-      `${base}${yy}${strikeStr}${type}`,
-      `${base}${mmm}${yy}${strikeStr}${type}`,
-      `${base}${dd}${monthNum}${yy}${strikeStr}${type}`
-    ];
-    if (mmm === 'SEP') {
-      // Some data sources may list September as SEPT
-      candidates.push(
-        `${base}${dd}SEPT${yy}${strikeStr}${type}`,
-        `${base}${dd}SEPT${strikeStr}${type}`,
-        `${base}SEPT${yy}${strikeStr}${type}`
-      );
-    }
-    return Array.from(new Set(candidates));
-  };
-
-  // Resolve option instrument tokens when strikes and instrument selected or expiry changes
-  useEffect(() => {
-    let cancelled = false;
-    async function resolveTokens() {
-      setPeOptionToken(null); setCeOptionToken(null);
-      setPeFibLevels(null); setCeFibLevels(null);
-      setPeHma({ '15m': null, '1h': null, '1d': null });
-      setCeHma({ '15m': null, '1h': null, '1d': null });
-      liveHmaCandlesRef.current = { PE: {}, CE: {}, INDEX: {} };
-      peSubscribed.current = false; ceSubscribed.current = false;
-      setPeLtp(null); setCeLtp(null);
-      setPeLastClose(null); setCeLastClose(null);
-      return;
-      if (!selectedInstrument || !isOptionEligibleInstrument || !peStrike || !ceStrike) return;
-      const under = selectedInstrument.tradingsymbol;
-      // Capture expiry context for this resolution cycle
-      const { currentWeek, nextWeek } = getWeeklyExpiryDates();
-      const chosenExpiryDate = optionExpiry === 'next' ? nextWeek : currentWeek;
-      const chosenExpiryCode = chosenExpiryDate ? formatExpiryCode(chosenExpiryDate) : null;
-      const peSymbols = buildOptionSymbolCandidates(under, peStrike, 'PE', optionExpiry);
-      const ceSymbols = buildOptionSymbolCandidates(under, ceStrike, 'CE', optionExpiry);
-      setDebugInfo(prev => ({
-        ...prev,
-        pe: { ...prev.pe, candidates: peSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } },
-        ce: { ...prev.ce, candidates: ceSymbols, resolved: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } }
-      }));
-      async function resolveOne(symbolList, setter, side) {
-        for (const sym of symbolList) {
-          if (cancelled) return;
-          try {
-            console.log(`[OptionResolve] Trying ${side} symbol candidate: ${sym}`);
-            let res = await TradingService.getInstrumentsBySymbol(sym);
-            if (!cancelled && Array.isArray(res) && res.length) {
-              const token = res[0].instrument_token || res[0].token;
-              console.log(`[OptionResolve] ${side} resolved via direct symbol: ${sym} -> token ${token}`);
-              setter(token);
-              // Fetch initial LTP immediately
-              try {
-                const q = await TradingService.getQuote(token);
-                if (side === 'PE' && q?.last_price != null) setPeLtp(q.last_price);
-                if (side === 'CE' && q?.last_price != null) setCeLtp(q.last_price);
-                setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: q?.last_price ?? null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } } }));
+                {/* Low Price Card */}
+                <div className="result-card low-card">
+                  <div className="card-header">
+                    <h4 className="card-title">Lowest Price</h4>
+                    <ArrowTrendingDownIcon className="card-icon low-icon" />
+                  </div>
+                  <div className="card-value low-value">
+                    ₹{normalizedLow?.toLocaleString?.()}
+                  </div>
+                  {isOptionEligibleInstrument && ceStrike && (
+                    <div className="strike-line ce-strike">
+                      <div className="strike-header">
+                        <span className="strike-label">CE Strike</span>
+                        <span className="strike-value">₹{ceStrike}</span>
+                      </div>
+                      <div className="strike-controls">
+                        <div className="strike-ltp">
+                          {typeof ceLtp === 'number'
+                            ? `Live LTP: ₹${ceLtp.toFixed(2)}`
+                            : (typeof ceLastClose === 'number'
+                              ? `Last close: ₹${ceLastClose.toFixed(2)}`
+                              : 'LTP: --')}
+                        </div>
+                        <div className="expiry-select-wrap">
+                          <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
+                            <option value="current">Current Wk</option>
+                            <option value="next">Next Wk</option>
+                          </select>
+                          <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
+                        </div>
+                      </div>
+                      <div className="fib-grid">
+                        <div className="fib-item">
+                          <div className="fib-label">0 (Low)</div>
+                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.low === 'number' ? `₹${ceFibLevels.low.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">0.5 (Mid)</div>
+                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.mid === 'number' ? `₹${ceFibLevels.mid.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">1 (High)</div>
+                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.high === 'number' ? `₹${ceFibLevels.high.toFixed(2)}` : '--'}</div>
+                        </div>
+                        <div className="fib-item">
+                          <div className="fib-label">1.618 (Ext)</div>
+                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.ext === 'number' ? `₹${ceFibLevels.ext.toFixed(2)}` : '--'}</div>
+                        </div>
+                      </div>
+                      <div className="hma-row">
+                        <select className="hma-select" value={ceTimeframe} onChange={e => setCeTimeframe(e.target.value)}>
+                          <option value="15m">15m</option>
+                          <option value="1h">1h</option>
+                          <option value="1d">1d</option>
+                        </select>
+                        <div className="hma-value">HMA50: {typeof ceHma[ceTimeframe] === 'number' ? ceHma[ceTimeframe].toFixed(2) : '--'}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* Mid Value Card */}
+                <div className="result-card mid-card">
+                  <div className="card-header">
+                    <h4 className="card-title">Index mid</h4>
+                    <ChartBarIcon className="card-icon mid-icon" />
+                  </div>
+                  <div className="card-value mid-value">
+                    {normalizedMid != null ? `₹${normalizedMid.toLocaleString?.()}` : '--'}
+                  </div>
+                </div>
               } catch (_) {
                 setDebugInfo(prev => ({ ...prev, [side.toLowerCase()]: { ...prev[side.toLowerCase()], resolved: { symbol: sym, token, method: 'direct', ltp: null, expiry: { choice: optionExpiry, date: chosenExpiryDate, code: chosenExpiryCode } } } }));
               }
