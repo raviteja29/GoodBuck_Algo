@@ -12,6 +12,27 @@ import InstrumentSearch from './InstrumentSearch';
 import TradingService from '../services/TradingService';
 import './Analytics.css';
 
+const OPTION_LEVEL_KEYS = ['high', 'mid', 'low'];
+const DEFAULT_LEVEL_OPTION_TYPES = { high: 'PE', mid: 'PE', low: 'CE' };
+
+const createEmptyHma = () => ({ '15m': null, '1h': null, '1d': null });
+
+const createEmptyLevelOptions = () => OPTION_LEVEL_KEYS.reduce((acc, key) => {
+  acc[key] = {
+    token: null,
+    symbol: null,
+    candidates: [],
+    resolved: null,
+    ltp: null,
+    lastClose: null,
+    fibLevels: null,
+    timeframe: '15m',
+    hma: createEmptyHma(),
+    loading: false
+  };
+  return acc;
+}, {});
+
 const Analytics = () => {
   const [selectedInstrument, setSelectedInstrument] = useState(null);
   const [showInstrumentSearch, setShowInstrumentSearch] = useState(false);
@@ -32,10 +53,15 @@ const Analytics = () => {
   const [indexTimeframe, setIndexTimeframe] = useState('15m');
   const [indexHma, setIndexHma] = useState({ '15m': null, '1h': null, '1d': null });
   const [indexLtp, setIndexLtp] = useState(null);
+  const [levelOptionTypes, setLevelOptionTypes] = useState(DEFAULT_LEVEL_OPTION_TYPES);
+  const [levelOptions, setLevelOptions] = useState(createEmptyLevelOptions);
   const liveHmaCandlesRef = useRef({ PE: {}, CE: {}, INDEX: {} });
   const peTimeframeRef = useRef(peTimeframe);
   const ceTimeframeRef = useRef(ceTimeframe);
   const indexTimeframeRef = useRef(indexTimeframe);
+  const levelTimeframesRef = useRef({ high: '15m', mid: '15m', low: '15m' });
+  const levelLastTickRef = useRef({});
+  const levelPollRef = useRef(null);
   const indexLastTickRef = useRef(null);
   const indexPollRef = useRef(null);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -182,12 +208,19 @@ const Analytics = () => {
   useEffect(() => { peTimeframeRef.current = peTimeframe; }, [peTimeframe]);
   useEffect(() => { ceTimeframeRef.current = ceTimeframe; }, [ceTimeframe]);
   useEffect(() => { indexTimeframeRef.current = indexTimeframe; }, [indexTimeframe]);
+  useEffect(() => {
+    levelTimeframesRef.current = OPTION_LEVEL_KEYS.reduce((acc, key) => {
+      acc[key] = levelOptions[key]?.timeframe || '15m';
+      return acc;
+    }, {});
+  }, [levelOptions.high.timeframe, levelOptions.mid.timeframe, levelOptions.low.timeframe]);
 
   // ================= Strike Derivation Helpers =================
   // Step size: 100 for BANK NIFTY related symbols, else 50
   const getStrikeStep = (symbol) => /BANK/i.test(symbol || '') ? 100 : 50;
   const roundUpTo = (val, step) => (typeof val === 'number') ? Math.ceil(val / step) * step : null;
   const roundDownTo = (val, step) => (typeof val === 'number') ? Math.floor(val / step) * step : null;
+  const roundNearestTo = (val, step) => (typeof val === 'number') ? Math.round(val / step) * step : null;
 
   // Normalize potential key name variations (defensive)
   const normalizeHighLow = (data) => {
@@ -217,6 +250,39 @@ const Analytics = () => {
   const strikeStep = getStrikeStep(selectedInstrument?.tradingsymbol);
   const peStrike = isOptionEligibleInstrument && normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null; // Put strike from High (round up)
   const ceStrike = isOptionEligibleInstrument && normalizedLow != null ? roundDownTo(normalizedLow, strikeStep) : null; // Call strike from Low (round down)
+  const levelDefinitions = [
+    {
+      key: 'high',
+      title: 'Index High',
+      value: normalizedHigh,
+      strike: isOptionEligibleInstrument && normalizedHigh != null ? roundUpTo(Number(normalizedHigh), strikeStep) : null,
+      cardClass: 'high-card',
+      valueClass: 'high-value',
+      Icon: ArrowTrendingUpIcon,
+      iconClass: 'high-icon'
+    },
+    {
+      key: 'mid',
+      title: 'Index Mid',
+      value: normalizedMid,
+      strike: isOptionEligibleInstrument && normalizedMid != null ? roundNearestTo(Number(normalizedMid), strikeStep) : null,
+      cardClass: 'range-card',
+      valueClass: 'range-value',
+      Icon: ChartBarIcon,
+      iconClass: 'range-icon',
+      subtitle: 'Midpoint of selected high and low'
+    },
+    {
+      key: 'low',
+      title: 'Index Low',
+      value: normalizedLow,
+      strike: isOptionEligibleInstrument && normalizedLow != null ? roundDownTo(Number(normalizedLow), strikeStep) : null,
+      cardClass: 'low-card',
+      valueClass: 'low-value',
+      Icon: ArrowTrendingDownIcon,
+      iconClass: 'low-icon'
+    }
+  ];
 
   const formatRupee = (value, options = {}) => {
     const numberValue = Number(value);
@@ -320,6 +386,7 @@ const Analytics = () => {
       peSubscribed.current = false; ceSubscribed.current = false;
       setPeLtp(null); setCeLtp(null);
       setPeLastClose(null); setCeLastClose(null);
+      return;
       if (!selectedInstrument || !isOptionEligibleInstrument || !peStrike || !ceStrike) return;
       const under = selectedInstrument.tradingsymbol;
       // Capture expiry context for this resolution cycle
@@ -544,6 +611,19 @@ const Analytics = () => {
     if (side === 'PE') setPeHma(prev => ({ ...prev, [timeframe]: value }));
     if (side === 'CE') setCeHma(prev => ({ ...prev, [timeframe]: value }));
     if (side === 'INDEX') setIndexHma(prev => ({ ...prev, [timeframe]: value }));
+    if (side?.startsWith?.('LEVEL_')) {
+      const levelKey = side.replace('LEVEL_', '');
+      setLevelOptions(prev => ({
+        ...prev,
+        [levelKey]: {
+          ...prev[levelKey],
+          hma: {
+            ...prev[levelKey]?.hma,
+            [timeframe]: value
+          }
+        }
+      }));
+    }
   };
 
   const applyLiveTickToHma = (side, timeframe, price, tickTime) => {
@@ -645,6 +725,250 @@ const Analytics = () => {
       setSideHma(side, timeframe, calculateHmaFromCandles(candles));
     } catch (e) { console.warn(`Live ${side} HMA seed fetch failed`, e.message); }
   };
+
+  const levelSideKey = (levelKey) => `LEVEL_${levelKey}`;
+
+  const updateLevelOption = (levelKey, patch) => {
+    setLevelOptions(prev => ({
+      ...prev,
+      [levelKey]: {
+        ...prev[levelKey],
+        ...patch
+      }
+    }));
+  };
+
+  const resetLevelOptionMarketData = (prevLevelOption = {}) => ({
+    ...prevLevelOption,
+    token: null,
+    symbol: null,
+    candidates: [],
+    resolved: null,
+    ltp: null,
+    lastClose: null,
+    fibLevels: null,
+    hma: createEmptyHma(),
+    loading: false
+  });
+
+  const resolveOptionInstrument = async (symbolList, levelLabel) => {
+    for (const sym of symbolList) {
+      try {
+        console.log(`[OptionResolve] Trying ${levelLabel} symbol candidate: ${sym}`);
+        const res = await TradingService.getInstrumentsBySymbol(sym);
+        if (Array.isArray(res) && res.length) {
+          const instrument = res[0];
+          return {
+            token: instrument.instrument_token || instrument.token,
+            symbol: instrument.tradingsymbol || sym,
+            method: instrument.tradingsymbol === sym ? 'direct' : 'search'
+          };
+        }
+      } catch (err) {
+        console.warn(`[OptionResolve] Error for ${levelLabel} candidate ${sym}:`, err.message);
+      }
+    }
+
+    return null;
+  };
+
+  const fetchLevelOptionStaticLevels = async (levelKey, token) => {
+    if (!token) return;
+    try {
+      const fromDateTime = `${fromDate} 09:15:00`;
+      const toDateTime = `${toDate} 15:30:00`;
+      const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, 'minute');
+      const candles = data?.candles || [];
+      if (!candles.length) return;
+
+      updateLevelOption(levelKey, {
+        lastClose: candles[candles.length - 1]?.[4] ?? null,
+        fibLevels: computeOptionLevels(candles)
+      });
+    } catch (e) {
+      console.warn(`Option level fetch failed for ${levelKey}`, e.message);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function resolveLevelOptions() {
+      setLevelOptions(prev => OPTION_LEVEL_KEYS.reduce((acc, key) => {
+        acc[key] = resetLevelOptionMarketData(prev[key]);
+        return acc;
+      }, {}));
+      levelLastTickRef.current = {};
+
+      if (!selectedInstrument || !isOptionEligibleInstrument) return;
+
+      await Promise.all(levelDefinitions.map(async (level) => {
+        const optionType = levelOptionTypes[level.key];
+        if (!level.strike || !optionType) return;
+
+        const candidates = buildOptionSymbolCandidates(
+          selectedInstrument.tradingsymbol,
+          level.strike,
+          optionType,
+          optionExpiry
+        );
+
+        if (!candidates.length) return;
+        updateLevelOption(level.key, { candidates, loading: true });
+
+        const resolved = await resolveOptionInstrument(candidates, `${level.title} ${optionType}`);
+        if (cancelled) return;
+
+        if (!resolved?.token) {
+          updateLevelOption(level.key, { loading: false, resolved: null });
+          return;
+        }
+
+        let ltp = null;
+        try {
+          const q = await TradingService.getQuote(resolved.token);
+          const price = Number(q?.last_price);
+          if (Number.isFinite(price)) ltp = price;
+        } catch (e) {
+          console.warn(`Initial ${level.title} ${optionType} quote failed`, e.message);
+        }
+
+        if (!cancelled) {
+          updateLevelOption(level.key, {
+            token: resolved.token,
+            symbol: resolved.symbol,
+            resolved,
+            ltp,
+            loading: false
+          });
+        }
+      }));
+    }
+
+    resolveLevelOptions();
+    return () => { cancelled = true; };
+  }, [
+    selectedInstrument?.tradingsymbol,
+    isOptionEligibleInstrument,
+    optionExpiry,
+    levelOptionTypes.high,
+    levelOptionTypes.mid,
+    levelOptionTypes.low,
+    levelDefinitions[0].strike,
+    levelDefinitions[1].strike,
+    levelDefinitions[2].strike
+  ]);
+
+  useEffect(() => {
+    OPTION_LEVEL_KEYS.forEach(key => {
+      const token = levelOptions[key]?.token;
+      if (token) fetchLevelOptionStaticLevels(key, token);
+    });
+  }, [
+    levelOptions.high.token,
+    levelOptions.mid.token,
+    levelOptions.low.token,
+    fromDate,
+    toDate
+  ]);
+
+  useEffect(() => {
+    OPTION_LEVEL_KEYS.forEach(key => {
+      const token = levelOptions[key]?.token;
+      const timeframe = levelOptions[key]?.timeframe;
+      if (token && timeframe) fetchLiveHmaSeed(token, levelSideKey(key), timeframe);
+    });
+  }, [
+    levelOptions.high.token,
+    levelOptions.mid.token,
+    levelOptions.low.token,
+    levelOptions.high.timeframe,
+    levelOptions.mid.timeframe,
+    levelOptions.low.timeframe
+  ]);
+
+  useEffect(() => {
+    const entries = OPTION_LEVEL_KEYS
+      .map(key => ({ key, token: Number(levelOptions[key]?.token) }))
+      .filter(entry => Number.isFinite(entry.token));
+
+    if (!entries.length) return undefined;
+
+    TradingService.subscribeToInstruments(entries.map(entry => entry.token));
+    const tokenToLevel = entries.reduce((acc, entry) => {
+      acc[entry.token] = entry.key;
+      return acc;
+    }, {});
+
+    function handleLevelOptionTicks(ticks) {
+      if (!Array.isArray(ticks)) return;
+      ticks.forEach(tick => {
+        const tickToken = Number(tick.instrument_token);
+        const price = Number(tick.last_price);
+        const levelKey = tokenToLevel[tickToken];
+        if (!levelKey || !Number.isFinite(price)) return;
+
+        levelLastTickRef.current[levelKey] = Date.now();
+        updateLevelOption(levelKey, { ltp: price });
+        applyLiveTickToHma(levelSideKey(levelKey), levelTimeframesRef.current[levelKey] || '15m', price, getTickTime(tick));
+      });
+    }
+
+    const unsubscribe = TradingService.subscribeToTicks(handleLevelOptionTicks);
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, [
+    levelOptions.high.token,
+    levelOptions.mid.token,
+    levelOptions.low.token
+  ]);
+
+  useEffect(() => {
+    const hasTokens = OPTION_LEVEL_KEYS.some(key => Number.isFinite(Number(levelOptions[key]?.token)));
+    if (!hasTokens) return undefined;
+
+    const pollLevelQuotes = async () => {
+      const now = Date.now();
+      const entries = OPTION_LEVEL_KEYS
+        .map(key => ({ key, token: Number(levelOptions[key]?.token) }))
+        .filter(entry => Number.isFinite(entry.token))
+        .filter(entry => !levelLastTickRef.current[entry.key] || now - levelLastTickRef.current[entry.key] > 5000);
+
+      if (!entries.length) return;
+
+      try {
+        const quotes = await TradingService.getQuotes(entries.map(entry => entry.token));
+        entries.forEach(entry => {
+          const quote = quotes?.[entry.token];
+          const price = Number(quote?.last_price);
+          if (!Number.isFinite(price)) return;
+
+          updateLevelOption(entry.key, { ltp: price });
+          applyLiveTickToHma(levelSideKey(entry.key), levelTimeframesRef.current[entry.key] || '15m', price, new Date());
+        });
+      } catch (e) {
+        console.warn('Polling level option quotes failed', e.message);
+      }
+    };
+
+    if (levelPollRef.current) {
+      clearInterval(levelPollRef.current);
+      levelPollRef.current = null;
+    }
+
+    pollLevelQuotes();
+    levelPollRef.current = setInterval(pollLevelQuotes, 3000);
+
+    return () => {
+      if (levelPollRef.current) {
+        clearInterval(levelPollRef.current);
+        levelPollRef.current = null;
+      }
+    };
+  }, [
+    levelOptions.high.token,
+    levelOptions.mid.token,
+    levelOptions.low.token
+  ]);
 
   useEffect(() => { if (peOptionToken) fetchStaticOptionLevels(peOptionToken, 'PE'); }, [peOptionToken, fromDate, toDate]);
   useEffect(() => { if (ceOptionToken) fetchStaticOptionLevels(ceOptionToken, 'CE'); }, [ceOptionToken, fromDate, toDate]);
@@ -764,6 +1088,109 @@ const Analytics = () => {
     }
   }, [selectedInstrument?.instrument_token, isOptionEligibleInstrument, indexTimeframe]);
 
+  const setLevelOptionType = (levelKey, optionType) => {
+    setLevelOptionTypes(prev => ({ ...prev, [levelKey]: optionType }));
+  };
+
+  const setLevelOptionTimeframe = (levelKey, timeframe) => {
+    setLevelOptions(prev => ({
+      ...prev,
+      [levelKey]: {
+        ...prev[levelKey],
+        timeframe
+      }
+    }));
+  };
+
+  const renderIndexLevelCard = (level) => {
+    const Icon = level.Icon;
+    const optionType = levelOptionTypes[level.key];
+    const optionData = levelOptions[level.key] || {};
+    const fibLevels = optionData.fibLevels;
+    const timeframe = optionData.timeframe || '15m';
+    const hmaValue = optionData.hma?.[timeframe];
+
+    return (
+      <div key={level.key} className={`result-card ${level.cardClass}`}>
+        <div className="card-header">
+          <h4 className="card-title">{level.title}</h4>
+          <Icon className={`card-icon ${level.iconClass}`} />
+        </div>
+        <div className={`card-value ${level.valueClass}`}>
+          {formatRupee(level.value)}
+        </div>
+        {level.subtitle && !isOptionEligibleInstrument && (
+          <div className="card-subtitle">{level.subtitle}</div>
+        )}
+
+        {isOptionEligibleInstrument && level.strike && (
+          <div className={`strike-line ${optionType === 'PE' ? 'pe-strike' : 'ce-strike'}`}>
+            <div className="strike-header">
+              <span className="strike-label">{optionType} Strike</span>
+              <span className="strike-value">₹{level.strike}</span>
+            </div>
+            <div className="strike-controls">
+              <div className="strike-ltp">
+                {typeof optionData.ltp === 'number'
+                  ? `Live LTP: ₹${optionData.ltp.toFixed(2)}`
+                  : (typeof optionData.lastClose === 'number'
+                    ? `Last close: ₹${optionData.lastClose.toFixed(2)}`
+                    : (optionData.loading ? 'Resolving...' : 'LTP: --'))}
+              </div>
+              <div className="strike-control-stack">
+                <div className="option-type-toggle" role="group" aria-label={`${level.title} option type`}>
+                  {['CE', 'PE'].map(type => (
+                    <button
+                      key={type}
+                      type="button"
+                      className={`option-toggle-btn ${optionType === type ? 'active' : ''} ${type.toLowerCase()}`}
+                      onClick={() => setLevelOptionType(level.key, type)}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+                <div className="expiry-select-wrap">
+                  <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
+                    <option value="current">Current Wk</option>
+                    <option value="next">Next Wk</option>
+                  </select>
+                  <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
+                </div>
+              </div>
+            </div>
+            <div className="fib-grid">
+              <div className="fib-item">
+                <div className="fib-label">0 (Low)</div>
+                <div className="fib-value">{fibLevels && typeof fibLevels.low === 'number' ? `₹${fibLevels.low.toFixed(2)}` : '--'}</div>
+              </div>
+              <div className="fib-item">
+                <div className="fib-label">0.5 (Mid)</div>
+                <div className="fib-value">{fibLevels && typeof fibLevels.mid === 'number' ? `₹${fibLevels.mid.toFixed(2)}` : '--'}</div>
+              </div>
+              <div className="fib-item">
+                <div className="fib-label">1 (High)</div>
+                <div className="fib-value">{fibLevels && typeof fibLevels.high === 'number' ? `₹${fibLevels.high.toFixed(2)}` : '--'}</div>
+              </div>
+              <div className="fib-item">
+                <div className="fib-label">1.618 (Ext)</div>
+                <div className="fib-value">{fibLevels && typeof fibLevels.ext === 'number' ? `₹${fibLevels.ext.toFixed(2)}` : '--'}</div>
+              </div>
+            </div>
+            <div className="hma-row">
+              <select className="hma-select" value={timeframe} onChange={e => setLevelOptionTimeframe(level.key, e.target.value)}>
+                <option value="15m">15m</option>
+                <option value="1h">1h</option>
+                <option value="1d">1d</option>
+              </select>
+              <div className="hma-value">HMA50: {typeof hmaValue === 'number' ? hmaValue.toFixed(2) : '--'}</div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="analytics-section">
       {/* Header */}
@@ -784,20 +1211,17 @@ const Analytics = () => {
           <h4>Option Resolution Debug</h4>
           <div className="expiry-meta">Expiry: {expiryDisplay} ({optionExpiry === 'next' ? 'Next Wk' : 'Current Wk'}) {expiryCode && <span className="expiry-code-chip">{expiryCode}</span>}</div>
           <div className="debug-row">
-            <div className="debug-block">
-              <h5>PE Candidates</h5>
-              <ul>{debugInfo.pe.candidates.map(c => <li key={c} className={debugInfo.pe.resolved?.symbol === c ? 'resolved' : ''}>{c}</li>)}</ul>
-              <div className="resolved-line">Resolved: {debugInfo.pe.resolved ? `${debugInfo.pe.resolved.symbol} -> ${debugInfo.pe.resolved.token} (${debugInfo.pe.resolved.method})` : '—'}</div>
-              {debugInfo.pe.resolved?.expiry && <div className="expiry-line">Expiry Code: {debugInfo.pe.resolved.expiry.code}</div>}
-              <div className="ltp-line">LTP: {peLtp != null ? peLtp : '—'}</div>
-            </div>
-            <div className="debug-block">
-              <h5>CE Candidates</h5>
-              <ul>{debugInfo.ce.candidates.map(c => <li key={c} className={debugInfo.ce.resolved?.symbol === c ? 'resolved' : ''}>{c}</li>)}</ul>
-              <div className="resolved-line">Resolved: {debugInfo.ce.resolved ? `${debugInfo.ce.resolved.symbol} -> ${debugInfo.ce.resolved.token} (${debugInfo.ce.resolved.method})` : '—'}</div>
-              {debugInfo.ce.resolved?.expiry && <div className="expiry-line">Expiry Code: {debugInfo.ce.resolved.expiry.code}</div>}
-              <div className="ltp-line">LTP: {ceLtp != null ? ceLtp : '—'}</div>
-            </div>
+            {levelDefinitions.map(level => {
+              const optionData = levelOptions[level.key] || {};
+              return (
+                <div className="debug-block" key={level.key}>
+                  <h5>{level.title} {levelOptionTypes[level.key]} Candidates</h5>
+                  <ul>{(optionData.candidates || []).map(c => <li key={c} className={optionData.resolved?.symbol === c ? 'resolved' : ''}>{c}</li>)}</ul>
+                  <div className="resolved-line">Resolved: {optionData.resolved ? `${optionData.resolved.symbol} -> ${optionData.resolved.token} (${optionData.resolved.method})` : '—'}</div>
+                  <div className="ltp-line">LTP: {optionData.ltp != null ? optionData.ltp : '—'}</div>
+                </div>
+              );
+            })}
           </div>
           <div className="debug-notes">If no resolution, verify actual contract symbol via backend search endpoint. Strike or expiry formatting may differ.</div>
         </div>
@@ -1044,143 +1468,7 @@ const Analytics = () => {
                   </div>
                 )}
 
-                {/* High Price Card */}
-                <div className="result-card high-card">
-                  <div className="card-header">
-                    <h4 className="card-title">Index High</h4>
-                    <ArrowTrendingUpIcon className="card-icon high-icon" />
-                  </div>
-                  <div className="card-value high-value">
-                    {formatRupee(normalizedHigh)}
-                  </div>
-
-                  {isOptionEligibleInstrument && peStrike && (
-                    <div className="strike-line pe-strike">
-                      <div className="strike-header">
-                        <span className="strike-label">PE Strike</span>
-                        <span className="strike-value">₹{peStrike}</span>
-                      </div>
-                      <div className="strike-controls">
-                        <div className="strike-ltp">
-                          {typeof peLtp === 'number'
-                            ? `Live LTP: ₹${peLtp.toFixed(2)}`
-                            : (typeof peLastClose === 'number'
-                              ? `Last close: ₹${peLastClose.toFixed(2)}`
-                              : 'LTP: --')}
-                        </div>
-                        <div className="expiry-select-wrap">
-                          <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
-                            <option value="current">Current Wk</option>
-                            <option value="next">Next Wk</option>
-                          </select>
-                          <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
-                        </div>
-                      </div>
-                      <div className="fib-grid">
-                        <div className="fib-item">
-                          <div className="fib-label">0 (Low)</div>
-                          <div className="fib-value">{peFibLevels && typeof peFibLevels.low === 'number' ? `₹${peFibLevels.low.toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">0.5 (Mid)</div>
-                          <div className="fib-value">{peFibLevels && typeof peFibLevels.mid === 'number' ? `₹${peFibLevels.mid.toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">1 (High)</div>
-                          <div className="fib-value">{peFibLevels && typeof peFibLevels.high === 'number' ? `₹${peFibLevels.high.toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">1.618 (Ext)</div>
-                          <div className="fib-value">{peFibLevels && typeof peFibLevels.ext === 'number' ? `₹${peFibLevels.ext.toFixed(2)}` : '--'}</div>
-                        </div>
-                      </div>
-                      <div className="hma-row">
-                        <select className="hma-select" value={peTimeframe} onChange={e => setPeTimeframe(e.target.value)}>
-                          <option value="15m">15m</option>
-                          <option value="1h">1h</option>
-                          <option value="1d">1d</option>
-                        </select>
-                        <div className="hma-value">HMA50: {typeof peHma[peTimeframe] === 'number' ? peHma[peTimeframe].toFixed(2) : '--'}</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Mid Price Card */}
-                <div className="result-card range-card">
-                  <div className="card-header">
-                    <h4 className="card-title">Index Mid</h4>
-                    <ChartBarIcon className="card-icon range-icon" />
-                  </div>
-                  <div className="card-value range-value">
-                    {formatRupee(normalizedMid)}
-                  </div>
-                  <div className="card-subtitle">
-                    Midpoint of selected high and low
-                  </div>
-                </div>
-
-                {/* Low Price Card */}
-                <div className="result-card low-card">
-                  <div className="card-header">
-                    <h4 className="card-title">Index Low</h4>
-                    <ArrowTrendingDownIcon className="card-icon low-icon" />
-                  </div>
-                  <div className="card-value low-value">
-                    {formatRupee(normalizedLow)}
-                  </div>
-
-                  {isOptionEligibleInstrument && ceStrike && (
-                    <div className="strike-line ce-strike">
-                      <div className="strike-header">
-                        <span className="strike-label">CE Strike</span>
-                        <span className="strike-value">₹{ceStrike}</span>
-                      </div>
-                      <div className="strike-controls">
-                        <div className="strike-ltp">
-                          {typeof ceLtp === 'number'
-                            ? `Live LTP: ₹${ceLtp.toFixed(2)}`
-                            : (typeof ceLastClose === 'number'
-                              ? `Last close: ₹${ceLastClose.toFixed(2)}`
-                              : 'LTP: --')}
-                        </div>
-                        <div className="expiry-select-wrap">
-                          <select className="expiry-select small" value={optionExpiry} onChange={e => setOptionExpiry(e.target.value)}>
-                            <option value="current">Current Wk</option>
-                            <option value="next">Next Wk</option>
-                          </select>
-                          <span className="expiry-display" title="Derived weekly expiry date">{expiryDisplay.split(',')[0]}</span>
-                        </div>
-                      </div>
-                      <div className="fib-grid">
-                        <div className="fib-item">
-                          <div className="fib-label">0 (Low)</div>
-                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.low === 'number' ? `₹${ceFibLevels.low.toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">0.5 (Mid)</div>
-                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.mid === 'number' ? `₹${ceFibLevels.mid.toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">1 (High)</div>
-                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.high === 'number' ? `₹${ceFibLevels.high.toFixed(2)}` : '--'}</div>
-                        </div>
-                        <div className="fib-item">
-                          <div className="fib-label">1.618 (Ext)</div>
-                          <div className="fib-value">{ceFibLevels && typeof ceFibLevels.ext === 'number' ? `₹${ceFibLevels.ext.toFixed(2)}` : '--'}</div>
-                        </div>
-                      </div>
-                      <div className="hma-row">
-                        <select className="hma-select" value={ceTimeframe} onChange={e => setCeTimeframe(e.target.value)}>
-                          <option value="15m">15m</option>
-                          <option value="1h">1h</option>
-                          <option value="1d">1d</option>
-                        </select>
-                        <div className="hma-value">HMA50: {typeof ceHma[ceTimeframe] === 'number' ? ceHma[ceTimeframe].toFixed(2) : '--'}</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                {levelDefinitions.map(renderIndexLevelCard)}
 
                 {/* Range Card */}
                 <div className="result-card range-card">
