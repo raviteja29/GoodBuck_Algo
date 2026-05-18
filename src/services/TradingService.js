@@ -71,9 +71,12 @@ async function setupWebSocket() {
 
     // Create new WebSocket instance with the token as a query parameter
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const configuredWsHost = import.meta.env.DEV
-      ? (import.meta.env.VITE_WS_HOST || new URL(import.meta.env.VITE_API_TARGET || 'http://localhost:5000').host)
-      : window.location.host;
+    // Use VITE_WS_HOST if set, otherwise default to window.location.host in production
+    const configuredWsHost = import.meta.env.VITE_WS_HOST
+      ? import.meta.env.VITE_WS_HOST
+      : (import.meta.env.DEV
+        ? new URL(import.meta.env.VITE_API_TARGET || 'http://localhost:5000').host
+        : window.location.host);
     const wsHost = import.meta.env.DEV && configuredWsHost.startsWith('localhost:')
       ? configuredWsHost.replace('localhost:', '127.0.0.1:')
       : configuredWsHost;
