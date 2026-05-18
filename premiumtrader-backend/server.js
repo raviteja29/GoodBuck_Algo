@@ -229,6 +229,34 @@ async function getInstrumentByTokenFromCache(token) {
   return list.find(inst => String(inst.instrument_token) === tokenString);
 }
 
+async function getQuotesByInstrumentTokens(kiteClient, tokens) {
+  const tokenList = tokens.map(token => parseInt(String(token), 10)).filter(token => !Number.isNaN(token));
+  const instruments = await Promise.all(tokenList.map(async token => ({
+    token,
+    instrument: await getInstrumentByTokenFromCache(token)
+  })));
+  const symbolByToken = new Map();
+  const kiteSymbols = instruments
+    .filter(({ instrument }) => !!instrument)
+    .map(({ token, instrument }) => {
+      const symbol = `${instrument.exchange}:${instrument.tradingsymbol}`;
+      symbolByToken.set(symbol, token);
+      return symbol;
+    });
+
+  if (!kiteSymbols.length) return {};
+
+  const kiteQuotes = await kiteClient.getQuote(kiteSymbols);
+  const quotesByToken = {};
+  Object.entries(kiteQuotes || {}).forEach(([symbol, quote]) => {
+    const token = symbolByToken.get(symbol);
+    if (token != null) {
+      quotesByToken[token] = quote;
+    }
+  });
+  return quotesByToken;
+}
+
 // Proxy route for user profile
 app.get('/api/profile', async (req, res) => {
   try {
@@ -870,9 +898,8 @@ app.get('/api/quotes', async (req, res) => {
     console.log(`[QUOTES] Access token length: ${access_token ? access_token.length : 0}`);
 
     try {
-      // Get quotes for the requested tokens
-      console.log(`[QUOTES] Calling kc.getQuote with tokens: ${tokenArray}`);
-      const quotes = await kc.getQuote(tokenArray);
+      console.log(`[QUOTES] Resolving ${tokenArray.length} tokens to Kite symbols`);
+      const quotes = await getQuotesByInstrumentTokens(kc, tokenArray);
       console.log('[QUOTES] Successfully fetched quotes:', Object.keys(quotes).length, 'quotes');
       res.json(quotes);
     } catch (kiteError) {
@@ -890,8 +917,8 @@ app.get('/api/quotes', async (req, res) => {
           for (const token of tokenArray) {
             try {
               console.log(`[QUOTES] Fetching individual quote for token: ${token}`);
-              const singleQuote = await kc.getQuote([token]);
-              individualQuotes[token] = singleQuote[token];
+              const singleQuote = await getQuotesByInstrumentTokens(kc, [token]);
+              if (singleQuote[token]) individualQuotes[token] = singleQuote[token];
             } catch (individualError) {
               console.error(`[QUOTES] Failed to fetch individual quote for ${token}:`, individualError.message);
             }
@@ -1322,7 +1349,7 @@ wss.on('connection', (ws, req) => {
 
             // Get and send initial quotes for subscribed tokens
             try {
-              const quotes = await clientInfo.kiteClient.getQuote(data.tokens);
+              const quotes = await getQuotesByInstrumentTokens(clientInfo.kiteClient, data.tokens);
               ws.send(JSON.stringify({
                 type: 'quotes',
                 data: quotes
