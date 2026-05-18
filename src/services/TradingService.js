@@ -117,9 +117,11 @@ async function setupWebSocket() {
             if (data.data && Array.isArray(data.data)) {
               // Update the lastQuotes cache with tick data
               data.data.forEach(tick => {
-                if (tick.instrument_token) {
-                  lastQuotes.set(tick.instrument_token, {
+                const token = Number(tick.instrument_token);
+                if (Number.isFinite(token)) {
+                  lastQuotes.set(token, {
                     ...tick,
+                    instrument_token: token,
                     timestamp: new Date()
                   });
                 }
@@ -297,8 +299,17 @@ function subscribeToInstruments(tokens) {
     return;
   }
 
-  console.log(`Subscribing to ${tokens.length} instrument tokens:`, tokens);
-  tokens.forEach(token => instrumentTokens.add(token));
+  const normalizedTokens = tokens
+    .map(token => Number(token))
+    .filter(token => Number.isFinite(token));
+
+  if (!normalizedTokens.length) {
+    console.warn('No valid numeric tokens provided for subscription');
+    return;
+  }
+
+  console.log(`Subscribing to ${normalizedTokens.length} instrument tokens:`, normalizedTokens);
+  normalizedTokens.forEach(token => instrumentTokens.add(token));
 
   if (ws && ws.readyState === WebSocket.OPEN) {
     try {
@@ -321,12 +332,16 @@ function subscribeToInstruments(tokens) {
 function unsubscribeFromInstruments(tokens) {
   if (!tokens || tokens.length === 0) return;
 
-  tokens.forEach(token => instrumentTokens.delete(token));
+  const normalizedTokens = tokens
+    .map(token => Number(token))
+    .filter(token => Number.isFinite(token));
+
+  normalizedTokens.forEach(token => instrumentTokens.delete(token));
 
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       type: 'unsubscribe',
-      tokens: tokens
+      tokens: normalizedTokens
     }));
   }
 }
@@ -380,15 +395,16 @@ function mergeTicksAndRecalculatePnL(positions, ticks) {
 
   const tickMap = {};
   ticks.forEach(tick => {
-    if (tick && tick.instrument_token) {
-      tickMap[tick.instrument_token] = tick.last_price;
+    const token = Number(tick?.instrument_token);
+    if (Number.isFinite(token)) {
+      tickMap[token] = tick.last_price;
     }
   });
 
   return positions.map(pos => {
     if (!pos) return pos;
 
-    const livePrice = tickMap[pos.instrument_token];
+    const livePrice = tickMap[Number(pos.instrument_token)];
     if (livePrice !== undefined) {
       pos.last_price = livePrice;
 
