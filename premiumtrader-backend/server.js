@@ -1322,6 +1322,7 @@ wss.on('connection', (ws, req) => {
   // Initialize Kite client for this connection
   const clientInfo = clients.get(clientId);
   clientInfo.kiteClient.setAccessToken(accessToken);
+  initTickerIfPossible(accessToken);
 
   // Send immediate confirmation
   try {
@@ -1344,12 +1345,21 @@ wss.on('connection', (ws, req) => {
       switch (data.type) {
         case 'subscribe':
           if (Array.isArray(data.tokens)) {
-            clientInfo.subscribedTokens = new Set([...clientInfo.subscribedTokens, ...data.tokens]);
-            console.log(`Client ${clientId} subscribed to tokens:`, data.tokens);
+            const numericTokens = data.tokens
+              .map(token => parseInt(String(token), 10))
+              .filter(token => Number.isFinite(token));
+
+            if (!numericTokens.length) {
+              ws.send(JSON.stringify({ type: 'error', message: 'No valid numeric instrument tokens provided' }));
+              break;
+            }
+
+            clientInfo.subscribedTokens = new Set([...clientInfo.subscribedTokens, ...numericTokens]);
+            console.log(`Client ${clientId} subscribed to tokens:`, numericTokens);
 
             // Get and send initial quotes for subscribed tokens
             try {
-              const quotes = await getQuotesByInstrumentTokens(clientInfo.kiteClient, data.tokens);
+              const quotes = await getQuotesByInstrumentTokens(clientInfo.kiteClient, numericTokens);
               ws.send(JSON.stringify({
                 type: 'quotes',
                 data: quotes
@@ -1358,18 +1368,21 @@ wss.on('connection', (ws, req) => {
               console.error('Error fetching initial quotes:', error);
             }
             // Track & subscribe ticker
-            data.tokens.forEach(t => { if (typeof t === 'number') subscribedTokens.add(t); });
+            numericTokens.forEach(t => subscribedTokens.add(t));
             if (ticker && ticker.connected) {
-              try { ticker.subscribe(data.tokens); ticker.setMode(ticker.MODE_FULL, data.tokens); } catch (e) { console.error('[TICKER] subscribe error', e.message); }
+              try { ticker.subscribe(numericTokens); ticker.setMode(ticker.MODE_FULL, numericTokens); } catch (e) { console.error('[TICKER] subscribe error', e.message); }
             }
           }
           break;
 
         case 'unsubscribe':
           if (Array.isArray(data.tokens)) {
-            data.tokens.forEach(token => clientInfo.subscribedTokens.delete(token));
-            console.log(`Client ${clientId} unsubscribed from tokens:`, data.tokens);
-            data.tokens.forEach(t => subscribedTokens.delete(t));
+            const numericTokens = data.tokens
+              .map(token => parseInt(String(token), 10))
+              .filter(token => Number.isFinite(token));
+            numericTokens.forEach(token => clientInfo.subscribedTokens.delete(token));
+            console.log(`Client ${clientId} unsubscribed from tokens:`, numericTokens);
+            numericTokens.forEach(t => subscribedTokens.delete(t));
           }
           break;
 

@@ -29,6 +29,9 @@ const Analytics = () => {
   const [ceLtp, setCeLtp] = useState(null);
   const [peLastClose, setPeLastClose] = useState(null);
   const [ceLastClose, setCeLastClose] = useState(null);
+  const liveHmaCandlesRef = useRef({ PE: {}, CE: {} });
+  const peTimeframeRef = useRef(peTimeframe);
+  const ceTimeframeRef = useRef(ceTimeframe);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugInfo, setDebugInfo] = useState({ pe: { candidates: [], resolved: null }, ce: { candidates: [], resolved: null } });
   const peSubscribed = useRef(false);
@@ -169,6 +172,10 @@ const Analytics = () => {
   };
 
   const duration = getDateRangeDuration();
+
+  useEffect(() => { peTimeframeRef.current = peTimeframe; }, [peTimeframe]);
+  useEffect(() => { ceTimeframeRef.current = ceTimeframe; }, [ceTimeframe]);
+
   // ================= Strike Derivation Helpers =================
   // Step size: 100 for BANK NIFTY related symbols, else 50
   const getStrikeStep = (symbol) => /BANK/i.test(symbol || '') ? 100 : 50;
@@ -278,6 +285,7 @@ const Analytics = () => {
       setPeFibLevels(null); setCeFibLevels(null);
       setPeHma({ '15m': null, '1h': null, '1d': null });
       setCeHma({ '15m': null, '1h': null, '1d': null });
+      liveHmaCandlesRef.current = { PE: {}, CE: {} };
       peSubscribed.current = false; ceSubscribed.current = false;
       setPeLtp(null); setCeLtp(null);
       setPeLastClose(null); setCeLastClose(null);
@@ -406,35 +414,6 @@ const Analytics = () => {
     return () => { cancelled = true; if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   }, [peOptionToken, ceOptionToken]);
 
-  // Subscribe to real-time option ticks (once per token)
-  useEffect(() => {
-    const unsubscribers = [];
-    function handleTicks(ticks) {
-      if (!Array.isArray(ticks)) return;
-      ticks.forEach(t => {
-        if (t.instrument_token === peOptionToken && t.last_price != null) {
-          setPeLtp(t.last_price);
-          lastTickRef.current.pe = Date.now();
-        }
-        if (t.instrument_token === ceOptionToken && t.last_price != null) {
-          setCeLtp(t.last_price);
-          lastTickRef.current.ce = Date.now();
-        }
-      });
-    }
-    if (peOptionToken && !peSubscribed.current) {
-      TradingService.subscribeToInstruments([peOptionToken]);
-      const unsub = TradingService.subscribeToTicks(handleTicks); // reused handler
-      unsubscribers.push(unsub); peSubscribed.current = true;
-    }
-    if (ceOptionToken && !ceSubscribed.current) {
-      TradingService.subscribeToInstruments([ceOptionToken]);
-      const unsub = TradingService.subscribeToTicks(handleTicks);
-      unsubscribers.push(unsub); ceSubscribed.current = true;
-    }
-    return () => { unsubscribers.forEach(u => u && u()); };
-  }, [peOptionToken, ceOptionToken]);
-
   // HMA computation helpers
   const computeWMA = (arr, period, endIndex) => {
     if (endIndex + 1 < period) return null;
@@ -468,29 +447,113 @@ const Analytics = () => {
   };
 
   const timeframeToInterval = { '15m': '15minute', '1h': '60minute', '1d': 'day' };
+  const timeframeToSeconds = { '15m': 15 * 60, '1h': 60 * 60, '1d': 24 * 60 * 60 };
+  const liveHmaLookbackDays = { '15m': 20, '1h': 45, '1d': 90 };
+
+  const formatDateTimeForKite = (date) => {
+    const pad = (value) => String(value).padStart(2, '0');
+    return [
+      `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+      `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    ].join(' ');
+  };
+
+  const getTickTime = (tick) => {
+    const rawTime = tick?.exchange_timestamp || tick?.last_trade_time || tick?.timestamp || tick?.last_update_time;
+    if (!rawTime) return new Date();
+    const parsed = rawTime instanceof Date ? rawTime : new Date(rawTime);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  };
+
+  const getBucketStartEpoch = (date, timeframe) => {
+    const seconds = timeframeToSeconds[timeframe] || timeframeToSeconds['15m'];
+    if (timeframe === '1d') {
+      const dayStart = new Date(date);
+      dayStart.setHours(0, 0, 0, 0);
+      return Math.floor(dayStart.getTime() / 1000);
+    }
+
+    return Math.floor(Math.floor(date.getTime() / 1000) / seconds) * seconds;
+  };
+
+  const normalizeCandle = (candle) => ([
+    Number(candle?.[0]),
+    Number(candle?.[1]),
+    Number(candle?.[2]),
+    Number(candle?.[3]),
+    Number(candle?.[4]),
+    Number(candle?.[5] || 0)
+  ]);
+
+  const calculateHmaFromCandles = (candles) => {
+    const closes = (candles || [])
+      .map(c => Number(c?.[4]))
+      .filter(value => Number.isFinite(value));
+    return computeHMA(closes, 50);
+  };
+
+  const setSideHma = (side, timeframe, value) => {
+    if (side === 'PE') setPeHma(prev => ({ ...prev, [timeframe]: value }));
+    if (side === 'CE') setCeHma(prev => ({ ...prev, [timeframe]: value }));
+  };
+
+  const applyLiveTickToHma = (side, timeframe, price, tickTime) => {
+    const sideCandles = liveHmaCandlesRef.current[side] || {};
+    const existing = sideCandles[timeframe];
+    if (!Array.isArray(existing) || !existing.length || !Number.isFinite(price)) return;
+
+    const bucketStart = getBucketStartEpoch(tickTime, timeframe);
+    const candles = existing.slice();
+    const lastIndex = candles.length - 1;
+    const last = candles[lastIndex];
+
+    if (last && last[0] === bucketStart) {
+      candles[lastIndex] = [
+        last[0],
+        last[1],
+        Math.max(Number(last[2]), price),
+        Math.min(Number(last[3]), price),
+        price,
+        last[5]
+      ];
+    } else if (!last || bucketStart > last[0]) {
+      candles.push([bucketStart, price, price, price, price, 0]);
+    } else {
+      return;
+    }
+
+    const trimmed = candles.slice(-240);
+    liveHmaCandlesRef.current = {
+      ...liveHmaCandlesRef.current,
+      [side]: {
+        ...sideCandles,
+        [timeframe]: trimmed
+      }
+    };
+    setSideHma(side, timeframe, calculateHmaFromCandles(trimmed));
+  };
 
   const computeOptionLevels = (candles) => {
     if (!Array.isArray(candles) || !candles.length) return null;
     let low = Infinity;
     let high = -Infinity;
     candles.forEach(c => {
-      if (typeof c?.[3] === 'number' && c[3] < low) low = c[3];
-      if (typeof c?.[2] === 'number' && c[2] > high) high = c[2];
+      const candleLow = Number(c?.[3]);
+      const candleHigh = Number(c?.[2]);
+      if (Number.isFinite(candleLow) && candleLow < low) low = candleLow;
+      if (Number.isFinite(candleHigh) && candleHigh > high) high = candleHigh;
     });
     if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
     const diff = high - low;
     return { low, mid: low + diff * 0.5, high, ext: low + diff * 1.618 };
   };
 
-  const fetchOptionMetrics = async (token, side, timeframe, stateObj, setStateObj) => {
+  const fetchStaticOptionLevels = async (token, side) => {
     if (!token) return;
-    const cacheKey = `${timeframe}`;
-    if (stateObj[cacheKey] != null) return; // already computed
     try {
       const fromDateTime = `${fromDate} 09:15:00`;
       const toDateTime = `${toDate} 15:30:00`;
-      const interval = timeframeToInterval[timeframe];
-      const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, interval);
+      const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, 'minute');
       const candles = data?.candles || [];
       if (candles.length) {
         const lastClose = candles[candles.length - 1]?.[4] ?? null;
@@ -504,14 +567,77 @@ const Analytics = () => {
           setCeFibLevels(levels);
         }
       }
-      const closes = candles.map(c => c[4]);
-      const hmaVal = computeHMA(closes, 50);
-      setStateObj(prev => ({ ...prev, [timeframe]: hmaVal }));
-    } catch (e) { console.warn('HMA fetch failed', e.message); }
+    } catch (e) { console.warn('Option level fetch failed', e.message); }
   };
 
-  useEffect(() => { if (peOptionToken) fetchOptionMetrics(peOptionToken, 'PE', peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe, fromDate, toDate]);
-  useEffect(() => { if (ceOptionToken) fetchOptionMetrics(ceOptionToken, 'CE', ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe, fromDate, toDate]);
+  const fetchLiveHmaSeed = async (token, side, timeframe) => {
+    if (!token || !timeframeToInterval[timeframe]) return;
+    try {
+      const to = new Date();
+      const from = new Date(to);
+      from.setDate(from.getDate() - (liveHmaLookbackDays[timeframe] || 20));
+      const data = await TradingService.getHistoricalData(
+        token,
+        formatDateTimeForKite(from),
+        formatDateTimeForKite(to),
+        timeframeToInterval[timeframe]
+      );
+      const candles = (data?.candles || [])
+        .map(normalizeCandle)
+        .filter(candle => candle.every(value => Number.isFinite(value)));
+
+      liveHmaCandlesRef.current = {
+        ...liveHmaCandlesRef.current,
+        [side]: {
+          ...(liveHmaCandlesRef.current[side] || {}),
+          [timeframe]: candles.slice(-240)
+        }
+      };
+      setSideHma(side, timeframe, calculateHmaFromCandles(candles));
+    } catch (e) { console.warn(`Live ${side} HMA seed fetch failed`, e.message); }
+  };
+
+  useEffect(() => { if (peOptionToken) fetchStaticOptionLevels(peOptionToken, 'PE'); }, [peOptionToken, fromDate, toDate]);
+  useEffect(() => { if (ceOptionToken) fetchStaticOptionLevels(ceOptionToken, 'CE'); }, [ceOptionToken, fromDate, toDate]);
+  useEffect(() => { if (peOptionToken) fetchLiveHmaSeed(peOptionToken, 'PE', peTimeframe); }, [peOptionToken, peTimeframe]);
+  useEffect(() => { if (ceOptionToken) fetchLiveHmaSeed(ceOptionToken, 'CE', ceTimeframe); }, [ceOptionToken, ceTimeframe]);
+
+  // Subscribe to real-time option ticks and update live LTP/HMA.
+  useEffect(() => {
+    const tokens = [peOptionToken, ceOptionToken]
+      .map(token => Number(token))
+      .filter(token => Number.isFinite(token));
+    if (!tokens.length) return undefined;
+
+    TradingService.subscribeToInstruments(tokens);
+    tokens.forEach(token => {
+      if (Number(token) === Number(peOptionToken)) peSubscribed.current = true;
+      if (Number(token) === Number(ceOptionToken)) ceSubscribed.current = true;
+    });
+
+    function handleTicks(ticks) {
+      if (!Array.isArray(ticks)) return;
+      ticks.forEach(t => {
+        const tickToken = Number(t.instrument_token);
+        const price = Number(t.last_price);
+        if (!Number.isFinite(tickToken) || !Number.isFinite(price)) return;
+
+        if (tickToken === Number(peOptionToken)) {
+          setPeLtp(price);
+          lastTickRef.current.pe = Date.now();
+          applyLiveTickToHma('PE', peTimeframeRef.current, price, getTickTime(t));
+        }
+        if (tickToken === Number(ceOptionToken)) {
+          setCeLtp(price);
+          lastTickRef.current.ce = Date.now();
+          applyLiveTickToHma('CE', ceTimeframeRef.current, price, getTickTime(t));
+        }
+      });
+    }
+
+    const unsubscribe = TradingService.subscribeToTicks(handleTicks);
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, [peOptionToken, ceOptionToken]);
   return (
     <div className="analytics-section">
       {/* Header */}
@@ -673,7 +799,7 @@ const Analytics = () => {
                             if (newFromDate) {
                               const fromDateObj = new Date(newFromDate);
                               const newToDateObj = new Date(fromDateObj);
-                              newToDateObj.setDate(newToDateObj.getDate() + 7);
+                              newToDateObj.setDate(newToDateObj.getDate() + 6);
 
                               const maxDate = new Date();
                               maxDate.setDate(maxDate.getDate() - 2);
