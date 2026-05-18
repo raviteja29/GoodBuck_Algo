@@ -406,18 +406,20 @@ function mergeTicksAndRecalculatePnL(positions, ticks) {
 
     const livePrice = tickMap[Number(pos.instrument_token)];
     if (livePrice !== undefined) {
-      pos.last_price = livePrice;
+      const updatedPosition = { ...pos, last_price: livePrice };
 
       // Calculate P&L based on position type (long/short)
       if (pos.quantity > 0) {
         // Long position: current price - average buy price
-        pos.pnl = (livePrice - pos.average_price) * pos.quantity;
+        updatedPosition.pnl = (livePrice - pos.average_price) * pos.quantity;
       } else if (pos.quantity < 0) {
         // Short position: average sell price - current price
-        pos.pnl = (pos.average_price - livePrice) * Math.abs(pos.quantity);
+        updatedPosition.pnl = (pos.average_price - livePrice) * Math.abs(pos.quantity);
       } else {
-        pos.pnl = 0;
+        updatedPosition.pnl = 0;
       }
+
+      return updatedPosition;
     }
 
     return pos;
@@ -880,21 +882,26 @@ class TradingService {
     try {
       console.log(`[TradingService] Fetching quotes for ${instrumentTokens.length} instruments`);
 
-      // Create an object to store all quotes
-      const quotes = {};
+      const tokens = Array.from(new Set(
+        instrumentTokens
+          .map(token => Number(token))
+          .filter(token => Number.isFinite(token))
+      ));
 
-      // For now, fetch quotes one by one until backend supports batch quotes
-      for (const token of instrumentTokens) {
-        try {
-          const quote = await this.getQuote(token);
-          quotes[token] = quote;
-        } catch (error) {
-          console.error(`[TradingService] Error fetching quote for token ${token}: ${error.message}`);
-          quotes[token] = { error: error.message };
-        }
+      if (!tokens.length) return {};
+
+      const response = await fetch(`/api/quotes?tokens=${tokens.join(',')}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: this.getAuthHeaders(),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData && errorData.error ? errorData.error : 'Failed to fetch quotes');
       }
 
-      return quotes;
+      return await response.json();
     } catch (error) {
       console.error(`[TradingService] Error fetching quotes: ${error.message}`);
       throw error;
