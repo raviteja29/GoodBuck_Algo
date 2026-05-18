@@ -34,18 +34,18 @@ const Analytics = () => {
   const peSubscribed = useRef(false);
   const ceSubscribed = useRef(false);
 
-  // Set default dates to a week ago (more likely to have data)
+  // Default to a six-calendar-day range ending six days back, e.g. 06 May -> 12 May on 18 May.
   const getDefaultDates = () => {
     const today = new Date();
-    const endOfWeek = new Date();
-    const twoWeeksAgo = new Date();
+    const to = new Date(today);
 
-    endOfWeek.setDate(today.getDate() - 8);
-    twoWeeksAgo.setDate(today.getDate() - 14);
+    to.setDate(today.getDate() - 6);
+    const from = new Date(to);
+    from.setDate(to.getDate() - 6);
 
     return {
-      from: twoWeeksAgo.toISOString().split('T')[0],
-      to: endOfWeek.toISOString().split('T')[0]
+      from: from.toISOString().split('T')[0],
+      to: to.toISOString().split('T')[0]
     };
   };
 
@@ -276,6 +276,8 @@ const Analytics = () => {
     async function resolveTokens() {
       setPeOptionToken(null); setCeOptionToken(null);
       setPeFibLevels(null); setCeFibLevels(null);
+      setPeHma({ '15m': null, '1h': null, '1d': null });
+      setCeHma({ '15m': null, '1h': null, '1d': null });
       peSubscribed.current = false; ceSubscribed.current = false;
       setPeLtp(null); setCeLtp(null);
       setPeLastClose(null); setCeLastClose(null);
@@ -365,37 +367,6 @@ const Analytics = () => {
     resolveTokens();
     return () => { cancelled = true; };
   }, [selectedInstrument, peStrike, ceStrike, optionExpiry]);
-
-  // Static Fibonacci levels (per option token + date range). Cached so they don't change with live LTP.
-  const fibCacheRef = useRef({}); // key: token|fromDate|toDate
-  useEffect(() => {
-    let cancelled = false;
-    async function computeFib(token, setter, lastCloseSetter) {
-      if (!token || !fromDate || !toDate) return;
-      const key = `${token}|${fromDate}|${toDate}`;
-      if (fibCacheRef.current[key]) { setter(fibCacheRef.current[key]); return; }
-      try {
-        const fromDateTime = `${fromDate} 09:15:00`;
-        const toDateTime = `${toDate} 15:30:00`;
-        const data = await TradingService.getHistoricalData(token, fromDateTime, toDateTime, 'day');
-        const candles = data?.candles || [];
-        if (!candles.length) { if (!cancelled) setter(null); return; }
-        if (!cancelled) lastCloseSetter(candles[candles.length - 1]?.[4] ?? null);
-        let low = Infinity, high = -Infinity;
-        candles.forEach(c => { if (c[3] < low) low = c[3]; if (c[2] > high) high = c[2]; });
-        if (low === Infinity || high === -Infinity) { if (!cancelled) setter(null); return; }
-        const diff = high - low;
-        const fibs = { 0: low, 0.5: low + diff * 0.5, 1: high, 1.618: low + diff * 1.618 };
-        fibCacheRef.current[key] = fibs;
-        if (!cancelled) setter(fibs);
-      } catch (e) {
-        console.warn('Fib fetch failed', e.message);
-      }
-    }
-    if (peOptionToken && !peFibLevels) computeFib(peOptionToken, setPeFibLevels, setPeLastClose);
-    if (ceOptionToken && !ceFibLevels) computeFib(ceOptionToken, setCeFibLevels, setCeLastClose);
-    return () => { cancelled = true; };
-  }, [peOptionToken, ceOptionToken, peFibLevels, ceFibLevels, fromDate, toDate]);
 
   // LTP initial quote & polling fallback if ticks absent
   const lastTickRef = useRef({ pe: null, ce: null });
@@ -498,9 +469,23 @@ const Analytics = () => {
 
   const timeframeToInterval = { '15m': '15minute', '1h': '60minute', '1d': 'day' };
 
-  const fetchHMAIfNeeded = async (token, timeframe, stateObj, setStateObj) => {
+  const computeOptionLevels = (candles) => {
+    if (!Array.isArray(candles) || !candles.length) return null;
+    let low = Infinity;
+    let high = -Infinity;
+    candles.forEach(c => {
+      if (typeof c?.[3] === 'number' && c[3] < low) low = c[3];
+      if (typeof c?.[2] === 'number' && c[2] > high) high = c[2];
+    });
+    if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
+    const diff = high - low;
+    return { low, mid: low + diff * 0.5, high, ext: low + diff * 1.618 };
+  };
+
+  const fetchOptionMetrics = async (token, side, timeframe, stateObj, setStateObj) => {
     if (!token) return;
-    if (stateObj[timeframe] != null) return; // already computed
+    const cacheKey = `${timeframe}`;
+    if (stateObj[cacheKey] != null) return; // already computed
     try {
       const fromDateTime = `${fromDate} 09:15:00`;
       const toDateTime = `${toDate} 15:30:00`;
@@ -509,8 +494,15 @@ const Analytics = () => {
       const candles = data?.candles || [];
       if (candles.length) {
         const lastClose = candles[candles.length - 1]?.[4] ?? null;
-        if (token === peOptionToken) setPeLastClose(lastClose);
-        if (token === ceOptionToken) setCeLastClose(lastClose);
+        const levels = computeOptionLevels(candles);
+        if (side === 'PE') {
+          setPeLastClose(lastClose);
+          setPeFibLevels(levels);
+        }
+        if (side === 'CE') {
+          setCeLastClose(lastClose);
+          setCeFibLevels(levels);
+        }
       }
       const closes = candles.map(c => c[4]);
       const hmaVal = computeHMA(closes, 50);
@@ -518,8 +510,8 @@ const Analytics = () => {
     } catch (e) { console.warn('HMA fetch failed', e.message); }
   };
 
-  useEffect(() => { if (peOptionToken) fetchHMAIfNeeded(peOptionToken, peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe]);
-  useEffect(() => { if (ceOptionToken) fetchHMAIfNeeded(ceOptionToken, ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe]);
+  useEffect(() => { if (peOptionToken) fetchOptionMetrics(peOptionToken, 'PE', peTimeframe, peHma, setPeHma); }, [peOptionToken, peTimeframe, fromDate, toDate]);
+  useEffect(() => { if (ceOptionToken) fetchOptionMetrics(ceOptionToken, 'CE', ceTimeframe, ceHma, setCeHma); }, [ceOptionToken, ceTimeframe, fromDate, toDate]);
   return (
     <div className="analytics-section">
       {/* Header */}

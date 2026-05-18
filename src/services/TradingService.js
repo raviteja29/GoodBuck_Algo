@@ -72,7 +72,7 @@ async function setupWebSocket() {
     // Create new WebSocket instance with the token as a query parameter
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsHost = import.meta.env.DEV
-      ? (import.meta.env.VITE_WS_HOST || 'localhost:5000')
+      ? (import.meta.env.VITE_WS_HOST || new URL(import.meta.env.VITE_API_TARGET || 'http://localhost:5000').host)
       : window.location.host;
     ws = new WebSocket(`${wsProtocol}//${wsHost}/ws?token=${encodeURIComponent(publicToken)}`);
 
