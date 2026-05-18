@@ -29,9 +29,15 @@ const Analytics = () => {
   const [ceLtp, setCeLtp] = useState(null);
   const [peLastClose, setPeLastClose] = useState(null);
   const [ceLastClose, setCeLastClose] = useState(null);
-  const liveHmaCandlesRef = useRef({ PE: {}, CE: {} });
+  const [indexTimeframe, setIndexTimeframe] = useState('15m');
+  const [indexHma, setIndexHma] = useState({ '15m': null, '1h': null, '1d': null });
+  const [indexLtp, setIndexLtp] = useState(null);
+  const liveHmaCandlesRef = useRef({ PE: {}, CE: {}, INDEX: {} });
   const peTimeframeRef = useRef(peTimeframe);
   const ceTimeframeRef = useRef(ceTimeframe);
+  const indexTimeframeRef = useRef(indexTimeframe);
+  const indexLastTickRef = useRef(null);
+  const indexPollRef = useRef(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugInfo, setDebugInfo] = useState({ pe: { candidates: [], resolved: null }, ce: { candidates: [], resolved: null } });
   const peSubscribed = useRef(false);
@@ -175,6 +181,7 @@ const Analytics = () => {
 
   useEffect(() => { peTimeframeRef.current = peTimeframe; }, [peTimeframe]);
   useEffect(() => { ceTimeframeRef.current = ceTimeframe; }, [ceTimeframe]);
+  useEffect(() => { indexTimeframeRef.current = indexTimeframe; }, [indexTimeframe]);
 
   // ================= Strike Derivation Helpers =================
   // Step size: 100 for BANK NIFTY related symbols, else 50
@@ -193,16 +200,40 @@ const Analytics = () => {
     return { high, low };
   };
 
+  const normalizeInstrumentKey = (value = '') => value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const isOptionEligibleSymbol = (symbol, name) => {
+    const keys = [symbol, name].map(normalizeInstrumentKey);
+    return keys.some(key => key === 'NIFTY' || key === 'NIFTY50' || key === 'BANKNIFTY');
+  };
+
+  const isOptionEligibleInstrument = selectedInstrument
+    ? isOptionEligibleSymbol(selectedInstrument.tradingsymbol, selectedInstrument.name)
+    : false;
+
   const { high: normalizedHigh, low: normalizedLow } = normalizeHighLow(highLowData);
+  const normalizedMid = Number.isFinite(Number(normalizedHigh)) && Number.isFinite(Number(normalizedLow))
+    ? (Number(normalizedHigh) + Number(normalizedLow)) / 2
+    : null;
   const strikeStep = getStrikeStep(selectedInstrument?.tradingsymbol);
-  const peStrike = normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null; // Put strike from High (round up)
-  const ceStrike = normalizedLow != null ? roundDownTo(normalizedLow, strikeStep) : null; // Call strike from Low (round down)
+  const peStrike = isOptionEligibleInstrument && normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null; // Put strike from High (round up)
+  const ceStrike = isOptionEligibleInstrument && normalizedLow != null ? roundDownTo(normalizedLow, strikeStep) : null; // Call strike from Low (round down)
+
+  const formatRupee = (value, options = {}) => {
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue)) return '--';
+    return `₹${numberValue.toLocaleString('en-IN', {
+      maximumFractionDigits: options.maximumFractionDigits ?? 2,
+      minimumFractionDigits: options.minimumFractionDigits ?? 0
+    })}`;
+  };
 
   // ================= Option Helpers (Minimal) =================
   const baseSymbolForUnderlying = (sym) => {
     if (!sym) return null;
-    if (/BANK/i.test(sym)) return 'BANKNIFTY';
-    return 'NIFTY';
+    const key = normalizeInstrumentKey(sym);
+    if (key === 'BANKNIFTY') return 'BANKNIFTY';
+    if (key === 'NIFTY' || key === 'NIFTY50') return 'NIFTY';
+    return null;
   };
 
   const getWeeklyExpiryDates = () => {
@@ -285,11 +316,11 @@ const Analytics = () => {
       setPeFibLevels(null); setCeFibLevels(null);
       setPeHma({ '15m': null, '1h': null, '1d': null });
       setCeHma({ '15m': null, '1h': null, '1d': null });
-      liveHmaCandlesRef.current = { PE: {}, CE: {} };
+      liveHmaCandlesRef.current = { PE: {}, CE: {}, INDEX: {} };
       peSubscribed.current = false; ceSubscribed.current = false;
       setPeLtp(null); setCeLtp(null);
       setPeLastClose(null); setCeLastClose(null);
-      if (!selectedInstrument || !peStrike || !ceStrike) return;
+      if (!selectedInstrument || !isOptionEligibleInstrument || !peStrike || !ceStrike) return;
       const under = selectedInstrument.tradingsymbol;
       // Capture expiry context for this resolution cycle
       const { currentWeek, nextWeek } = getWeeklyExpiryDates();
@@ -374,7 +405,7 @@ const Analytics = () => {
     }
     resolveTokens();
     return () => { cancelled = true; };
-  }, [selectedInstrument, peStrike, ceStrike, optionExpiry]);
+  }, [selectedInstrument, isOptionEligibleInstrument, peStrike, ceStrike, optionExpiry]);
 
   // LTP initial quote & polling fallback if ticks absent
   const lastTickRef = useRef({ pe: null, ce: null });
@@ -404,6 +435,7 @@ const Analytics = () => {
       } catch (err) { console.warn('Initial option quote fetch failed', err.message); }
       pollRef.current = setInterval(async () => {
         const now = Date.now();
+        // Only poll if we haven't received a WebSocket tick in the last 5 seconds
         const needPe = peOptionToken && (!lastTickRef.current.pe || now - lastTickRef.current.pe > 5000);
         const needCe = ceOptionToken && (!lastTickRef.current.ce || now - lastTickRef.current.ce > 5000);
         if (!needPe && !needCe) return;
@@ -511,6 +543,7 @@ const Analytics = () => {
   const setSideHma = (side, timeframe, value) => {
     if (side === 'PE') setPeHma(prev => ({ ...prev, [timeframe]: value }));
     if (side === 'CE') setCeHma(prev => ({ ...prev, [timeframe]: value }));
+    if (side === 'INDEX') setIndexHma(prev => ({ ...prev, [timeframe]: value }));
   };
 
   const applyLiveTickToHma = (side, timeframe, price, tickTime) => {
@@ -654,6 +687,83 @@ const Analytics = () => {
     const unsubscribe = TradingService.subscribeToTicks(handleTicks);
     return () => { if (unsubscribe) unsubscribe(); };
   }, [peOptionToken, ceOptionToken]);
+
+  useEffect(() => {
+    setIndexLtp(null);
+    setIndexHma({ '15m': null, '1h': null, '1d': null });
+    indexLastTickRef.current = null;
+    liveHmaCandlesRef.current = {
+      ...liveHmaCandlesRef.current,
+      INDEX: {}
+    };
+  }, [selectedInstrument?.instrument_token]);
+
+  useEffect(() => {
+    if (!selectedInstrument || isOptionEligibleInstrument) return undefined;
+    const token = Number(selectedInstrument.instrument_token);
+    if (!Number.isFinite(token)) return undefined;
+
+    TradingService.subscribeToInstruments([token]);
+
+    function handleIndexTicks(ticks) {
+      if (!Array.isArray(ticks)) return;
+      ticks.forEach(tick => {
+        const tickToken = Number(tick.instrument_token);
+        const price = Number(tick.last_price);
+        if (tickToken !== token || !Number.isFinite(price)) return;
+        setIndexLtp(price);
+        indexLastTickRef.current = Date.now();
+        applyLiveTickToHma('INDEX', indexTimeframeRef.current, price, getTickTime(tick));
+      });
+    }
+
+    const unsubscribe = TradingService.subscribeToTicks(handleIndexTicks);
+    return () => { if (unsubscribe) unsubscribe(); };
+  }, [selectedInstrument?.instrument_token, isOptionEligibleInstrument]);
+
+  useEffect(() => {
+    if (!selectedInstrument || isOptionEligibleInstrument) return undefined;
+    const token = Number(selectedInstrument.instrument_token);
+    if (!Number.isFinite(token)) return undefined;
+    let cancelled = false;
+
+    const pollIndexQuote = async () => {
+      try {
+        const q = await TradingService.getQuote(token);
+        const price = Number(q?.last_price);
+        if (!cancelled && Number.isFinite(price)) {
+          setIndexLtp(price);
+          applyLiveTickToHma('INDEX', indexTimeframeRef.current, price, new Date());
+        }
+      } catch (e) {
+        console.warn('Polling index quote failed', e.message);
+      }
+    };
+
+    pollIndexQuote();
+    if (indexPollRef.current) clearInterval(indexPollRef.current);
+    indexPollRef.current = setInterval(() => {
+      const now = Date.now();
+      if (!indexLastTickRef.current || now - indexLastTickRef.current > 5000) {
+        pollIndexQuote();
+      }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      if (indexPollRef.current) {
+        clearInterval(indexPollRef.current);
+        indexPollRef.current = null;
+      }
+    };
+  }, [selectedInstrument?.instrument_token, isOptionEligibleInstrument]);
+
+  useEffect(() => {
+    if (selectedInstrument && !isOptionEligibleInstrument) {
+      fetchLiveHmaSeed(selectedInstrument.instrument_token, 'INDEX', indexTimeframe);
+    }
+  }, [selectedInstrument?.instrument_token, isOptionEligibleInstrument, indexTimeframe]);
+
   return (
     <div className="analytics-section">
       {/* Header */}
@@ -666,8 +776,10 @@ const Analytics = () => {
 
         </div>
       </div>
-      <div className="debug-toggle" onClick={() => setDebugOpen(o => !o)}>{debugOpen ? 'Hide Option Debug' : 'Show Option Debug'}</div>
-      {debugOpen && (
+      {isOptionEligibleInstrument && (
+        <div className="debug-toggle" onClick={() => setDebugOpen(o => !o)}>{debugOpen ? 'Hide Option Debug' : 'Show Option Debug'}</div>
+      )}
+      {isOptionEligibleInstrument && debugOpen && (
         <div className="option-debug-panel">
           <h4>Option Resolution Debug</h4>
           <div className="expiry-meta">Expiry: {expiryDisplay} ({optionExpiry === 'next' ? 'Next Wk' : 'Current Wk'}) {expiryCode && <span className="expiry-code-chip">{expiryCode}</span>}</div>
@@ -912,17 +1024,37 @@ const Analytics = () => {
               <h3 className="results-title">Analysis Results</h3>
 
               <div className="results-grid">
+                {!isOptionEligibleInstrument && (
+                  <div className="result-card high-card">
+                    <div className="card-header">
+                      <h4 className="card-title">Live Index</h4>
+                      <ArrowTrendingUpIcon className="card-icon high-icon" />
+                    </div>
+                    <div className="card-value high-value">
+                      {typeof indexLtp === 'number' ? formatRupee(indexLtp, { minimumFractionDigits: 2 }) : '--'}
+                    </div>
+                    <div className="hma-row">
+                      <select className="hma-select" value={indexTimeframe} onChange={e => setIndexTimeframe(e.target.value)}>
+                        <option value="15m">15m</option>
+                        <option value="1h">1h</option>
+                        <option value="1d">1d</option>
+                      </select>
+                      <div className="hma-value">HMA50: {typeof indexHma[indexTimeframe] === 'number' ? indexHma[indexTimeframe].toFixed(2) : '--'}</div>
+                    </div>
+                  </div>
+                )}
+
                 {/* High Price Card */}
                 <div className="result-card high-card">
                   <div className="card-header">
-                    <h4 className="card-title">Index high</h4>
+                    <h4 className="card-title">Index High</h4>
                     <ArrowTrendingUpIcon className="card-icon high-icon" />
                   </div>
                   <div className="card-value high-value">
-                    ₹{normalizedHigh?.toLocaleString?.()}
+                    {formatRupee(normalizedHigh)}
                   </div>
 
-                  {peStrike && (
+                  {isOptionEligibleInstrument && peStrike && (
                     <div className="strike-line pe-strike">
                       <div className="strike-header">
                         <span className="strike-label">PE Strike</span>
@@ -974,17 +1106,31 @@ const Analytics = () => {
                   )}
                 </div>
 
+                {/* Mid Price Card */}
+                <div className="result-card range-card">
+                  <div className="card-header">
+                    <h4 className="card-title">Index Mid</h4>
+                    <ChartBarIcon className="card-icon range-icon" />
+                  </div>
+                  <div className="card-value range-value">
+                    {formatRupee(normalizedMid)}
+                  </div>
+                  <div className="card-subtitle">
+                    Midpoint of selected high and low
+                  </div>
+                </div>
+
                 {/* Low Price Card */}
                 <div className="result-card low-card">
                   <div className="card-header">
-                    <h4 className="card-title">Lowest Price</h4>
+                    <h4 className="card-title">Index Low</h4>
                     <ArrowTrendingDownIcon className="card-icon low-icon" />
                   </div>
                   <div className="card-value low-value">
-                    ₹{normalizedLow?.toLocaleString?.()}
+                    {formatRupee(normalizedLow)}
                   </div>
 
-                  {ceStrike && (
+                  {isOptionEligibleInstrument && ceStrike && (
                     <div className="strike-line ce-strike">
                       <div className="strike-header">
                         <span className="strike-label">CE Strike</span>
@@ -1043,11 +1189,11 @@ const Analytics = () => {
                     <ChartBarIcon className="card-icon range-icon" />
                   </div>
                   <div className="card-value range-value">
-                    ₹{(highLowData.high - highLowData.low).toLocaleString()}
+                    {formatRupee(Number(normalizedHigh) - Number(normalizedLow))}
                   </div>
                   <div className="card-subtitle">
-                    {(typeof highLowData.high === 'number' && typeof highLowData.low === 'number' && highLowData.low !== 0)
-                      ? (((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)
+                    {(Number.isFinite(Number(normalizedHigh)) && Number.isFinite(Number(normalizedLow)) && Number(normalizedLow) !== 0)
+                      ? (((Number(normalizedHigh) - Number(normalizedLow)) / Number(normalizedLow)) * 100).toFixed(2)
                       : '--'}% variation
                   </div>
                 </div>
@@ -1074,13 +1220,14 @@ const Analytics = () => {
                   <div className="summary-content">
                     <p>
                       <strong>{selectedInstrument.tradingsymbol}</strong> traded between{' '}
-                      <span className="low-highlight">₹{highLowData.low}</span> and{' '}
-                      <span className="high-highlight">₹{highLowData.high}</span> during the selected period.
+                      <span className="low-highlight">{formatRupee(normalizedLow)}</span> and{' '}
+                      <span className="high-highlight">{formatRupee(normalizedHigh)}</span> during the selected period.
+                      The midpoint is <strong>{formatRupee(normalizedMid)}</strong>.
                     </p>
                     <p>
                       The price range represents a{' '}
-                      <strong>{(typeof highLowData.high === 'number' && typeof highLowData.low === 'number' && highLowData.low !== 0)
-                        ? (((highLowData.high - highLowData.low) / highLowData.low) * 100).toFixed(2)
+                      <strong>{(Number.isFinite(Number(normalizedHigh)) && Number.isFinite(Number(normalizedLow)) && Number(normalizedLow) !== 0)
+                        ? (((Number(normalizedHigh) - Number(normalizedLow)) / Number(normalizedLow)) * 100).toFixed(2)
                         : '--'}%</strong> variation
                       over <strong>{duration} calendar days</strong> with <strong>{highLowData.dataPoints}</strong> trading sessions.
                     </p>
