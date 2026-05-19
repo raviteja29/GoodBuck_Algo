@@ -248,14 +248,23 @@ const Analytics = () => {
     ? (Number(normalizedHigh) + Number(normalizedLow)) / 2
     : null;
   const strikeStep = getStrikeStep(selectedInstrument?.tradingsymbol);
-  const peStrike = isOptionEligibleInstrument && normalizedHigh != null ? roundUpTo(normalizedHigh, strikeStep) : null; // Put strike from High (round up)
-  const ceStrike = isOptionEligibleInstrument && normalizedLow != null ? roundDownTo(normalizedLow, strikeStep) : null; // Call strike from Low (round down)
+  // Helper to get strike for a value and option type
+  const getStrike = (value, type) => {
+    if (!isOptionEligibleInstrument || value == null) return null;
+    return type === 'PE' ? roundUpTo(Number(value), strikeStep) : roundDownTo(Number(value), strikeStep);
+  };
+
+  // For legacy code
+  const peStrike = getStrike(normalizedHigh, 'PE');
+  const ceStrike = getStrike(normalizedLow, 'CE');
+
+  // For all levels, use toggle type for strike
   const levelDefinitions = [
     {
       key: 'high',
       title: 'Index High',
       value: normalizedHigh,
-      strike: isOptionEligibleInstrument && normalizedHigh != null ? roundUpTo(Number(normalizedHigh), strikeStep) : null,
+      strike: getStrike(normalizedHigh, levelOptionTypes.high),
       cardClass: 'high-card',
       valueClass: 'high-value',
       Icon: ArrowTrendingUpIcon,
@@ -265,23 +274,23 @@ const Analytics = () => {
       key: 'mid',
       title: 'Index Mid',
       value: normalizedMid,
-      strike: isOptionEligibleInstrument && normalizedMid != null ? roundNearestTo(Number(normalizedMid), strikeStep) : null,
-      cardClass: 'range-card',
-      valueClass: 'range-value',
+      strike: getStrike(normalizedMid, levelOptionTypes.mid),
+      cardClass: 'mid-card',
+      valueClass: 'mid-value',
       Icon: ChartBarIcon,
-      iconClass: 'range-icon',
-      subtitle: 'Midpoint of selected high and low'
+      iconClass: 'mid-icon'
     },
     {
       key: 'low',
       title: 'Index Low',
       value: normalizedLow,
-      strike: isOptionEligibleInstrument && normalizedLow != null ? roundDownTo(Number(normalizedLow), strikeStep) : null,
+      strike: getStrike(normalizedLow, levelOptionTypes.low),
       cardClass: 'low-card',
       valueClass: 'low-value',
       Icon: ArrowTrendingDownIcon,
       iconClass: 'low-icon'
     }
+  ];
   ];
 
   const formatRupee = (value, options = {}) => {
@@ -1535,6 +1544,51 @@ const Analytics = () => {
           )}
         </div>
       </div>
+
+      {/* Spreads Section */}
+      {isOptionEligibleInstrument && highLowData && (
+        <div className="spreads-section">
+          <h3 className="spreads-title">Spreads Analysis</h3>
+          <div className="spreads-toggles">
+            <button className={`spread-toggle-btn ${spreadType === 'debit' ? 'active' : ''}`} onClick={() => setSpreadType('debit')}>Debit Spreads</button>
+            <button className={`spread-toggle-btn ${spreadType === 'credit' ? 'active' : ''}`} onClick={() => setSpreadType('credit')}>Credit Spreads</button>
+            <button className={`spread-toggle-btn ${spreadLeg === 'CE' ? 'active' : ''}`} onClick={() => setSpreadLeg('CE')}>CE</button>
+            <button className={`spread-toggle-btn ${spreadLeg === 'PE' ? 'active' : ''}`} onClick={() => setSpreadLeg('PE')}>PE</button>
+          </div>
+          <div className="spreads-table-wrap">
+            <table className="spreads-table">
+              <thead>
+                <tr>
+                  <th>Buy Strike</th>
+                  <th>Sell Strike</th>
+                  <th>Buy LTP</th>
+                  <th>Sell LTP</th>
+                  <th>Max Risk</th>
+                  <th>Max Reward</th>
+                  <th>Risk:Reward</th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* Map over computedSpreads and render rows */}
+                {computedSpreads.map((spread, idx) => (
+                  <tr key={idx} className={spread.highlight ? 'highlight' : ''}>
+                    <td>{spread.buyStrike}</td>
+                    <td>{spread.sellStrike}</td>
+                    <td>{spread.buyLtp != null ? `₹${spread.buyLtp.toFixed(2)}` : '--'}</td>
+                    <td>{spread.sellLtp != null ? `₹${spread.sellLtp.toFixed(2)}` : '--'}</td>
+                    <td>{spread.maxRisk != null ? `₹${spread.maxRisk.toFixed(2)}` : '--'}</td>
+                    <td>{spread.maxReward != null ? `₹${spread.maxReward.toFixed(2)}` : '--'}</td>
+                    <td>{spread.riskReward != null ? spread.riskReward.toFixed(2) : '--'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="spreads-tips">
+            <span>Highlighted rows match 1:1, 1:1.5, 1:2 risk:reward.</span>
+          </div>
+        </div>
+      )}
 
       {/* Instrument Search Modal */}
       {showInstrumentSearch && (
