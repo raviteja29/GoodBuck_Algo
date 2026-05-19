@@ -30,6 +30,14 @@ const RiskManager = () => {
   const [error, setError] = useState(null);
   const [chain, setChain] = useState(emptyChain);
   const [chainTokens, setChainTokens] = useState([]);
+  const [chainStrikes, setChainStrikes] = useState([]);
+  const [spreadMode, setSpreadMode] = useState('debit');
+  const [ticket, setTicket] = useState(null);
+  const [lots, setLots] = useState(1);
+  const [productType, setProductType] = useState('NRML');
+  const [confirmOrder, setConfirmOrder] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const [placementSteps, setPlacementSteps] = useState([]);
   const [lastLiveAt, setLastLiveAt] = useState(null);
   const tokenToContractRef = useRef({});
   const pollRef = useRef(null);
@@ -39,7 +47,8 @@ const RiskManager = () => {
     ? (Number(high) + Number(low)) / 2
     : null;
   const strikeStep = 50;
-  const strikes = useMemo(() => getNearbyStrikes(mid, strikeStep, 8), [mid]);
+  const previewStrikes = useMemo(() => getNearbyStrikes(mid, strikeStep, 8), [mid]);
+  const strikes = chainStrikes.length ? chainStrikes : previewStrikes;
   const selectedExpiryDate = getSelectedExpiryDate(optionExpiry);
   const expiryDisplay = selectedExpiryDate.toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -56,6 +65,7 @@ const RiskManager = () => {
     setHighLowData(null);
     setChain(emptyChain());
     setChainTokens([]);
+    setChainStrikes([]);
     setError(null);
   };
 
@@ -84,7 +94,12 @@ const RiskManager = () => {
         `${fromDate} 09:15:00`,
         `${toDate} 15:30:00`
       );
+      const { high: analyzedHigh, low: analyzedLow } = normalizeHighLow(data);
+      const analyzedMid = Number.isFinite(Number(analyzedHigh)) && Number.isFinite(Number(analyzedLow))
+        ? (Number(analyzedHigh) + Number(analyzedLow)) / 2
+        : null;
       setHighLowData(data);
+      setChainStrikes(getNearbyStrikes(analyzedMid, strikeStep, 8));
     } catch (e) {
       setError(e.message || 'Unable to fetch index range');
     } finally {
@@ -259,16 +274,90 @@ const RiskManager = () => {
   }, [chainTokens]);
 
   const debitSpreads = useMemo(() => ({
-    CE: pickTargetDebitSpreads(calculateDebitSpreads('CE', chain.CE)),
-    PE: pickTargetDebitSpreads(calculateDebitSpreads('PE', chain.PE))
-  }), [chain]);
+    CE: pickTargetSpreads(calculateSpreadMatrix(spreadMode, 'CE', chain.CE)),
+    PE: pickTargetSpreads(calculateSpreadMatrix(spreadMode, 'PE', chain.PE))
+  }), [chain, spreadMode]);
+
+  const handleOpenTicket = (spread) => {
+    setTicket(spread);
+    setLots(1);
+    setConfirmOrder(false);
+    setPlacementSteps([]);
+  };
+
+  const handlePlaceSpread = async () => {
+    if (!ticket || placing || !confirmOrder) return;
+
+    const quantity = getSpreadQuantity(ticket, lots);
+    const buyOrder = buildOrderParams(ticket.buyContract, 'BUY', quantity, productType);
+    const nextSteps = [];
+
+    setPlacing(true);
+    setPlacementSteps([{ label: 'Buy leg', status: 'placing', message: `${buyOrder.tradingsymbol} ${quantity}` }]);
+
+    try {
+      const buyResult = await TradingService.placeOrder(buyOrder);
+      const buySnapshot = await fetchOrderSnapshot(getOrderId(buyResult));
+      const buyStepStatus = getOrderStepStatus(buySnapshot);
+      const buyFilledQuantity = getFilledQuantity(buySnapshot, quantity);
+      nextSteps.push({
+        label: 'Buy leg',
+        status: buyStepStatus,
+        message: formatOrderStepMessage(buyResult, buySnapshot, quantity)
+      });
+
+      if (buyStepStatus === 'failed') {
+        nextSteps.push({
+          label: 'Sell leg',
+          status: 'blocked',
+          message: 'Sell leg was not sent because the buy leg did not confirm.'
+        });
+        setPlacementSteps(nextSteps);
+        return;
+      }
+
+      const sellQuantity = buyFilledQuantity > 0 ? buyFilledQuantity : quantity;
+      const sellOrder = buildOrderParams(ticket.sellContract, 'SELL', sellQuantity, productType);
+      setPlacementSteps([...nextSteps, {
+        label: 'Sell leg',
+        status: 'placing',
+        message: `${sellOrder.tradingsymbol} ${sellQuantity}`
+      }]);
+
+      try {
+        const sellResult = await TradingService.placeOrder(sellOrder);
+        const sellSnapshot = await fetchOrderSnapshot(getOrderId(sellResult));
+        nextSteps.push({
+          label: 'Sell leg',
+          status: getOrderStepStatus(sellSnapshot),
+          message: formatOrderStepMessage(sellResult, sellSnapshot, sellQuantity)
+        });
+        setPlacementSteps(nextSteps);
+      } catch (sellError) {
+        nextSteps.push({
+          label: 'Sell leg',
+          status: 'failed',
+          message: sellError.message || 'Sell leg failed after buy leg was submitted'
+        });
+        setPlacementSteps(nextSteps);
+      }
+    } catch (buyError) {
+      setPlacementSteps([{
+        label: 'Buy leg',
+        status: 'failed',
+        message: buyError.message || 'Buy leg failed. Sell leg was not sent.'
+      }]);
+    } finally {
+      setPlacing(false);
+    }
+  };
 
   return (
     <div className="risk-manager">
       <div className="risk-header">
         <div>
           <h1><ShieldCheckIcon /> Risk Manager</h1>
-          <p>Live debit-spread finder for CE and PE structures around the analyzed index midpoint.</p>
+          <p>Live debit and credit spread finder for CE and PE structures around the analyzed index midpoint.</p>
         </div>
         <div className={`risk-live-pill ${lastLiveAt ? 'active' : ''}`}>
           <span />
@@ -348,8 +437,20 @@ const RiskManager = () => {
       <section className="risk-spread-board">
         <div className="risk-board-header">
           <div>
-            <h2>Debit Spread Matrix</h2>
+            <h2>{spreadMode === 'debit' ? 'Debit' : 'Credit'} Spread Matrix</h2>
             <p>Closest live spreads for 1:1, 1:1.5 and 1:2 reward-to-risk.</p>
+          </div>
+          <div className="spread-mode-toggle" role="group" aria-label="Spread type">
+            {['debit', 'credit'].map(mode => (
+              <button
+                key={mode}
+                type="button"
+                className={spreadMode === mode ? 'active' : ''}
+                onClick={() => setSpreadMode(mode)}
+              >
+                {mode === 'debit' ? 'Debit' : 'Credit'}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -359,7 +460,9 @@ const RiskManager = () => {
               key={optionType}
               optionType={optionType}
               spreads={debitSpreads[optionType]}
+              mode={spreadMode}
               loading={chainLoading}
+              onTrade={handleOpenTicket}
             />
           ))}
         </div>
@@ -413,6 +516,24 @@ const RiskManager = () => {
           onClose={() => setShowInstrumentSearch(false)}
         />
       )}
+
+      {ticket && (
+        <TradeTicket
+          spread={ticket}
+          lots={lots}
+          setLots={setLots}
+          productType={productType}
+          setProductType={setProductType}
+          confirmOrder={confirmOrder}
+          setConfirmOrder={setConfirmOrder}
+          placing={placing}
+          placementSteps={placementSteps}
+          onClose={() => {
+            if (!placing) setTicket(null);
+          }}
+          onPlace={handlePlaceSpread}
+        />
+      )}
     </div>
   );
 
@@ -426,19 +547,20 @@ const RiskManager = () => {
   }
 };
 
-const SpreadPanel = ({ optionType, spreads, loading }) => (
+const SpreadPanel = ({ optionType, spreads, mode, loading, onTrade }) => (
   <div className={`spread-panel ${optionType.toLowerCase()}`}>
     <div className="spread-panel-title">
-      <h3>{optionType} Debit Spreads</h3>
-      <span>{optionType === 'CE' ? 'Buy lower strike, sell higher strike' : 'Buy higher strike, sell lower strike'}</span>
+      <h3>{optionType} {mode === 'debit' ? 'Debit' : 'Credit'} Spreads</h3>
+      <span>{getSpreadDescription(mode, optionType)}</span>
     </div>
     <div className="spread-row-grid spread-head">
       <span>Target</span>
       <span>Buy</span>
       <span>Sell</span>
-      <span>Debit</span>
+      <span>{mode === 'debit' ? 'Debit' : 'Credit'}</span>
       <span>Max Profit</span>
       <span>Live R:R</span>
+      <span>Action</span>
     </div>
     {spreads.map(spread => (
       spread.buyStrike ? (
@@ -449,6 +571,9 @@ const SpreadPanel = ({ optionType, spreads, loading }) => (
           <span>{formatRupee(spread.maxRisk)}</span>
           <span>{formatRupee(spread.maxReward)}</span>
           <span className="rr-value">1:{spread.rewardRisk.toFixed(2)}</span>
+          <button className="spread-trade-btn" type="button" onClick={() => onTrade(spread)}>
+            Trade
+          </button>
         </div>
       ) : (
         <div className="spread-empty-row" key={`${optionType}-${spread.target}`}>
@@ -457,6 +582,118 @@ const SpreadPanel = ({ optionType, spreads, loading }) => (
         </div>
       )
     ))}
+  </div>
+);
+
+const TradeTicket = ({
+  spread,
+  lots,
+  setLots,
+  productType,
+  setProductType,
+  confirmOrder,
+  setConfirmOrder,
+  placing,
+  placementSteps,
+  onClose,
+  onPlace
+}) => {
+  const quantity = getSpreadQuantity(spread, lots);
+  const premiumLabel = spread.mode === 'credit' ? 'Estimated credit' : 'Estimated debit';
+
+  return (
+    <div className="ticket-backdrop" role="presentation">
+      <div className="trade-ticket" role="dialog" aria-modal="true" aria-label="Confirm spread trade">
+        <div className="ticket-header">
+          <div>
+            <span className="ticket-kicker">{spread.optionType} {spread.mode} spread</span>
+            <h3>{spread.target} Reward-to-Risk</h3>
+          </div>
+          <button type="button" onClick={onClose} disabled={placing}>Close</button>
+        </div>
+
+        <div className="ticket-leg-grid">
+          <LegCard title="Buy leg" contract={spread.buyContract} action="BUY" />
+          <LegCard title="Sell leg" contract={spread.sellContract} action="SELL" />
+        </div>
+
+        <div className="ticket-controls">
+          <label>
+            Lots
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={lots}
+              onChange={e => setLots(Math.max(1, Number(e.target.value) || 1))}
+            />
+          </label>
+          <label>
+            Quantity
+            <input value={quantity} readOnly />
+          </label>
+          <label>
+            Product
+            <select value={productType} onChange={e => setProductType(e.target.value)}>
+              <option value="NRML">NRML</option>
+              <option value="MIS">MIS</option>
+            </select>
+          </label>
+          <label>
+            Order type
+            <input value="MARKET" readOnly />
+          </label>
+        </div>
+
+        <div className="ticket-risk-grid">
+          <div><span>{premiumLabel}</span><strong>{formatRupee(spread.netPremium)}</strong></div>
+          <div><span>Max risk</span><strong>{formatRupee(spread.maxRisk)}</strong></div>
+          <div><span>Max reward</span><strong>{formatRupee(spread.maxReward)}</strong></div>
+          <div><span>Live R:R</span><strong>1:{spread.rewardRisk.toFixed(2)}</strong></div>
+        </div>
+
+        <label className="ticket-confirm">
+          <input
+            type="checkbox"
+            checked={confirmOrder}
+            onChange={e => setConfirmOrder(e.target.checked)}
+            disabled={placing}
+          />
+          I understand this will place live broker orders. Place buy leg first, then sell leg.
+        </label>
+
+        {!!placementSteps.length && (
+          <div className="ticket-steps">
+            {placementSteps.map(step => (
+              <div className={`ticket-step ${step.status}`} key={step.label}>
+                <span>{step.label}</span>
+                <strong>{step.status}</strong>
+                <small>{step.message}</small>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="ticket-actions">
+          <button type="button" className="ticket-secondary" onClick={onClose} disabled={placing}>Cancel</button>
+          <button type="button" className="ticket-primary" onClick={onPlace} disabled={!confirmOrder || placing}>
+            {placing ? 'Placing orders...' : 'Place spread'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const LegCard = ({ title, contract, action }) => (
+  <div className={`ticket-leg ${action.toLowerCase()}`}>
+    <span>{title}</span>
+    <h4>{contract?.symbol || '--'}</h4>
+    <div>
+      <small>{action}</small>
+      <small>Strike {contract?.strike || '--'}</small>
+      <small>LTP {formatRupee(contract?.ltp)}</small>
+    </div>
   </div>
 );
 
@@ -560,7 +797,9 @@ async function resolveContract(underlyingSymbol, strike, optionType, optionExpir
           strike,
           optionType,
           symbol: instrument.tradingsymbol || symbol,
-          token: instrument.instrument_token || instrument.token
+          token: instrument.instrument_token || instrument.token,
+          exchange: instrument.exchange || 'NFO',
+          lotSize: Number(instrument.lot_size || instrument.lotSize || instrument.lotsize || 1) || 1
         };
       }
     } catch (e) {
@@ -590,7 +829,7 @@ function getQuoteLastPrice(quote) {
   return Number.isFinite(price) ? price : null;
 }
 
-function calculateDebitSpreads(optionType, quotesByStrike) {
+function calculateSpreadMatrix(mode, optionType, quotesByStrike) {
   const sortedStrikes = Object.keys(quotesByStrike)
     .map(Number)
     .filter(Number.isFinite)
@@ -599,22 +838,29 @@ function calculateDebitSpreads(optionType, quotesByStrike) {
 
   sortedStrikes.forEach((buyStrike, buyIndex) => {
     sortedStrikes.forEach((sellStrike, sellIndex) => {
-      const validDirection = optionType === 'CE' ? sellIndex > buyIndex : sellIndex < buyIndex;
+      const validDirection = getSpreadDirection(mode, optionType, buyIndex, sellIndex);
       if (!validDirection) return;
 
-      const buyLtp = Number(quotesByStrike[buyStrike]?.ltp);
-      const sellLtp = Number(quotesByStrike[sellStrike]?.ltp);
+      const buyContract = quotesByStrike[buyStrike];
+      const sellContract = quotesByStrike[sellStrike];
+      const buyLtp = Number(buyContract?.ltp);
+      const sellLtp = Number(sellContract?.ltp);
       const width = Math.abs(sellStrike - buyStrike);
-      const maxRisk = buyLtp - sellLtp;
-      const maxReward = width - maxRisk;
+      const netPremium = mode === 'credit' ? sellLtp - buyLtp : buyLtp - sellLtp;
+      const maxRisk = mode === 'credit' ? width - netPremium : netPremium;
+      const maxReward = mode === 'credit' ? netPremium : width - netPremium;
       if (!Number.isFinite(maxRisk) || maxRisk <= 0 || maxReward <= 0) return;
 
       spreads.push({
+        mode,
         optionType,
         buyStrike,
         sellStrike,
+        buyContract,
+        sellContract,
         buyLtp,
         sellLtp,
+        netPremium,
         maxRisk,
         maxReward,
         rewardRisk: maxReward / maxRisk
@@ -625,7 +871,15 @@ function calculateDebitSpreads(optionType, quotesByStrike) {
   return spreads;
 }
 
-function pickTargetDebitSpreads(spreads) {
+function getSpreadDirection(mode, optionType, buyIndex, sellIndex) {
+  if (mode === 'debit') {
+    return optionType === 'CE' ? sellIndex > buyIndex : sellIndex < buyIndex;
+  }
+
+  return optionType === 'CE' ? buyIndex > sellIndex : buyIndex < sellIndex;
+}
+
+function pickTargetSpreads(spreads) {
   return TARGETS.map(target => {
     const match = spreads.reduce((best, spread) => {
       const distance = Math.abs(spread.rewardRisk - target.value);
@@ -638,6 +892,89 @@ function pickTargetDebitSpreads(spreads) {
       ...(match?.spread || {})
     };
   });
+}
+
+function getSpreadDescription(mode, optionType) {
+  if (mode === 'debit') {
+    return optionType === 'CE'
+      ? 'Buy lower strike, sell higher strike'
+      : 'Buy higher strike, sell lower strike';
+  }
+
+  return optionType === 'CE'
+    ? 'Buy higher hedge, sell lower strike'
+    : 'Buy lower hedge, sell higher strike';
+}
+
+function getSpreadQuantity(spread, lots) {
+  const lotSize = Math.max(
+    Number(spread?.buyContract?.lotSize) || 1,
+    Number(spread?.sellContract?.lotSize) || 1
+  );
+  return Math.max(1, Number(lots) || 1) * lotSize;
+}
+
+function buildOrderParams(contract, transactionType, quantity, productType) {
+  return {
+    exchange: contract.exchange || 'NFO',
+    tradingsymbol: contract.symbol,
+    transaction_type: transactionType,
+    quantity,
+    product: productType,
+    order_type: 'MARKET',
+    validity: 'DAY'
+  };
+}
+
+function getOrderId(orderResult) {
+  return orderResult?.order_id || orderResult?.orderId || orderResult?.id || null;
+}
+
+async function fetchOrderSnapshot(orderId) {
+  if (!orderId) return null;
+  await sleep(900);
+  try {
+    const orders = await TradingService.getOrders();
+    return Array.isArray(orders)
+      ? orders.find(order => String(order.order_id) === String(orderId))
+      : null;
+  } catch (e) {
+    console.warn('Unable to verify order status', e.message);
+    return null;
+  }
+}
+
+function getOrderStepStatus(order) {
+  const status = String(order?.status || '').toUpperCase();
+  if (['REJECTED', 'CANCELLED'].includes(status)) return 'failed';
+
+  const filled = Number(order?.filled_quantity || 0);
+  const quantity = Number(order?.quantity || 0);
+  if (quantity > 0 && filled > 0 && filled < quantity) return 'partial';
+
+  return 'placed';
+}
+
+function getFilledQuantity(order, fallbackQuantity) {
+  const filled = Number(order?.filled_quantity);
+  if (Number.isFinite(filled) && filled > 0) return filled;
+  return fallbackQuantity;
+}
+
+function formatOrderStepMessage(orderResult, order, requestedQuantity) {
+  const orderId = getOrderId(orderResult) || order?.order_id || 'submitted';
+  const status = order?.status ? `Status ${order.status}` : 'Submitted';
+  const filled = Number(order?.filled_quantity);
+  const quantity = Number(order?.quantity || requestedQuantity);
+  const fillText = Number.isFinite(filled) && quantity
+    ? `, filled ${filled}/${quantity}`
+    : `, quantity ${requestedQuantity}`;
+  const message = order?.status_message ? `, ${order.status_message}` : '';
+  return `Order ${orderId}: ${status}${fillText}${message}`;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function countContracts(chain) {
