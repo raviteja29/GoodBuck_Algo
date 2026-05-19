@@ -216,11 +216,10 @@ const Analytics = () => {
   }, [levelOptions.high.timeframe, levelOptions.mid.timeframe, levelOptions.low.timeframe]);
 
   // ================= Strike Derivation Helpers =================
-  // Step size: 100 for BANK NIFTY related symbols, else 50
-  const getStrikeStep = (symbol) => /BANK/i.test(symbol || '') ? 100 : 50;
+  // Use 50-point strike buckets for index analysis.
+  const getStrikeStep = () => 50;
   const roundUpTo = (val, step) => (typeof val === 'number') ? Math.ceil(val / step) * step : null;
   const roundDownTo = (val, step) => (typeof val === 'number') ? Math.floor(val / step) * step : null;
-  const roundNearestTo = (val, step) => (typeof val === 'number') ? Math.round(val / step) * step : null;
 
   // Normalize potential key name variations (defensive)
   const normalizeHighLow = (data) => {
@@ -247,7 +246,7 @@ const Analytics = () => {
   const normalizedMid = Number.isFinite(Number(normalizedHigh)) && Number.isFinite(Number(normalizedLow))
     ? (Number(normalizedHigh) + Number(normalizedLow)) / 2
     : null;
-  const strikeStep = getStrikeStep(selectedInstrument?.tradingsymbol);
+  const strikeStep = getStrikeStep();
   // Helper to get strike for a value and option type
   const getStrike = (value, type) => {
     if (!isOptionEligibleInstrument || value == null) return null;
@@ -1199,6 +1198,223 @@ const Analytics = () => {
     );
   };
 
+  // Spread analysis state
+  const [debitSpreadRecommendations, setDebitSpreadRecommendations] = useState({ CE: [], PE: [] });
+  const [spreadLoading, setSpreadLoading] = useState(false);
+  const [spreadError, setSpreadError] = useState(null);
+
+  // Utility to get all strikes in a range around ATM
+  const getNearbyStrikes = (atm, step, count = 8) => {
+    if (!atm || !step) return [];
+    const base = Math.round(atm / step) * step;
+    const strikes = [];
+    for (let i = -count; i <= count; i++) {
+      strikes.push(base + i * step);
+    }
+    return strikes.filter((v, i, arr) => arr.indexOf(v) === i && v > 0);
+  };
+
+  const getQuoteLastPrice = (quote) => {
+    const price = Number(quote?.last_price ?? quote?.ltp ?? quote?.lastPrice);
+    return Number.isFinite(price) ? price : null;
+  };
+
+  const resolveSpreadOptionQuote = async (strike, optionType) => {
+    const candidates = buildOptionSymbolCandidates(
+      selectedInstrument.tradingsymbol,
+      strike,
+      optionType,
+      optionExpiry
+    );
+    const resolved = await resolveOptionInstrument(candidates, `Spread ${optionType} ${strike}`);
+    if (!resolved?.token) return null;
+
+    const quote = await TradingService.getQuote(resolved.token);
+    const ltp = getQuoteLastPrice(quote);
+    if (!Number.isFinite(ltp)) return null;
+
+    return {
+      strike,
+      optionType,
+      token: resolved.token,
+      symbol: resolved.symbol,
+      ltp
+    };
+  };
+
+  const calculateDebitSpreads = (optionType, quotesByStrike) => {
+    const sortedStrikes = Object.keys(quotesByStrike)
+      .map(Number)
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    const spreads = [];
+
+    sortedStrikes.forEach((buyStrike, buyIndex) => {
+      sortedStrikes.forEach((sellStrike, sellIndex) => {
+        const isValidDirection = optionType === 'CE'
+          ? sellIndex > buyIndex
+          : sellIndex < buyIndex;
+        if (!isValidDirection) return;
+
+        const buyLtp = quotesByStrike[buyStrike]?.ltp;
+        const sellLtp = quotesByStrike[sellStrike]?.ltp;
+        const width = Math.abs(sellStrike - buyStrike);
+        const maxRisk = buyLtp - sellLtp;
+        const maxReward = width - maxRisk;
+
+        if (maxRisk <= 0 || maxReward <= 0) return;
+
+        spreads.push({
+          optionType,
+          buyStrike,
+          sellStrike,
+          buyLtp,
+          sellLtp,
+          maxRisk,
+          maxReward,
+          rewardRisk: maxReward / maxRisk
+        });
+      });
+    });
+
+    return spreads;
+  };
+
+  const pickTargetDebitSpreads = (spreads) => {
+    const targets = [
+      { label: '1:1', value: 1 },
+      { label: '1:1.5', value: 1.5 },
+      { label: '1:2', value: 2 }
+    ];
+
+    return targets.map(target => {
+      const match = spreads.reduce((best, spread) => {
+        const distance = Math.abs(spread.rewardRisk - target.value);
+        if (!best || distance < best.distance) return { spread, distance };
+        return best;
+      }, null);
+
+      return {
+        target: target.label,
+        targetValue: target.value,
+        ...(match?.spread || {})
+      };
+    });
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function buildDebitSpreadRecommendations() {
+      if (!isOptionEligibleInstrument || !selectedInstrument || !highLowData || !normalizedMid) {
+        setDebitSpreadRecommendations({ CE: [], PE: [] });
+        setSpreadLoading(false);
+        setSpreadError(null);
+        return;
+      }
+
+      setSpreadLoading(true);
+      setSpreadError(null);
+
+      try {
+        const strikes = getNearbyStrikes(normalizedMid, strikeStep, 8);
+        const nextRecommendations = { CE: [], PE: [] };
+
+        await Promise.all(['CE', 'PE'].map(async (optionType) => {
+          const quoteResults = await Promise.all(
+            strikes.map(strike => resolveSpreadOptionQuote(strike, optionType).catch(() => null))
+          );
+          const quotesByStrike = quoteResults
+            .filter(Boolean)
+            .reduce((acc, quote) => {
+              acc[quote.strike] = quote;
+              return acc;
+            }, {});
+
+          nextRecommendations[optionType] = pickTargetDebitSpreads(
+            calculateDebitSpreads(optionType, quotesByStrike)
+          );
+        }));
+
+        if (!cancelled) {
+          setDebitSpreadRecommendations(nextRecommendations);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setDebitSpreadRecommendations({ CE: [], PE: [] });
+          setSpreadError(e.message || 'Unable to calculate debit spreads');
+        }
+      } finally {
+        if (!cancelled) setSpreadLoading(false);
+      }
+    }
+
+    buildDebitSpreadRecommendations();
+    return () => { cancelled = true; };
+  }, [
+    isOptionEligibleInstrument,
+    selectedInstrument?.tradingsymbol,
+    highLowData,
+    normalizedMid,
+    strikeStep,
+    optionExpiry
+  ]);
+
+  const renderDebitSpreadTable = (optionType) => {
+    const spreads = debitSpreadRecommendations[optionType] || [];
+
+    return (
+      <div className={`debit-spread-card ${optionType.toLowerCase()}`}>
+        <div className="debit-spread-card-header">
+          <h4>{optionType} Debit Spreads</h4>
+          <span>{optionType === 'CE' ? 'Buy lower, sell higher' : 'Buy higher, sell lower'}</span>
+        </div>
+        <div className="spreads-table-wrap">
+          <table className="spreads-table">
+            <thead>
+              <tr>
+                <th>Target</th>
+                <th>Buy Strike</th>
+                <th>Sell Strike</th>
+                <th>Buy LTP</th>
+                <th>Sell LTP</th>
+                <th>Max Risk</th>
+                <th>Max Reward</th>
+                <th>R:R</th>
+              </tr>
+            </thead>
+            <tbody>
+              {spreads.map((spread) => (
+                spread.buyStrike ? (
+                  <tr key={`${optionType}-${spread.target}`}>
+                    <td>{spread.target}</td>
+                    <td>{spread.buyStrike}</td>
+                    <td>{spread.sellStrike}</td>
+                    <td>{formatRupee(spread.buyLtp, { minimumFractionDigits: 2 })}</td>
+                    <td>{formatRupee(spread.sellLtp, { minimumFractionDigits: 2 })}</td>
+                    <td>{formatRupee(spread.maxRisk, { minimumFractionDigits: 2 })}</td>
+                    <td>{formatRupee(spread.maxReward, { minimumFractionDigits: 2 })}</td>
+                    <td>1:{spread.rewardRisk.toFixed(2)}</td>
+                  </tr>
+                ) : (
+                  <tr key={`${optionType}-${spread.target}`}>
+                    <td>{spread.target}</td>
+                    <td colSpan="7">No matching spread found from available quotes</td>
+                  </tr>
+                )
+              ))}
+              {!spreads.length && (
+                <tr>
+                  <td colSpan="8">{spreadLoading ? 'Resolving spreads...' : 'No spreads available'}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="analytics-section">
       {/* Header */}
@@ -1225,8 +1441,8 @@ const Analytics = () => {
                 <div className="debug-block" key={level.key}>
                   <h5>{level.title} {levelOptionTypes[level.key]} Candidates</h5>
                   <ul>{(optionData.candidates || []).map(c => <li key={c} className={optionData.resolved?.symbol === c ? 'resolved' : ''}>{c}</li>)}</ul>
-                  <div className="resolved-line">Resolved: {optionData.resolved ? `${optionData.resolved.symbol} -> ${optionData.resolved.token} (${optionData.resolved.method})` : '—'}</div>
-                  <div className="ltp-line">LTP: {optionData.ltp != null ? optionData.ltp : '—'}</div>
+                  <div className="resolved-line">Resolved: {optionData.resolved ? `${optionData.resolved.symbol} -> ${optionData.resolved.token} (${optionData.resolved.method})` : '-'}</div>
+                  <div className="ltp-line">LTP: {optionData.ltp != null ? optionData.ltp : '-'}</div>
                 </div>
               );
             })}
@@ -1290,8 +1506,8 @@ const Analytics = () => {
                         <span className="tips-title">Guidelines</span>
                       </div>
                       <ul className="tips-list">
-                        <li>Use dates ending ≥ 2 days ago</li>
-                        <li>Range ≤ 10 days for performance</li>
+                        <li>Use dates ending &gt;= 2 days ago</li>
+                        <li>Range &lt;= 10 days for performance</li>
                         <li>Weekends auto-excluded</li>
                       </ul>
                     </div>
@@ -1403,7 +1619,7 @@ const Analytics = () => {
 
                   {/* Inline Extended Tips (optional expansion could be future) */}
                   <div className="inline-help" role="note">
-                    <p>Market hours applied automatically (09:15–15:30). Holidays excluded.</p>
+                    <p>Market hours applied automatically (09:15-15:30). Holidays excluded.</p>
                   </div>
 
                   {/* Actions */}
@@ -1547,44 +1763,17 @@ const Analytics = () => {
       {/* Spreads Section */}
       {isOptionEligibleInstrument && highLowData && (
         <div className="spreads-section">
-          <h3 className="spreads-title">Spreads Analysis</h3>
-          <div className="spreads-toggles">
-            <button className={`spread-toggle-btn ${spreadType === 'debit' ? 'active' : ''}`} onClick={() => setSpreadType('debit')}>Debit Spreads</button>
-            <button className={`spread-toggle-btn ${spreadType === 'credit' ? 'active' : ''}`} onClick={() => setSpreadType('credit')}>Credit Spreads</button>
-            <button className={`spread-toggle-btn ${spreadLeg === 'CE' ? 'active' : ''}`} onClick={() => setSpreadLeg('CE')}>CE</button>
-            <button className={`spread-toggle-btn ${spreadLeg === 'PE' ? 'active' : ''}`} onClick={() => setSpreadLeg('PE')}>PE</button>
+          <div className="spreads-section-header">
+            <div>
+              <h3 className="spreads-title">Risk: Debit Spreads</h3>
+              <p>Closest available CE and PE verticals for 1:1, 1:1.5 and 1:2 reward-to-risk.</p>
+            </div>
+            <span className="spreads-expiry-chip">{expiryDisplay.split(',')[0]}</span>
           </div>
-          <div className="spreads-table-wrap">
-            <table className="spreads-table">
-              <thead>
-                <tr>
-                  <th>Buy Strike</th>
-                  <th>Sell Strike</th>
-                  <th>Buy LTP</th>
-                  <th>Sell LTP</th>
-                  <th>Max Risk</th>
-                  <th>Max Reward</th>
-                  <th>Risk:Reward</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* Map over computedSpreads and render rows */}
-                {computedSpreads.map((spread, idx) => (
-                  <tr key={idx} className={spread.highlight ? 'highlight' : ''}>
-                    <td>{spread.buyStrike}</td>
-                    <td>{spread.sellStrike}</td>
-                    <td>{spread.buyLtp != null ? `₹${spread.buyLtp.toFixed(2)}` : '--'}</td>
-                    <td>{spread.sellLtp != null ? `₹${spread.sellLtp.toFixed(2)}` : '--'}</td>
-                    <td>{spread.maxRisk != null ? `₹${spread.maxRisk.toFixed(2)}` : '--'}</td>
-                    <td>{spread.maxReward != null ? `₹${spread.maxReward.toFixed(2)}` : '--'}</td>
-                    <td>{spread.riskReward != null ? spread.riskReward.toFixed(2) : '--'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="spreads-tips">
-            <span>Highlighted rows match 1:1, 1:1.5, 1:2 risk:reward.</span>
+          {spreadError && <div className="spreads-error">{spreadError}</div>}
+          <div className="debit-spreads-grid">
+            {renderDebitSpreadTable('CE')}
+            {renderDebitSpreadTable('PE')}
           </div>
         </div>
       )}
