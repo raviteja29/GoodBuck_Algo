@@ -291,7 +291,6 @@ const Analytics = () => {
       iconClass: 'low-icon'
     }
   ];
-  ];
 
   const formatRupee = (value, options = {}) => {
     const numberValue = Number(value);
