@@ -14,6 +14,7 @@ import TradingService from '../../services/TradingService';
 import MarketIndices from './MarketIndices';
 import Strategies from '../Strategies';
 import Analytics from '../Analytics';
+import RiskManager from '../RiskManager';
 
 const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   const [positions, setPositions] = useState([]);
@@ -729,6 +730,10 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
 
   if (activeSection === 'analytics') {
     return <Analytics />;
+  }
+
+  if (activeSection === 'risk') {
+    return <RiskManager />;
   }
 
   if (activeSection !== 'dashboard') {
