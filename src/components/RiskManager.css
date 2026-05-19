@@ -3,8 +3,8 @@
   padding: 1.5rem;
   margin-left: 72px;
   color: var(--text-primary);
-  background: radial-gradient(circle at 20% 0%, rgba(34, 197, 94, 0.08), transparent 30%),
-    radial-gradient(circle at 80% 0%, rgba(59, 130, 246, 0.08), transparent 28%),
+  background: radial-gradient(circle at 16% 0%, rgba(34, 197, 94, 0.16), transparent 32%),
+    radial-gradient(circle at 76% 2%, rgba(59, 130, 246, 0.18), transparent 30%),
     var(--bg-primary);
 }
 
@@ -70,11 +70,12 @@
   grid-template-columns: minmax(220px, 1.4fr) auto repeat(3, minmax(150px, 0.7fr)) auto;
   gap: 0.75rem;
   align-items: end;
-  background: rgba(15, 23, 42, 0.78);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(20, 30, 48, 0.82));
+  border: 1px solid rgba(96, 165, 250, 0.22);
   border-radius: 12px;
   padding: 1rem;
   margin-bottom: 1rem;
+  box-shadow: 0 14px 40px rgba(2, 6, 23, 0.34);
 }
 
 .risk-field {
@@ -231,11 +232,12 @@
 
 .risk-spread-board,
 .risk-chain {
-  background: rgba(15, 23, 42, 0.78);
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.86), rgba(2, 6, 23, 0.74));
+  border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 12px;
   padding: 1rem;
   margin-bottom: 1rem;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.26);
 }
 
 .risk-board-header {
@@ -253,6 +255,34 @@
   font-weight: 800;
 }
 
+.spread-mode-toggle {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: rgba(2, 6, 23, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 10px;
+}
+
+.spread-mode-toggle button {
+  border: 0;
+  border-radius: 8px;
+  padding: 0.52rem 0.85rem;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.spread-mode-toggle button.active {
+  color: #f8fafc;
+  background: linear-gradient(135deg, #16a34a, #2563eb);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.24);
+}
+
 .spread-panels {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -264,7 +294,7 @@
   border: 1px solid rgba(148, 163, 184, 0.15);
   border-radius: 10px;
   overflow: hidden;
-  background: rgba(2, 6, 23, 0.36);
+  background: rgba(2, 6, 23, 0.46);
 }
 
 .spread-panel.ce {
@@ -298,7 +328,7 @@
 
 .spread-row-grid {
   display: grid;
-  grid-template-columns: 0.75fr repeat(5, minmax(82px, 1fr));
+  grid-template-columns: 0.72fr repeat(5, minmax(78px, 1fr)) 74px;
   gap: 0.55rem;
   align-items: center;
   padding: 0.7rem 0.85rem;
@@ -331,6 +361,21 @@
 .target-badge,
 .rr-value {
   color: #bfdbfe !important;
+}
+
+.spread-trade-btn {
+  border: 0;
+  border-radius: 7px;
+  color: #03130a;
+  background: linear-gradient(135deg, #4ade80, #22c55e);
+  padding: 0.42rem 0.55rem;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.spread-trade-btn:hover {
+  filter: brightness(1.08);
 }
 
 .spread-empty-row {
@@ -388,6 +433,245 @@
   background: rgba(59, 130, 246, 0.08);
 }
 
+.ticket-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(2, 6, 23, 0.76);
+  backdrop-filter: blur(10px);
+}
+
+.trade-ticket {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.98), rgba(7, 13, 25, 0.98));
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+  padding: 1rem;
+}
+
+.ticket-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.ticket-kicker {
+  color: #93c5fd;
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ticket-header h3 {
+  margin: 0.2rem 0 0;
+  color: #f8fafc;
+  font-size: 1.1rem;
+}
+
+.ticket-header button,
+.ticket-secondary {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: rgba(30, 41, 59, 0.65);
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.ticket-leg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.ticket-leg {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 10px;
+  padding: 0.85rem;
+  background: rgba(2, 6, 23, 0.45);
+}
+
+.ticket-leg.buy {
+  border-color: rgba(34, 197, 94, 0.32);
+}
+
+.ticket-leg.sell {
+  border-color: rgba(248, 113, 113, 0.32);
+}
+
+.ticket-leg span {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  margin-bottom: 0.35rem;
+}
+
+.ticket-leg h4 {
+  margin: 0 0 0.65rem;
+  color: #f8fafc;
+  font-size: 0.92rem;
+}
+
+.ticket-leg div,
+.ticket-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.ticket-leg small,
+.ticket-risk-grid span {
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.ticket-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.85rem;
+}
+
+.ticket-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ticket-controls input,
+.ticket-controls select {
+  min-height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  color: #f8fafc;
+  background: rgba(2, 6, 23, 0.65);
+  padding: 0.5rem 0.65rem;
+  font-weight: 800;
+}
+
+.ticket-risk-grid {
+  margin-bottom: 0.85rem;
+}
+
+.ticket-risk-grid div {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 9px;
+  padding: 0.7rem;
+  background: rgba(30, 41, 59, 0.46);
+}
+
+.ticket-risk-grid strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 0.92rem;
+  margin-top: 0.25rem;
+}
+
+.ticket-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  color: rgba(226, 232, 240, 0.88);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 9px;
+  padding: 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin-bottom: 0.85rem;
+}
+
+.ticket-steps {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.ticket-step {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.2rem 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  background: rgba(2, 6, 23, 0.45);
+}
+
+.ticket-step span {
+  color: #f8fafc;
+  font-weight: 900;
+  font-size: 0.78rem;
+}
+
+.ticket-step strong {
+  color: #93c5fd;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.ticket-step small {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+}
+
+.ticket-step.placed strong {
+  color: #4ade80;
+}
+
+.ticket-step.partial strong {
+  color: #fbbf24;
+}
+
+.ticket-step.failed strong {
+  color: #f87171;
+}
+
+.ticket-step.blocked strong {
+  color: #cbd5e1;
+}
+
+.ticket-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.ticket-primary {
+  border: 0;
+  border-radius: 8px;
+  color: #03130a;
+  background: linear-gradient(135deg, #4ade80, #22c55e);
+  padding: 0.62rem 0.9rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 950;
+}
+
+.ticket-primary:disabled,
+.ticket-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 @media (max-width: 1180px) {
   .risk-control-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -406,13 +690,18 @@
   }
 
   .risk-header,
-  .spread-panel-title {
+  .risk-board-header,
+  .spread-panel-title,
+  .ticket-header {
     flex-direction: column;
   }
 
   .risk-control-panel,
   .risk-summary-strip,
-  .spread-panels {
+  .spread-panels,
+  .ticket-leg-grid,
+  .ticket-controls,
+  .ticket-risk-grid {
     grid-template-columns: 1fr;
   }
 
