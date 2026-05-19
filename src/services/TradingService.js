@@ -639,7 +639,9 @@ class TradingService {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData && errorData.error ? errorData.error : 'Failed to place order');
+      const error = new Error(errorData && errorData.error ? errorData.error : 'Failed to place order');
+      error.details = errorData;
+      throw error;
     }
 
     return await response.json();

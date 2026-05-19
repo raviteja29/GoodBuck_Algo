@@ -337,7 +337,7 @@ const RiskManager = () => {
         nextSteps.push({
           label: 'Sell leg',
           status: 'failed',
-          message: sellError.message || 'Sell leg failed after buy leg was submitted'
+          message: formatPlacementError(sellError, 'Sell leg failed after buy leg was submitted')
         });
         setPlacementSteps(nextSteps);
       }
@@ -345,7 +345,7 @@ const RiskManager = () => {
       setPlacementSteps([{
         label: 'Buy leg',
         status: 'failed',
-        message: buyError.message || 'Buy leg failed. Sell leg was not sent.'
+        message: formatPlacementError(buyError, 'Buy leg failed. Sell leg was not sent.')
       }]);
     } finally {
       setPlacing(false);
@@ -557,7 +557,7 @@ const SpreadPanel = ({ optionType, spreads, mode, loading, onTrade }) => (
       <span>Target</span>
       <span>Buy</span>
       <span>Sell</span>
-      <span>{mode === 'debit' ? 'Debit' : 'Credit'}</span>
+      <span>Breakeven</span>
       <span>Max Profit</span>
       <span>Live R:R</span>
       <span>Action</span>
@@ -568,7 +568,7 @@ const SpreadPanel = ({ optionType, spreads, mode, loading, onTrade }) => (
           <span className="target-badge">{spread.target}</span>
           <span>{spread.buyStrike}<small>{formatRupee(spread.buyLtp)}</small></span>
           <span>{spread.sellStrike}<small>{formatRupee(spread.sellLtp)}</small></span>
-          <span>{formatRupee(spread.maxRisk)}</span>
+          <span>{formatPoint(spread.breakeven)}</span>
           <span>{formatRupee(spread.maxReward)}</span>
           <span className="rr-value">1:{spread.rewardRisk.toFixed(2)}</span>
           <button className="spread-trade-btn" type="button" onClick={() => onTrade(spread)}>
@@ -647,6 +647,7 @@ const TradeTicket = ({
 
         <div className="ticket-risk-grid">
           <div><span>{premiumLabel}</span><strong>{formatRupee(spread.netPremium)}</strong></div>
+          <div><span>Breakeven</span><strong>{formatPoint(spread.breakeven)}</strong></div>
           <div><span>Max risk</span><strong>{formatRupee(spread.maxRisk)}</strong></div>
           <div><span>Max reward</span><strong>{formatRupee(spread.maxReward)}</strong></div>
           <div><span>Live R:R</span><strong>1:{spread.rewardRisk.toFixed(2)}</strong></div>
@@ -849,6 +850,7 @@ function calculateSpreadMatrix(mode, optionType, quotesByStrike) {
       const netPremium = mode === 'credit' ? sellLtp - buyLtp : buyLtp - sellLtp;
       const maxRisk = mode === 'credit' ? width - netPremium : netPremium;
       const maxReward = mode === 'credit' ? netPremium : width - netPremium;
+      const breakeven = calculateBreakeven(mode, optionType, buyStrike, sellStrike, netPremium);
       if (!Number.isFinite(maxRisk) || maxRisk <= 0 || maxReward <= 0) return;
 
       spreads.push({
@@ -861,6 +863,7 @@ function calculateSpreadMatrix(mode, optionType, quotesByStrike) {
         buyLtp,
         sellLtp,
         netPremium,
+        breakeven,
         maxRisk,
         maxReward,
         rewardRisk: maxReward / maxRisk
@@ -869,6 +872,13 @@ function calculateSpreadMatrix(mode, optionType, quotesByStrike) {
   });
 
   return spreads;
+}
+
+function calculateBreakeven(mode, optionType, buyStrike, sellStrike, netPremium) {
+  const anchorStrike = mode === 'credit' ? sellStrike : buyStrike;
+  return optionType === 'CE'
+    ? anchorStrike + netPremium
+    : anchorStrike - netPremium;
 }
 
 function getSpreadDirection(mode, optionType, buyIndex, sellIndex) {
@@ -973,6 +983,14 @@ function formatOrderStepMessage(orderResult, order, requestedQuantity) {
   return `Order ${orderId}: ${status}${fillText}${message}`;
 }
 
+function formatPlacementError(error, fallback) {
+  if (error?.details?.broker_setup_required) {
+    return `${error.message} ${error.details.resolution || ''}`.trim();
+  }
+
+  return error?.message || fallback;
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -988,6 +1006,15 @@ function formatRupee(value) {
     maximumFractionDigits: 2,
     minimumFractionDigits: 0
   })}`;
+}
+
+function formatPoint(value) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return '--';
+  return numberValue.toLocaleString('en-IN', {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0
+  });
 }
 
 function formatLtp(contract) {

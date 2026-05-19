@@ -8,7 +8,11 @@ import {
   BoltIcon,
   PlusIcon,
   EyeIcon,
-  AdjustmentsHorizontalIcon
+  AdjustmentsHorizontalIcon,
+  PlayIcon,
+  PauseIcon,
+  StopIcon,
+  ShieldCheckIcon
 } from '@heroicons/react/24/outline';
 import TradingService from '../../services/TradingService';
 import MarketIndices from './MarketIndices';
@@ -16,10 +20,12 @@ import Strategies from '../Strategies';
 import Analytics from '../Analytics';
 import RiskManager from '../RiskManager';
 
-const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
+const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo: _userInfo }) => {
+  void _dashboardData;
+  void _userInfo;
+
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [watchlist, setWatchlist] = useState([]);
   const [holdings, setHoldings] = useState([]);
   const [realTimeData, setRealTimeData] = useState({});
   const [margins, setMargins] = useState(null);
@@ -253,6 +259,46 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
     const dayPnl = pos.day_pnl || pos.realised || 0;
     return sum + dayPnl;
   }, 0);
+
+  const activePositions = positions.filter(p => p.quantity !== 0);
+  const pendingOrders = orders.filter(o => o.status === 'PENDING');
+  const holdingsPnl = holdings?.reduce((sum, holding) => sum + (holding?.pnl || holding?.unrealised || holding?.m2m || 0), 0) || 0;
+  const strategyCards = [
+    {
+      name: 'NIFTY Range Breakout',
+      mode: 'Paper',
+      status: 'Live scan',
+      pnl: todayPnL * 0.42,
+      allocation: 250000,
+      checks: '1m',
+      deployments: 1
+    },
+    {
+      name: 'Bank Index Spread Engine',
+      mode: 'Live',
+      status: 'Guarded',
+      pnl: todayPnL * 0.35,
+      allocation: 400000,
+      checks: '15s',
+      deployments: 2
+    },
+    {
+      name: 'Expiry Risk Balancer',
+      mode: 'Paper',
+      status: 'Paused',
+      pnl: todayPnL * 0.23,
+      allocation: 150000,
+      checks: '5m',
+      deployments: 1
+    }
+  ];
+  const marketTapeItems = [
+    { symbol: 'NIFTY', label: 'Nifty 50', value: 'Live', change: totalPnL >= 0 ? '+Bias' : '-Bias', tone: totalPnL >= 0 ? 'positive' : 'negative' },
+    { symbol: 'BANKNIFTY', label: 'Bank Nifty', value: `${activePositions.length} Pos`, change: 'Options', tone: 'neutral' },
+    { symbol: 'ORDERS', label: 'Order Flow', value: pendingOrders.length, change: 'Pending', tone: pendingOrders.length ? 'warning' : 'positive' },
+    { symbol: 'MARGIN', label: 'Available', value: `₹${getAvailableMargin(margins).toLocaleString()}`, change: 'Cash', tone: 'positive' },
+    { symbol: 'RISK', label: 'Used Margin', value: `₹${getUsedMargin(margins).toLocaleString()}`, change: 'Guard', tone: 'neutral' }
+  ];
   
   // Debug P&L calculation
   if (positions.length > 0) {
@@ -274,26 +320,30 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
   }
 
   // Performance Card Component
-  const PerformanceCard = ({ title, value, subtitle, icon: Icon, trend, className = "" }) => (
-    <div className={`grid-item performance-card ${className}`}>
-      <div className="card-header">
-        <h3 className="card-title">{title}</h3>
-        <Icon className="card-icon" />
+  const PerformanceCard = ({ title, value, subtitle, icon, trend, className = "" }) => {
+    const CardIcon = icon;
+
+    return (
+      <div className={`grid-item performance-card ${className}`}>
+        <div className="card-header">
+          <h3 className="card-title">{title}</h3>
+          <CardIcon className="card-icon" />
+        </div>
+        <div className={`card-value ${value >= 0 ? 'positive' : 'negative'}`}>
+          ₹{Math.abs(value).toLocaleString()}
+        </div>
+        <div className="card-subtitle">
+          {subtitle}
+          {trend && (
+            <div className={`change-indicator ${trend >= 0 ? 'positive' : 'negative'}`}>
+              {trend >= 0 ? <ArrowTrendingUpIcon /> : <ArrowTrendingDownIcon />}
+              {Math.abs(trend).toFixed(2)}%
+            </div>
+          )}
+        </div>
       </div>
-      <div className={`card-value ${value >= 0 ? 'positive' : 'negative'}`}>
-        ₹{Math.abs(value).toLocaleString()}
-      </div>
-      <div className="card-subtitle">
-        {subtitle}
-        {trend && (
-          <div className={`change-indicator ${trend >= 0 ? 'positive' : 'negative'}`}>
-            {trend >= 0 ? <ArrowTrendingUpIcon /> : <ArrowTrendingDownIcon />}
-            {Math.abs(trend).toFixed(2)}%
-          </div>
-        )}
-      </div>
-    </div>
-  );
+    );
+  };
 
   // Connection Status Indicator
   const ConnectionStatus = () => (
@@ -340,6 +390,102 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
         </div>
       </div>
     </div>
+  );
+
+  const WorkspaceHeader = () => (
+    <section className="workspace-hero">
+      <div className="workspace-copy">
+        <div className="workspace-kicker">GoodBuck Workspace</div>
+        <h1>Markets, strategies and risk in one cockpit.</h1>
+        <p>
+          Track live positions, monitor created strategies, and move from analysis to execution without losing context.
+        </p>
+      </div>
+      <div className="workspace-actions">
+        <button className="workspace-btn primary">
+          <BoltIcon />
+          Quick Order
+        </button>
+        <button className="workspace-btn">
+          <ShieldCheckIcon />
+          Risk Manager
+        </button>
+      </div>
+    </section>
+  );
+
+  const MarketTape = () => (
+    <section className="market-tape">
+      {marketTapeItems.map(item => (
+        <div className={`tape-tile ${item.tone}`} key={item.symbol}>
+          <div>
+            <span className="tape-symbol">{item.symbol}</span>
+            <span className="tape-label">{item.label}</span>
+          </div>
+          <strong>{item.value}</strong>
+          <small>{item.change}</small>
+        </div>
+      ))}
+    </section>
+  );
+
+  const StrategyCommandCenter = () => (
+    <section className="grid-item grid-12x1 strategy-command-center">
+      <div className="command-header">
+        <div>
+          <h3>Strategy Command Center</h3>
+          <p>Created strategies with deploy-style controls, allocation and live run state.</p>
+        </div>
+        <div className="command-tabs">
+          <button className="active">Created</button>
+          <button>Deployed</button>
+          <button>Paper</button>
+        </div>
+      </div>
+      <div className="strategy-command-grid">
+        {strategyCards.map(strategy => (
+          <article className="strategy-command-card" key={strategy.name}>
+            <div className="strategy-card-top">
+              <div>
+                <h4>{strategy.name}</h4>
+                <span>{strategy.mode} · {strategy.checks} checks</span>
+              </div>
+              <span className={`strategy-state ${strategy.status.toLowerCase().replace(/\s+/g, '-')}`}>
+                {strategy.status}
+              </span>
+            </div>
+            <div className="strategy-metrics-row">
+              <div>
+                <span>Today P&L</span>
+                <strong className={strategy.pnl >= 0 ? 'positive' : 'negative'}>
+                  ₹{Math.abs(strategy.pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </strong>
+              </div>
+              <div>
+                <span>Allocation</span>
+                <strong>₹{strategy.allocation.toLocaleString()}</strong>
+              </div>
+              <div>
+                <span>Deployments</span>
+                <strong>{strategy.deployments}</strong>
+              </div>
+            </div>
+            <div className="strategy-card-actions">
+              <button title="Start strategy">
+                <PlayIcon />
+              </button>
+              <button title="Pause strategy">
+                <PauseIcon />
+              </button>
+              <button title="Stop strategy">
+                <StopIcon />
+              </button>
+              <button className="inspect">Inspect</button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 
   // Premium loading skeleton component
@@ -753,6 +899,9 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
 
   return (
     <div className="dashboard-grid">
+      <WorkspaceHeader />
+      <MarketTape />
+
       {/* Performance Cards Row */}
       <PerformanceCard 
         title="Total P&L"
@@ -784,7 +933,7 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
           </div>
           <div className="stat-item">
             <div className="stat-label">Holdings P&L</div>
-            <div className="stat-value">₹{(holdings?.reduce((sum, holding) => sum + (holding?.pnl || holding?.unrealised || holding?.m2m || 0), 0) || 0).toLocaleString()}</div>
+            <div className="stat-value">₹{holdingsPnl.toLocaleString()}</div>
           </div>
         </div>
       </div>
@@ -809,6 +958,8 @@ const DashboardGrid = ({ activeSection, dashboardData, userInfo }) => {
           </div>
         </div>
       </div>
+
+      <StrategyCommandCenter />
 
       {/* Positions Table - Full Width */}
       <PositionsTable />

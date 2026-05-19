@@ -394,7 +394,16 @@ app.post('/api/orders', async (req, res) => {
     res.json(order);
   } catch (err) {
     console.error('Order place error:', err);
-    res.status(500).json({ error: err.message });
+    const message = err.message || 'Order placement failed';
+    const isIpConfigError = /No IPs configured|allowed IPs/i.test(message);
+    res.status(isIpConfigError ? 403 : 500).json({
+      error: message,
+      error_type: err.error_type,
+      broker_setup_required: isIpConfigError,
+      resolution: isIpConfigError
+        ? 'Configure allowed IPs for this Kite app. If deployed on Render, use a static outbound IP or run orders from an allowed machine/IP.'
+        : undefined
+    });
   }
 });
 
