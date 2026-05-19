@@ -19,6 +19,7 @@ import MarketIndices from './MarketIndices';
 import Strategies from '../Strategies';
 import Analytics from '../Analytics';
 import RiskManager from '../RiskManager';
+import './DashboardGrid.css';
 
 const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo: _userInfo }) => {
   void _dashboardData;
@@ -396,9 +397,9 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
     <section className="workspace-hero">
       <div className="workspace-copy">
         <div className="workspace-kicker">GoodBuck Workspace</div>
-        <h1>Markets, strategies and risk in one cockpit.</h1>
+        <h1>Trading Dashboard</h1>
         <p>
-          Track live positions, monitor created strategies, and move from analysis to execution without losing context.
+          Live positions, strategy control and risk checks arranged for fast intraday decisions.
         </p>
       </div>
       <div className="workspace-actions">
@@ -900,7 +901,6 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
   return (
     <div className="dashboard-grid">
       <WorkspaceHeader />
-      <MarketTape />
 
       {/* Performance Cards Row */}
       <PerformanceCard 
@@ -912,6 +912,7 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
       />
       
       <MarketIndices className="grid-3x1" />
+      <MarketTape />
       
       <div className="grid-item grid-3x1">
         <div className="card-header">
