@@ -120,12 +120,8 @@ const Analytics = () => {
       return;
     }
 
-    // Check if the date range is too recent (less than 2 days ago for more flexibility)
-    const twoDaysAgo = new Date();
-    twoDaysAgo.setDate(today.getDate() - 2);
-
-    if (toDateObj > twoDaysAgo) {
-      setError('Please select a date range that ends at least 2 days ago. Recent data may not be available due to processing delays.');
+    if (toDateObj > today) {
+      setError('Please select a date range that does not end in the future.');
       return;
     }
 
@@ -1289,7 +1285,7 @@ const Analytics = () => {
                         <span className="tips-title">Guidelines</span>
                       </div>
                       <ul className="tips-list">
-                        <li>Use dates ending &gt;= 2 days ago</li>
+                        <li>Today is allowed for intraday data</li>
                         <li>Range &lt;= 10 days for performance</li>
                         <li>Weekends auto-excluded</li>
                       </ul>
@@ -1361,7 +1357,6 @@ const Analytics = () => {
                               newToDateObj.setDate(newToDateObj.getDate() + 6);
 
                               const maxDate = new Date();
-                              maxDate.setDate(maxDate.getDate() - 2);
 
                               if (newToDateObj > maxDate) {
                                 setToDate(maxDate.toISOString().split('T')[0]);
@@ -1373,7 +1368,6 @@ const Analytics = () => {
                           className="date-input compact"
                           max={(() => {
                             const maxDate = new Date();
-                            maxDate.setDate(maxDate.getDate() - 2);
                             return maxDate.toISOString().split('T')[0];
                           })()}
                           aria-label="From date (must be earlier than To date)"
@@ -1391,7 +1385,6 @@ const Analytics = () => {
                           min={fromDate}
                           max={(() => {
                             const maxDate = new Date();
-                            maxDate.setDate(maxDate.getDate() - 2);
                             return maxDate.toISOString().split('T')[0];
                           })()}
                           aria-label="To date (must be after From date)"
