@@ -415,3 +415,194 @@
 .sidebar-nav::-webkit-scrollbar-thumb:hover {
   background: var(--text-tertiary);
 }
+
+/* Terminal dashboard sidebar overrides */
+.trading-sidebar {
+  top: 48px;
+  width: 256px;
+  height: calc(100vh - 48px);
+  background: #17202b;
+  border-right: 1px solid #3c4a42;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  z-index: 300;
+}
+
+.trading-sidebar.collapsed {
+  width: 80px;
+}
+
+.sidebar-nav {
+  padding: 16px 8px;
+}
+
+.sidebar-terminal-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 8px 20px;
+  border: 1px solid #3c4a42;
+  border-radius: 6px;
+  background: #131c27;
+  padding: 8px;
+}
+
+.terminal-avatar {
+  display: flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #44f0af;
+  border-radius: 50%;
+  color: #44f0af;
+  background: #050f19;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sidebar-terminal-profile strong,
+.sidebar-terminal-profile span {
+  display: block;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.sidebar-terminal-profile strong {
+  color: #d9e3f3;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.sidebar-terminal-profile span {
+  color: #44f0af;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+}
+
+.trading-sidebar.collapsed .sidebar-terminal-profile {
+  justify-content: center;
+  margin-inline: 8px;
+}
+
+.nav-section {
+  margin-bottom: 18px;
+}
+
+.nav-section-title {
+  color: #85948a;
+  border-bottom: 1px solid rgba(60, 74, 66, 0.42);
+  font-size: 10px;
+  line-height: 12px;
+  margin: 0 12px 8px;
+}
+
+.nav-items,
+.nav-items-collapsed {
+  gap: 4px;
+  padding: 0;
+}
+
+.nav-item {
+  min-height: 44px;
+  gap: 14px;
+  border-radius: 0;
+  color: #bacabf;
+  padding: 12px 16px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.trading-sidebar.collapsed .nav-item {
+  min-height: 44px;
+  padding: 10px;
+}
+
+.nav-item:hover,
+.trading-sidebar.collapsed .nav-item:hover {
+  color: #d9e3f3;
+  background: #2c3641;
+  transform: none;
+}
+
+.nav-item.active,
+.trading-sidebar.collapsed .nav-item.active {
+  color: #00553a;
+  background: #00d395;
+  border-left: 4px solid #44f0af;
+  box-shadow: none;
+  transform: scale(0.98);
+}
+
+.nav-item-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.nav-item-badge {
+  border-radius: 3px;
+  background: #44f0af;
+  color: #003825;
+}
+
+.strategy-monitor {
+  border-top: 1px solid #3c4a42;
+  background: #212b36;
+  padding: 12px;
+}
+
+.monitor-title,
+.strategy-name {
+  color: #d9e3f3;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.monitor-title {
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.stats-label,
+.strategy-status {
+  color: #bacabf;
+}
+
+.strategy-item {
+  border-color: rgba(60, 74, 66, 0.72);
+  border-radius: 4px;
+  background: #131c27;
+}
+
+.strategy-item:hover {
+  border-color: #44f0af;
+  background: #17202b;
+  transform: none;
+}
+
+.action-btn.primary {
+  border-radius: 4px;
+  background: #44f0af;
+  color: #003825;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+@media (max-width: 768px) {
+  .trading-sidebar {
+    width: 80px;
+    transform: translateX(0);
+  }
+
+  .trading-sidebar.collapsed {
+    transform: translateX(0);
+  }
+
+  .trading-sidebar .strategy-monitor {
+    display: none;
+  }
+}

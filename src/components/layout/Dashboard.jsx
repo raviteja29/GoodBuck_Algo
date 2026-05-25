@@ -6,7 +6,7 @@ import TradingService from '../../services/TradingService';
 import './Dashboard.css';
 
 const Dashboard = ({ userInfo, onLogout }) => {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeSection, setActiveSection] = useState('dashboard');
   const [dashboardData, setDashboardData] = useState({
     totalPnL: 0,
@@ -63,6 +63,7 @@ const Dashboard = ({ userInfo, onLogout }) => {
         collapsed={sidebarCollapsed}
         activeSection={activeSection}
         onSectionChange={handleSectionChange}
+        onLogout={onLogout}
       />
       
       <main className={`dashboard-main ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>

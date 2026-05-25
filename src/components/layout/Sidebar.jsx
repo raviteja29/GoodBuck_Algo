@@ -1,24 +1,21 @@
 import React, { useState } from 'react';
 import {
-  HomeIcon,
   ChartBarIcon,
   CogIcon,
   BoltIcon,
   DocumentChartBarIcon,
   ShieldCheckIcon,
-  BellIcon,
-  CurrencyDollarIcon,
   ClockIcon,
   PlayIcon,
   PauseIcon,
   StopIcon,
   EyeIcon,
-  CheckCircleIcon,
-  ExclamationCircleIcon
+  LockClosedIcon,
+  PowerIcon
 } from '@heroicons/react/24/outline';
 import './Sidebar.css';
 
-const Sidebar = ({ collapsed, activeSection, onSectionChange }) => {
+const Sidebar = ({ collapsed, activeSection, onSectionChange, onLogout }) => {
   const [strategies] = useState([
     { id: 1, name: 'NIFTY Momentum', status: 'running', pnl: '+₹12,450' },
     { id: 2, name: 'Bank Index Scalp', status: 'running', pnl: '+₹8,230' },
@@ -28,8 +25,8 @@ const Sidebar = ({ collapsed, activeSection, onSectionChange }) => {
   const navigationItems = [
     {
       id: 'dashboard',
-      label: 'Dashboard',
-      icon: HomeIcon,
+      label: 'Live Trade',
+      icon: ChartBarIcon,
       section: 'main'
     },
     {
@@ -47,27 +44,20 @@ const Sidebar = ({ collapsed, activeSection, onSectionChange }) => {
     },
     {
       id: 'backtest',
-      label: 'Backtesting',
+      label: 'Lab',
       icon: DocumentChartBarIcon,
       section: 'main'
     },
     {
       id: 'risk',
-      label: 'Risk Manager',
+      label: 'Portfolio',
       icon: ShieldCheckIcon,
       section: 'tools'
     },
     {
-      id: 'alerts',
-      label: 'Alerts',
-      icon: BellIcon,
-      section: 'tools',
-      badge: 3
-    },
-    {
       id: 'portfolio',
-      label: 'Portfolio',
-      icon: CurrencyDollarIcon,
+      label: 'Security',
+      icon: LockClosedIcon,
       section: 'tools'
     },
     {
@@ -80,6 +70,12 @@ const Sidebar = ({ collapsed, activeSection, onSectionChange }) => {
       id: 'settings',
       label: 'Settings',
       icon: CogIcon,
+      section: 'system'
+    },
+    {
+      id: 'logout',
+      label: 'Logout',
+      icon: PowerIcon,
       section: 'system'
     }
   ];
@@ -123,7 +119,7 @@ const Sidebar = ({ collapsed, activeSection, onSectionChange }) => {
       <button
         key={item.id}
         className={`nav-item ${isActive ? 'active' : ''}`}
-        onClick={() => onSectionChange(item.id)}
+        onClick={() => item.id === 'logout' ? onLogout?.() : onSectionChange(item.id)}
         title={collapsed ? item.label : ''}
       >
         <div className="nav-item-icon">
@@ -149,6 +145,16 @@ const Sidebar = ({ collapsed, activeSection, onSectionChange }) => {
     <aside className={`trading-sidebar glass ${collapsed ? 'collapsed' : ''}`}>
       {/* Main Navigation */}
       <nav className="sidebar-nav">
+        <div className="sidebar-terminal-profile">
+          <div className="terminal-avatar">T1</div>
+          {!collapsed && (
+            <div>
+              <strong>TRADER_01</strong>
+              <span>API_CONNECTED</span>
+            </div>
+          )}
+        </div>
+
         {collapsed ? (
           <div className="nav-items-collapsed">
             {navigationItems.map((item) => renderNavItem(item))}
@@ -205,32 +211,8 @@ const Sidebar = ({ collapsed, activeSection, onSectionChange }) => {
           <div className="strategy-actions">
             <button className="action-btn primary">
               <BoltIcon />
-              <span>New Strategy</span>
+              <span>NEW_STRATEGY</span>
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* Quick Stats */}
-      {!collapsed && (
-        <div className="quick-stats">
-          <div className="stat-item">
-            <div className="stat-icon positive">
-              <CheckCircleIcon />
-            </div>
-            <div className="stat-content">
-              <span className="stat-label">System Status</span>
-              <span className="stat-value">Operational</span>
-            </div>
-          </div>
-          <div className="stat-item">
-            <div className="stat-icon warning">
-              <ExclamationCircleIcon />
-            </div>
-            <div className="stat-content">
-              <span className="stat-label">Risk Level</span>
-              <span className="stat-value">Moderate</span>
-            </div>
           </div>
         </div>
       )}
