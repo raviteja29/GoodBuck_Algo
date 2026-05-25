@@ -963,9 +963,14 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
           <div>
             <strong>NIFTY · 1H</strong>
             <div className="terminal-timeframes">
-              {['1m', '5m', '1h', '1d'].map(frame => (
+              {['1m', '5m', '15m', '1h', '4h', 'D', 'W'].map(frame => (
                 <button className={frame === '1h' ? 'active' : ''} type="button" key={frame}>{frame}</button>
               ))}
+              <span className="terminal-toolbar-divider" aria-hidden="true" />
+              <button className="terminal-indicator-button" type="button">
+                <span aria-hidden="true">＋</span>
+                Indicators
+              </button>
             </div>
           </div>
           <div className="terminal-ohlc">
@@ -977,14 +982,29 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
         </div>
 
         <div className="terminal-chart-surface">
+          <div className="terminal-crosshair" aria-hidden="true">
+            <span className="terminal-crosshair-x" />
+            <span className="terminal-crosshair-y" />
+            <strong className="terminal-price-tag">22,564.00</strong>
+            <strong className="terminal-time-tag">14:20:00</strong>
+          </div>
           <div className="terminal-drawing-tools" aria-label="Drawing tools">
-            {['✎', '↗', '─', '⌖'].map(tool => (
-              <button type="button" key={tool}>{tool}</button>
+            {[
+              { icon: '⌖', label: 'Cursor', active: true },
+              { icon: '↗', label: 'Trend line' },
+              { icon: '⌁', label: 'Study' },
+              { icon: '✎', label: 'Brush' },
+              { icon: 'T', label: 'Text' },
+              { icon: '⟂', label: 'Measure' }
+            ].map(tool => (
+              <button className={tool.active ? 'active' : ''} type="button" key={tool.label} title={tool.label}>
+                {tool.icon}
+              </button>
             ))}
           </div>
           <div className="terminal-indicators">
-            <span>EMA(20, close) 22,524.50</span>
-            <span>EMA(50, close) 22,390.12</span>
+            <span><b aria-hidden="true">◉</b> EMA(20, close, 0): 22,524.50</span>
+            <span><b aria-hidden="true">◉</b> EMA(50, close, 0): 22,390.12</span>
           </div>
           <div className="terminal-candles" aria-hidden="true">
             {chartCandles.map((candle, index) => (
