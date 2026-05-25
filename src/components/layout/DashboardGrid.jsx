@@ -21,6 +21,28 @@ import Analytics from '../Analytics';
 import RiskManager from '../RiskManager';
 import './DashboardGrid.css';
 
+const WATCHLIST_CONFIG = [
+  { symbol: 'NIFTY', label: 'Nifty 50', token: 256265 },
+  { symbol: 'BANKNIFTY', label: 'Bank Nifty', token: 260105 },
+  { symbol: 'INDIAVIX', label: 'India VIX', token: 264969 }
+];
+
+const CHART_INTERVAL_MAP = {
+  '1m': 'minute',
+  '5m': '5minute',
+  '15m': '15minute',
+  '1h': '60minute',
+  D: 'day'
+};
+
+const CHART_LOOKBACK_DAYS = {
+  '1m': 3,
+  '5m': 7,
+  '15m': 20,
+  '1h': 45,
+  D: 180
+};
+
 const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo: _userInfo }) => {
   void _dashboardData;
   void _userInfo;
@@ -32,8 +54,17 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
   const [margins, setMargins] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
+  const [watchlistQuotes, setWatchlistQuotes] = useState({});
+  const [selectedWatchToken, setSelectedWatchToken] = useState(256265);
+  const [chartTimeframe, setChartTimeframe] = useState('15m');
+  const [hmaPeriod, setHmaPeriod] = useState(50);
+  const [chartCandlesData, setChartCandlesData] = useState([]);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState(null);
   const lastTickAtRef = useRef(0);
   const positionsRef = useRef([]);
+  const watchlistTickAtRef = useRef(0);
+
 
   // Helper functions to extract margin values from different possible API structures
   const getAvailableMargin = (margins) => {
@@ -73,6 +104,77 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
     if (margins.used) return margins.used;
     
     return 0;
+  };
+
+  const formatDateTimeForApi = (date) => {
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  };
+
+  const normalizeCandle = (candle) => {
+    if (Array.isArray(candle)) {
+      return {
+        time: candle[0],
+        open: Number(candle[1]),
+        high: Number(candle[2]),
+        low: Number(candle[3]),
+        close: Number(candle[4]),
+        volume: Number(candle[5] || 0)
+      };
+    }
+
+    return {
+      time: candle?.date || candle?.time || candle?.timestamp,
+      open: Number(candle?.open),
+      high: Number(candle?.high),
+      low: Number(candle?.low),
+      close: Number(candle?.close),
+      volume: Number(candle?.volume || 0)
+    };
+  };
+
+  const computeWMA = (values, period, endIndex) => {
+    if (endIndex + 1 < period) return null;
+    const weightSum = period * (period + 1) / 2;
+    let weightedSum = 0;
+    let weight = 1;
+
+    for (let index = endIndex - period + 1; index <= endIndex; index += 1) {
+      weightedSum += values[index] * weight;
+      weight += 1;
+    }
+
+    return weightedSum / weightSum;
+  };
+
+  const computeHMASeries = (candles, period) => {
+    const closes = candles.map(candle => candle.close);
+    const half = Math.floor(period / 2);
+    const sqrtPeriod = Math.max(1, Math.floor(Math.sqrt(period)));
+    const diffSeries = [];
+
+    for (let index = 0; index < closes.length; index += 1) {
+      const full = computeWMA(closes, period, index);
+      const halfValue = computeWMA(closes, half, index);
+      diffSeries.push(full == null || halfValue == null ? null : 2 * halfValue - full);
+    }
+
+    return diffSeries.map((value, index) => {
+      if (value == null || index + 1 < period + sqrtPeriod - 1) return null;
+      const validDiffs = diffSeries.slice(0, index + 1).filter(v => v != null);
+      return computeWMA(validDiffs, sqrtPeriod, validDiffs.length - 1);
+    });
+  };
+
+  const getQuoteChange = (quote) => {
+    const last = Number(quote?.last_price);
+    const previousClose = Number(quote?.ohlc?.close);
+    if (!Number.isFinite(last) || !Number.isFinite(previousClose) || previousClose === 0) {
+      return { change: 0, changePercent: 0 };
+    }
+
+    const change = last - previousClose;
+    return { change, changePercent: (change / previousClose) * 100 };
   };
 
   // Function to update positions with real-time data
@@ -144,6 +246,115 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
   useEffect(() => {
     positionsRef.current = positions;
   }, [positions]);
+
+  useEffect(() => {
+    const tokens = WATCHLIST_CONFIG.map(item => item.token);
+    let cancelled = false;
+
+    const applyQuoteMap = (quotes = {}) => {
+      if (cancelled) return;
+      const updates = {};
+      WATCHLIST_CONFIG.forEach(item => {
+        const quote = quotes[item.token];
+        if (quote?.last_price) {
+          updates[item.token] = {
+            last_price: Number(quote.last_price),
+            ohlc: quote.ohlc,
+            timestamp: new Date()
+          };
+        }
+      });
+      if (Object.keys(updates).length) setWatchlistQuotes(prev => ({ ...prev, ...updates }));
+    };
+
+    const fetchWatchlistQuotes = async () => {
+      try {
+        const quotes = await TradingService.getQuotes(tokens);
+        applyQuoteMap(quotes);
+      } catch (error) {
+        console.warn('[DashboardGrid] Watchlist quote fetch failed:', error.message);
+      }
+    };
+
+    TradingService.subscribeToInstruments(tokens);
+    fetchWatchlistQuotes();
+
+    const unsubscribeTicks = TradingService.subscribeToTicks(ticks => {
+      if (!Array.isArray(ticks)) return;
+      const updates = {};
+      ticks.forEach(tick => {
+        const token = Number(tick?.instrument_token);
+        const price = Number(tick?.last_price);
+        if (!tokens.includes(token) || !Number.isFinite(price)) return;
+        updates[token] = {
+          last_price: price,
+          ohlc: tick.ohlc,
+          timestamp: new Date()
+        };
+      });
+
+      if (Object.keys(updates).length) {
+        watchlistTickAtRef.current = Date.now();
+        setWatchlistQuotes(prev => ({ ...prev, ...updates }));
+      }
+    });
+
+    const pollInterval = setInterval(() => {
+      const stale = !watchlistTickAtRef.current || Date.now() - watchlistTickAtRef.current > 5000;
+      if (connectionStatus !== 'connected' || stale) fetchWatchlistQuotes();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      unsubscribeTicks();
+      clearInterval(pollInterval);
+      TradingService.unsubscribeFromInstruments(tokens);
+    };
+  }, [connectionStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchChartCandles = async () => {
+      setChartLoading(true);
+      setChartError(null);
+      try {
+        const to = new Date();
+        const from = new Date(to);
+        from.setDate(from.getDate() - (CHART_LOOKBACK_DAYS[chartTimeframe] || 20));
+        const interval = CHART_INTERVAL_MAP[chartTimeframe] || '15minute';
+        const data = await TradingService.getHistoricalData(
+          selectedWatchToken,
+          formatDateTimeForApi(from),
+          formatDateTimeForApi(to),
+          interval
+        );
+        const candles = (data?.candles || [])
+          .map(normalizeCandle)
+          .filter(candle => ['open', 'high', 'low', 'close'].every(key => Number.isFinite(candle[key])));
+
+        if (!cancelled) {
+          setChartCandlesData(candles.slice(-90));
+          if (!candles.length) setChartError('No historical candles returned for this symbol.');
+        }
+      } catch (error) {
+        console.warn('[DashboardGrid] Chart candle fetch failed:', error.message);
+        if (!cancelled) {
+          setChartCandlesData([]);
+          setChartError(error.message || 'Unable to load chart candles.');
+        }
+      } finally {
+        if (!cancelled) setChartLoading(false);
+      }
+    };
+
+    fetchChartCandles();
+    const intervalId = setInterval(fetchChartCandles, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [selectedWatchToken, chartTimeframe]);
 
   // Fetch positions and orders data on component mount
   useEffect(() => {
@@ -875,6 +1086,10 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
     maximumFractionDigits: 2
   })}`;
 
+  const formatMarketValue = (value) => Number.isFinite(Number(value))
+    ? Number(value).toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 })
+    : '—';
+
   const orderBookAsks = [
     { price: 22568.5, qty: 1250, depth: 64 },
     { price: 22567.2, qty: 890, depth: 48 },
@@ -887,28 +1102,42 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
     { price: 22562.8, qty: 740, depth: 36 }
   ];
 
-  const watchlistItems = [
-    { symbol: 'NIFTY', label: 'Nifty 50', price: '22,564.80', change: '+0.42%', tone: 'positive' },
-    { symbol: 'BANKNIFTY', label: 'Bank Index', price: '48,210.35', change: '-0.18%', tone: 'negative' },
-    { symbol: 'FINNIFTY', label: 'Financials', price: '21,420.10', change: '+0.09%', tone: 'positive' },
-    { symbol: 'MIDCPNIFTY', label: 'Midcap', price: '11,862.40', change: '+0.27%', tone: 'positive' }
-  ];
+  const watchlistItems = WATCHLIST_CONFIG.map(item => {
+    const quote = watchlistQuotes[item.token];
+    const { changePercent } = getQuoteChange(quote);
+    const hasLivePrice = Number.isFinite(Number(quote?.last_price));
+    return {
+      ...item,
+      price: hasLivePrice ? formatMarketValue(quote.last_price) : '—',
+      change: hasLivePrice ? `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%` : 'Waiting',
+      tone: changePercent >= 0 ? 'positive' : 'negative',
+      isLive: hasLivePrice
+    };
+  });
 
-  const chartBars = [42, 58, 49, 68, 62, 76, 55, 64, 82, 72, 88, 69, 78, 92, 84, 70, 86, 74];
-  const chartCandles = [
-    { top: 30, body: 34, wick: 74, tone: 'up' },
-    { top: 44, body: 28, wick: 60, tone: 'down' },
-    { top: 26, body: 42, wick: 82, tone: 'up' },
-    { top: 50, body: 24, wick: 58, tone: 'down' },
-    { top: 34, body: 38, wick: 70, tone: 'up' },
-    { top: 20, body: 46, wick: 86, tone: 'up' },
-    { top: 48, body: 30, wick: 66, tone: 'down' },
-    { top: 38, body: 36, wick: 78, tone: 'up' },
-    { top: 25, body: 44, wick: 90, tone: 'up' },
-    { top: 42, body: 34, wick: 72, tone: 'down' },
-    { top: 32, body: 40, wick: 82, tone: 'up' },
-    { top: 54, body: 26, wick: 62, tone: 'down' }
-  ];
+  const selectedWatchItem = watchlistItems.find(item => item.token === selectedWatchToken) || watchlistItems[0];
+  const latestChartCandle = chartCandlesData[chartCandlesData.length - 1];
+  const hmaSeries = computeHMASeries(chartCandlesData, hmaPeriod);
+  const latestHma = [...hmaSeries].reverse().find(value => Number.isFinite(value));
+  const chartMin = chartCandlesData.length
+    ? Math.min(...chartCandlesData.flatMap(candle => [candle.low, candle.close]), ...hmaSeries.filter(Number.isFinite))
+    : null;
+  const chartMax = chartCandlesData.length
+    ? Math.max(...chartCandlesData.flatMap(candle => [candle.high, candle.close]), ...hmaSeries.filter(Number.isFinite))
+    : null;
+  const chartRange = chartMax != null && chartMin != null ? Math.max(chartMax - chartMin, 1) : 1;
+  const chartWidth = 900;
+  const chartHeight = 420;
+  const chartPadding = { top: 32, right: 36, bottom: 42, left: 36 };
+  const plotWidth = chartWidth - chartPadding.left - chartPadding.right;
+  const plotHeight = chartHeight - chartPadding.top - chartPadding.bottom;
+  const chartX = (index) => chartPadding.left + (chartCandlesData.length <= 1 ? 0 : index / (chartCandlesData.length - 1) * plotWidth);
+  const chartY = (value) => chartPadding.top + ((chartMax - value) / chartRange) * plotHeight;
+  const hmaPath = hmaSeries
+    .map((value, index) => Number.isFinite(value) ? `${index === hmaSeries.findIndex(Number.isFinite) ? 'M' : 'L'} ${chartX(index).toFixed(2)} ${chartY(value).toFixed(2)}` : '')
+    .filter(Boolean)
+    .join(' ');
+  const volumeMax = Math.max(...chartCandlesData.map(candle => candle.volume || 0), 1);
 
   const activePositionRows = activePositions.length ? activePositions.slice(0, 4) : [
     {
@@ -930,9 +1159,14 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
         </div>
         <div className="terminal-watchlist-table">
           {watchlistItems.map(item => (
-            <button className="terminal-watchlist-row" type="button" key={item.symbol}>
+            <button
+              className={`terminal-watchlist-row ${item.token === selectedWatchToken ? 'active' : ''}`}
+              type="button"
+              key={item.symbol}
+              onClick={() => setSelectedWatchToken(item.token)}
+            >
               <span>
-                <strong>{item.symbol}</strong>
+                <strong><i className={item.isLive ? 'live' : ''} />{item.symbol}</strong>
                 <small>{item.label}</small>
               </span>
               <span>
@@ -961,45 +1195,132 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
       <section className="terminal-chart-panel">
         <div className="terminal-chart-toolbar">
           <div>
-            <strong>NIFTY · 1H</strong>
+            <strong>{selectedWatchItem?.symbol || 'NIFTY'} · {chartTimeframe}</strong>
             <div className="terminal-timeframes">
-              {['1m', '5m', '1h', '1d'].map(frame => (
-                <button className={frame === '1h' ? 'active' : ''} type="button" key={frame}>{frame}</button>
+              {['1m', '5m', '15m', '1h', 'D'].map(frame => (
+                <button
+                  className={frame === chartTimeframe ? 'active' : ''}
+                  type="button"
+                  key={frame}
+                  onClick={() => setChartTimeframe(frame)}
+                >
+                  {frame}
+                </button>
               ))}
+              <span className="terminal-toolbar-divider" aria-hidden="true" />
+              <label className="terminal-hma-select">
+                HMA
+                <select value={hmaPeriod} onChange={event => setHmaPeriod(Number(event.target.value))}>
+                  {[20, 50, 100, 200].map(period => (
+                    <option value={period} key={period}>{period}</option>
+                  ))}
+                </select>
+              </label>
             </div>
           </div>
           <div className="terminal-ohlc">
-            <span>O: <b>22,510</b></span>
-            <span>H: <b>22,589</b></span>
-            <span>L: <b>22,480</b></span>
-            <span>C: <b>22,564</b></span>
+            <span>O: <b>{formatMarketValue(latestChartCandle?.open)}</b></span>
+            <span>H: <b>{formatMarketValue(latestChartCandle?.high)}</b></span>
+            <span>L: <b>{formatMarketValue(latestChartCandle?.low)}</b></span>
+            <span>C: <b>{formatMarketValue(latestChartCandle?.close)}</b></span>
           </div>
         </div>
 
         <div className="terminal-chart-surface">
+          <div className="terminal-crosshair" aria-hidden="true">
+            <span className="terminal-crosshair-x" />
+            <span className="terminal-crosshair-y" />
+            <strong className="terminal-price-tag">{formatMarketValue(latestChartCandle?.close)}</strong>
+            <strong className="terminal-time-tag">14:20:00</strong>
+          </div>
           <div className="terminal-drawing-tools" aria-label="Drawing tools">
-            {['✎', '↗', '─', '⌖'].map(tool => (
-              <button type="button" key={tool}>{tool}</button>
+            {[
+              { icon: '⌖', label: 'Cursor', active: true },
+              { icon: '↗', label: 'Trend line' },
+              { icon: '⌁', label: 'Study' },
+              { icon: '✎', label: 'Brush' },
+              { icon: 'T', label: 'Text' },
+              { icon: '⟂', label: 'Measure' }
+            ].map(tool => (
+              <button className={tool.active ? 'active' : ''} type="button" key={tool.label} title={tool.label}>
+                {tool.icon}
+              </button>
             ))}
           </div>
           <div className="terminal-indicators">
-            <span>EMA(20, close) 22,524.50</span>
-            <span>EMA(50, close) 22,390.12</span>
+            <span><b aria-hidden="true">◉</b> HMA({hmaPeriod}, close): {formatMarketValue(latestHma)}</span>
+            <span><b aria-hidden="true">◉</b> Source: {chartCandlesData.length ? 'Historical + live quote refresh' : 'Waiting for candles'}</span>
           </div>
-          <div className="terminal-candles" aria-hidden="true">
-            {chartCandles.map((candle, index) => (
-              <span
-                className={`terminal-candle ${candle.tone}`}
-                style={{ '--candle-top': `${candle.top}%`, '--candle-body': `${candle.body}px`, '--candle-wick': `${candle.wick}px` }}
-                key={index}
-              />
-            ))}
-          </div>
-          <div className="terminal-volume" aria-hidden="true">
-            {chartBars.map((height, index) => (
-              <span className={index % 3 === 1 ? 'down' : 'up'} style={{ height: `${height}%` }} key={index} />
-            ))}
-          </div>
+          {chartLoading && <div className="terminal-chart-state">Loading candles...</div>}
+          {!chartLoading && chartError && <div className="terminal-chart-state error">{chartError}</div>}
+          {!chartLoading && !chartError && chartCandlesData.length > 0 && (
+            <svg className="terminal-live-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`${selectedWatchItem?.symbol || 'NIFTY'} candlestick chart with HMA ${hmaPeriod}`}>
+              <g className="terminal-chart-grid">
+                {[0, 1, 2, 3, 4].map(row => (
+                  <line
+                    x1={chartPadding.left}
+                    x2={chartWidth - chartPadding.right}
+                    y1={chartPadding.top + row * plotHeight / 4}
+                    y2={chartPadding.top + row * plotHeight / 4}
+                    key={`h-${row}`}
+                  />
+                ))}
+                {[0, 1, 2, 3, 4, 5, 6].map(col => (
+                  <line
+                    y1={chartPadding.top}
+                    y2={chartHeight - chartPadding.bottom}
+                    x1={chartPadding.left + col * plotWidth / 6}
+                    x2={chartPadding.left + col * plotWidth / 6}
+                    key={`v-${col}`}
+                  />
+                ))}
+              </g>
+              <g>
+                {chartCandlesData.map((candle, index) => {
+                  const x = chartX(index);
+                  const openY = chartY(candle.open);
+                  const closeY = chartY(candle.close);
+                  const highY = chartY(candle.high);
+                  const lowY = chartY(candle.low);
+                  const up = candle.close >= candle.open;
+                  const bodyTop = Math.min(openY, closeY);
+                  const bodyHeight = Math.max(Math.abs(openY - closeY), 2);
+                  const candleWidth = Math.max(3, Math.min(10, plotWidth / Math.max(chartCandlesData.length, 1) * 0.55));
+                  return (
+                    <g className={up ? 'up' : 'down'} key={`${candle.time}-${index}`}>
+                      <line className="wick" x1={x} x2={x} y1={highY} y2={lowY} />
+                      <rect
+                        className="body"
+                        x={x - candleWidth / 2}
+                        y={bodyTop}
+                        width={candleWidth}
+                        height={bodyHeight}
+                        rx="1"
+                      />
+                    </g>
+                  );
+                })}
+              </g>
+              {hmaPath && <path className="terminal-hma-line" d={hmaPath} />}
+              <g className="terminal-chart-volume">
+                {chartCandlesData.map((candle, index) => {
+                  const x = chartX(index);
+                  const width = Math.max(2, Math.min(8, plotWidth / Math.max(chartCandlesData.length, 1) * 0.45));
+                  const height = Math.max(2, (candle.volume || 0) / volumeMax * 52);
+                  return (
+                    <rect
+                      className={candle.close >= candle.open ? 'up' : 'down'}
+                      x={x - width / 2}
+                      y={chartHeight - chartPadding.bottom + 30 - height}
+                      width={width}
+                      height={height}
+                      key={`vol-${candle.time}-${index}`}
+                    />
+                  );
+                })}
+              </g>
+            </svg>
+          )}
         </div>
       </section>
 

@@ -1,11 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
-  KeyRound,
   LockKeyhole,
   LogIn,
-  ShieldCheck,
-  Terminal
+  ShieldCheck
 } from 'lucide-react';
 import AuthService from '../services/AuthService';
 import './Login.css';
@@ -150,22 +148,11 @@ const Login = () => {
           </header>
 
           <div className="terminal-login__form" role="group" aria-label="Secure access panel">
-            <label className="terminal-login__field">
-              <span>TERMINAL ID</span>
-              <span className="terminal-login__input">
-                <Terminal size={18} aria-hidden="true" />
-                <input value="TID_KITE_CONNECT" readOnly />
-              </span>
-            </label>
-
-            <label className="terminal-login__field">
-              <span>SECURE TOKEN</span>
-              <span className="terminal-login__input">
-                <KeyRound size={18} aria-hidden="true" />
-                <input value="OAUTH_TOKEN_EXTERNAL" readOnly type="password" />
-              </span>
-            </label>
-
+            <div className="terminal-login__broker">
+              <span className="terminal-login__broker-label">BROKER_AUTH_PROVIDER</span>
+              <strong>KITE CONNECT OAUTH</strong>
+              <p>Authenticate directly with Zerodha. GoodBuck never handles your broker password.</p>
+            </div>
             <div className="terminal-login__security">
               <span>
                 <ShieldCheck size={15} aria-hidden="true" />

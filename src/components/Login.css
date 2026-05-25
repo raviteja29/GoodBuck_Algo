@@ -183,6 +183,38 @@
   gap: 24px;
 }
 
+.terminal-login__broker {
+  border: 1px solid var(--terminal-border);
+  border-radius: 4px;
+  background: var(--terminal-bg-deep);
+  padding: 16px;
+}
+
+.terminal-login__broker-label {
+  display: block;
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+  letter-spacing: 0.05em;
+}
+
+.terminal-login__broker strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--terminal-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.terminal-login__broker p {
+  margin: 8px 0 0;
+  color: var(--terminal-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .terminal-login__field {
   display: grid;
   gap: 8px;
