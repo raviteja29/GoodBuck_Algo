@@ -1360,7 +1360,7 @@ button:focus {
 }
 
 .terminal-watchlist-row:hover,
-.terminal-watchlist-row:nth-child(2) {
+.terminal-watchlist-row.active {
   background: rgba(44, 54, 65, 0.7);
 }
 
@@ -1379,10 +1379,24 @@ button:focus {
 }
 
 .terminal-watchlist-row strong {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: #d9e3f3;
   font-size: 12px;
   line-height: 16px;
+}
+
+.terminal-watchlist-row strong i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #85948a;
+}
+
+.terminal-watchlist-row strong i.live {
+  background: #44f0af;
+  box-shadow: 0 0 8px rgba(68, 240, 175, 0.65);
 }
 
 .terminal-watchlist-row small {
@@ -1491,18 +1505,31 @@ button:focus {
   color: #003825;
 }
 
-.terminal-timeframes .terminal-indicator-button {
+.terminal-timeframes .terminal-indicator-button,
+.terminal-hma-select {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   border: 1px solid #3c4a42;
+  border-radius: 4px;
   background: #212b36;
   color: #d9e3f3;
+  padding: 3px 8px;
+  font-size: 10px;
 }
 
 .terminal-timeframes .terminal-indicator-button:hover {
   border-color: #44f0af;
   color: #44f0af;
+}
+
+.terminal-hma-select select {
+  border: 0;
+  background: transparent;
+  color: #44f0af;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  outline: none;
 }
 
 .terminal-toolbar-divider {
@@ -1668,6 +1695,66 @@ button:focus {
 
 .terminal-indicators span:last-child b {
   color: #8fbbff;
+}
+
+.terminal-chart-state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #bacabf;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: rgba(10, 20, 31, 0.58);
+}
+
+.terminal-chart-state.error {
+  color: #ffb3b5;
+}
+
+.terminal-live-chart {
+  position: absolute;
+  inset: 52px 16px 8px;
+  z-index: 1;
+  width: calc(100% - 32px);
+  height: calc(100% - 60px);
+}
+
+.terminal-chart-grid line {
+  stroke: rgba(60, 74, 66, 0.48);
+  stroke-width: 1;
+}
+
+.terminal-live-chart .wick {
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+
+.terminal-live-chart .body {
+  fill: currentColor;
+}
+
+.terminal-live-chart .up {
+  color: #44f0af;
+}
+
+.terminal-live-chart .down {
+  color: #ffb3b5;
+}
+
+.terminal-hma-line {
+  fill: none;
+  stroke: #8fbbff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 5px rgba(143, 187, 255, 0.4));
+}
+
+.terminal-chart-volume rect {
+  opacity: 0.38;
 }
 
 .terminal-candles {
