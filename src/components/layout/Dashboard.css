@@ -551,3 +551,45 @@
   font-size: var(--font-size-sm);
   max-width: 300px;
 }
+
+/* Terminal dashboard shell */
+.dashboard-layout {
+  --header-height: 48px;
+  --sidebar-width: 256px;
+  --sidebar-collapsed: 80px;
+  min-height: 100vh;
+  background: #0a141f;
+  color: #d9e3f3;
+}
+
+.dashboard-main {
+  margin-left: var(--sidebar-collapsed);
+  width: calc(100% - var(--sidebar-collapsed));
+  max-width: calc(100% - var(--sidebar-collapsed));
+  min-height: 100vh;
+  padding: 48px 0 0;
+  background: #0a141f;
+  overflow: hidden;
+}
+
+.dashboard-main:not(.sidebar-collapsed) {
+  margin-left: var(--sidebar-width);
+  width: calc(100% - var(--sidebar-width));
+  max-width: calc(100% - var(--sidebar-width));
+}
+
+.dashboard-main.sidebar-collapsed {
+  margin-left: var(--sidebar-collapsed);
+  width: calc(100% - var(--sidebar-collapsed));
+  max-width: calc(100% - var(--sidebar-collapsed));
+}
+
+@media (max-width: 768px) {
+  .dashboard-main,
+  .dashboard-main.sidebar-collapsed,
+  .dashboard-main:not(.sidebar-collapsed) {
+    margin-left: 80px;
+    width: calc(100% - 80px);
+    max-width: calc(100% - 80px);
+  }
+}

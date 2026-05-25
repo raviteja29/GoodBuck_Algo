@@ -407,3 +407,201 @@
     height: 40px;
   }
 }
+
+/* Terminal dashboard header overrides */
+.trading-header {
+  height: 48px;
+  padding: 0 16px;
+  background: #0a141f;
+  border: 0;
+  border-bottom: 1px solid #3c4a42;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  z-index: 1000;
+}
+
+.header-left,
+.header-center,
+.header-right {
+  gap: 16px;
+}
+
+.sidebar-toggle {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #3c4a42;
+  border-radius: 4px;
+  background: #131c27;
+  color: #bacabf;
+}
+
+.sidebar-toggle:hover {
+  color: #44f0af;
+  background: #17202b;
+  transform: none;
+}
+
+.sidebar-toggle svg,
+.header-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.brand-section {
+  gap: 0;
+}
+
+.brand-name {
+  color: #44f0af;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+  letter-spacing: -0.01em;
+}
+
+.terminal-top-nav {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.terminal-top-nav a {
+  color: #bacabf;
+  border-bottom: 2px solid transparent;
+  padding: 4px 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.terminal-top-nav a:hover,
+.terminal-top-nav a.active {
+  color: #44f0af;
+  border-bottom-color: #44f0af;
+}
+
+.market-status {
+  min-width: auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #3c4a42;
+  border-radius: 4px;
+  background: #131c27;
+  padding: 5px 12px;
+}
+
+.market-status:hover {
+  border-color: #3c4a42;
+  box-shadow: none;
+  transform: none;
+}
+
+.status-indicator,
+.market-time {
+  gap: 6px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+}
+
+.status-text,
+.time-value,
+.time-label,
+.user-name,
+.user-id {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.status-text,
+.time-value {
+  color: #44f0af;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.time-label {
+  color: #bacabf;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.account-info {
+  border: 1px solid #3c4a42;
+  border-radius: 4px;
+  background: #131c27;
+  padding: 4px 10px;
+}
+
+.user-name {
+  color: #d9e3f3;
+  font-size: 12px;
+  line-height: 15px;
+}
+
+.user-id {
+  color: #44f0af;
+  font-size: 10px;
+  line-height: 12px;
+}
+
+.header-actions {
+  gap: 8px;
+}
+
+.header-btn {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #bacabf;
+}
+
+.header-btn:hover {
+  color: #44f0af;
+  background: #17202b;
+  border-color: transparent;
+  transform: none;
+}
+
+.header-btn.logout-btn:hover {
+  color: #ffb3b5;
+  background: rgba(172, 1, 47, 0.24);
+}
+
+.notification-badge {
+  top: 0;
+  right: 0;
+  border: 1px solid #0a141f;
+  background: #ac012f;
+  color: #ffb7b9;
+  font-size: 9px;
+  padding: 1px 4px;
+}
+
+@media (max-width: 980px) {
+  .terminal-top-nav,
+  .account-info {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .header-center {
+    display: none;
+  }
+
+  .brand-name {
+    font-size: 14px;
+  }
+}
