@@ -149,6 +149,11 @@ const getZone = (value, levels) => {
   return 'above-high';
 };
 
+const getTrend = (currentValue, previousValue) => {
+  if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue)) return 'missing';
+  return currentValue > previousValue ? 'increasing' : 'decreasing';
+};
+
 const getOutcomeZone = (value, levels) => {
   if (!Number.isFinite(value)) return 'missing';
   if (value < levels.low) return 'below-low';
@@ -177,15 +182,27 @@ const formatNumber = (value, digits = 2) => Number.isFinite(Number(value))
 
 const pct = (count, total) => total ? `${((count / total) * 100).toFixed(1)}%` : '0.0%';
 
-const createScenario = (touch, hma50Zone, hma200Zone) => ({
-  key: `${touch}|${hma50Zone}|${hma200Zone}`,
+const createScenario = (touch, hma50Zone, hma50Trend, hma200Zone, hma200Trend) => ({
+  key: `${touch}|${hma50Zone}|${hma50Trend}|${hma200Zone}|${hma200Trend}`,
   touch,
   hma50Zone,
+  hma50Trend,
   hma200Zone,
+  hma200Trend,
   count: 0,
+  weekCount: 0,
   aboveMid: 0,
+  weekAboveMid: 0,
   belowMid: 0,
+  weekBelowMid: 0,
   outcomes: {
+    'below-low': 0,
+    'low-mid': 0,
+    'mid-high': 0,
+    'above-high': 0,
+    missing: 0
+  },
+  weekOutcomes: {
     'below-low': 0,
     'low-mid': 0,
     'mid-high': 0,
@@ -323,26 +340,34 @@ const GiftNiftyBacktest = () => {
         const expiryBias = getExpiryBias(expiryClose, levels);
         const touches = { low: 0, mid: 0, high: 0 };
         let hmaQualifiedTouches = 0;
+        const weekScenarioKeys = new Set();
 
         expiryCandles.forEach(candle => {
           const candleIndex = candleIndexMap.get(candle);
           const h50 = hma50[candleIndex];
           const h200 = hma200[candleIndex];
-          if (!Number.isFinite(h50) || !Number.isFinite(h200)) return;
+          const h50Previous = hma50[candleIndex - 1];
+          const h200Previous = hma200[candleIndex - 1];
+          if (!Number.isFinite(h50) || !Number.isFinite(h200) || !Number.isFinite(h50Previous) || !Number.isFinite(h200Previous)) return;
 
           ['low', 'mid', 'high'].forEach(levelName => {
             if (!levelWasTouched(candle, levels[levelName])) return;
             touches[levelName] += 1;
             hmaQualifiedTouches += 1;
-            const scenarioKey = `${levelName}|${getZone(h50, levels)}|${getZone(h200, levels)}`;
+            const hma50Zone = getZone(h50, levels);
+            const hma200Zone = getZone(h200, levels);
+            const hma50Trend = getTrend(h50, h50Previous);
+            const hma200Trend = getTrend(h200, h200Previous);
+            const scenarioKey = `${levelName}|${hma50Zone}|${hma50Trend}|${hma200Zone}|${hma200Trend}`;
             if (!scenarioMap.has(scenarioKey)) {
-              scenarioMap.set(scenarioKey, createScenario(levelName, getZone(h50, levels), getZone(h200, levels)));
+              scenarioMap.set(scenarioKey, createScenario(levelName, hma50Zone, hma50Trend, hma200Zone, hma200Trend));
             }
             const scenario = scenarioMap.get(scenarioKey);
             scenario.count += 1;
             scenario.outcomes[outcomeZone] = (scenario.outcomes[outcomeZone] || 0) + 1;
             if (expiryBias === 'above-mid') scenario.aboveMid += 1;
             if (expiryBias === 'below-mid') scenario.belowMid += 1;
+            weekScenarioKeys.add(scenarioKey);
             if (scenario.examples.length < 3) {
               scenario.examples.push({
                 week: `${toInputDate(window.baseStart)} -> ${toInputDate(window.expiryDate)}`,
@@ -351,6 +376,14 @@ const GiftNiftyBacktest = () => {
               });
             }
           });
+        });
+
+        weekScenarioKeys.forEach(scenarioKey => {
+          const scenario = scenarioMap.get(scenarioKey);
+          scenario.weekCount += 1;
+          scenario.weekOutcomes[outcomeZone] = (scenario.weekOutcomes[outcomeZone] || 0) + 1;
+          if (expiryBias === 'above-mid') scenario.weekAboveMid += 1;
+          if (expiryBias === 'below-mid') scenario.weekBelowMid += 1;
         });
 
         weekRows.push({
@@ -395,8 +428,8 @@ const GiftNiftyBacktest = () => {
   const headline = useMemo(() => {
     if (!result) return null;
     const midTouch = result.scenarios.filter(scenario => scenario.touch === 'mid');
-    const totalMid = midTouch.reduce((sum, scenario) => sum + scenario.count, 0);
-    const aboveMid = midTouch.reduce((sum, scenario) => sum + scenario.aboveMid, 0);
+    const totalMid = midTouch.reduce((sum, scenario) => sum + scenario.weekCount, 0);
+    const aboveMid = midTouch.reduce((sum, scenario) => sum + scenario.weekAboveMid, 0);
     return { totalMid, aboveMid };
   }, [result]);
 
@@ -539,7 +572,7 @@ const GiftNiftyBacktest = () => {
           <section className="gift-panel">
             <div className="gift-panel-title">
               <h2>Scenario Outcomes</h2>
-              <p>Each row is counted when price touched low/mid/high during the prediction week while HMA50/HMA200 were in the listed zones.</p>
+              <p>Each row is counted when price touched low/mid/high during the prediction week while HMA50/HMA200 were in the listed zones and trends.</p>
             </div>
             <div className="gift-table-wrap">
               <table>
@@ -547,9 +580,13 @@ const GiftNiftyBacktest = () => {
                   <tr>
                     <th>Touch</th>
                     <th>HMA50 Zone</th>
+                    <th>HMA50 Trend</th>
                     <th>HMA200 Zone</th>
+                    <th>HMA200 Trend</th>
                     <th>Count</th>
-                    <th>Expiry Above Mid</th>
+                    <th>Weeks Count</th>
+                    <th>Event Above Mid</th>
+                    <th>Week Above Mid</th>
                     <th>Below Low</th>
                     <th>Low-Mid</th>
                     <th>Mid-High</th>
@@ -561,9 +598,13 @@ const GiftNiftyBacktest = () => {
                     <tr key={scenario.key}>
                       <td>{scenario.touch}</td>
                       <td>{scenario.hma50Zone}</td>
+                      <td>{scenario.hma50Trend}</td>
                       <td>{scenario.hma200Zone}</td>
+                      <td>{scenario.hma200Trend}</td>
                       <td>{scenario.count}</td>
+                      <td>{scenario.weekCount}</td>
                       <td>{pct(scenario.aboveMid, scenario.count)}</td>
+                      <td>{pct(scenario.weekAboveMid, scenario.weekCount)}</td>
                       <td>{pct(scenario.outcomes['below-low'], scenario.count)}</td>
                       <td>{pct(scenario.outcomes['low-mid'], scenario.count)}</td>
                       <td>{pct(scenario.outcomes['mid-high'], scenario.count)}</td>
