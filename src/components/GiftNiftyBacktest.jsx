@@ -154,6 +154,43 @@ const getTrend = (currentValue, previousValue) => {
   return currentValue > previousValue ? 'increasing' : 'decreasing';
 };
 
+const formatCandleTimestamp = (value) => {
+  const parsed = parseCandleTime(value);
+  if (Number.isNaN(parsed.getTime())) return '--';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: CANDLE_TIME_ZONE,
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(parsed);
+};
+
+const getHmaState = (series, index, levels) => {
+  const current = series[index];
+  const previous = series[index - 1];
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
+  return {
+    value: current,
+    zone: getZone(current, levels),
+    trend: getTrend(current, previous)
+  };
+};
+
+const formatHmaState = (state) => state ? `${state.zone} / ${state.trend}` : '--';
+
+const buildHmaJourney = (candles, series, candleIndexMap, levels) => {
+  const transitions = [];
+  candles.forEach(candle => {
+    const state = getHmaState(series, candleIndexMap.get(candle), levels);
+    if (!state) return;
+    const label = formatHmaState(state);
+    if (transitions[transitions.length - 1] !== label) transitions.push(label);
+  });
+  return transitions.length ? transitions.join(' -> ') : '--';
+};
+
 const getOutcomeZone = (value, levels) => {
   if (!Number.isFinite(value)) return 'missing';
   if (value < levels.low) return 'below-low';
@@ -328,27 +365,33 @@ const GiftNiftyBacktest = () => {
         const expiryClose = expiryCandles[expiryCandles.length - 1]?.close;
         const outcomeZone = getOutcomeZone(expiryClose, levels);
         const expiryBias = getExpiryBias(expiryClose, levels);
-        const touches = { low: 0, mid: 0, high: 0 };
-        let hmaQualifiedTouches = 0;
+        const hma50Journey = buildHmaJourney(expiryCandles, hma50, candleIndexMap, levels);
+        const hma200Journey = buildHmaJourney(expiryCandles, hma200, candleIndexMap, levels);
+        let firstSignal = null;
         const weekScenarios = new Map();
 
         expiryCandles.forEach(candle => {
           const candleIndex = candleIndexMap.get(candle);
-          const h50 = hma50[candleIndex];
-          const h200 = hma200[candleIndex];
-          const h50Previous = hma50[candleIndex - 1];
-          const h200Previous = hma200[candleIndex - 1];
-          if (!Number.isFinite(h50) || !Number.isFinite(h200) || !Number.isFinite(h50Previous) || !Number.isFinite(h200Previous)) return;
+          const hma50State = getHmaState(hma50, candleIndex, levels);
+          const hma200State = getHmaState(hma200, candleIndex, levels);
+          if (!hma50State || !hma200State) return;
 
           ['low', 'mid', 'high'].forEach(levelName => {
             if (!levelWasTouched(candle, levels[levelName])) return;
-            touches[levelName] += 1;
-            hmaQualifiedTouches += 1;
-            const hma50Zone = getZone(h50, levels);
-            const hma200Zone = getZone(h200, levels);
-            const hma50Trend = getTrend(h50, h50Previous);
-            const hma200Trend = getTrend(h200, h200Previous);
+            const hma50Zone = hma50State.zone;
+            const hma200Zone = hma200State.zone;
+            const hma50Trend = hma50State.trend;
+            const hma200Trend = hma200State.trend;
             const scenarioKey = `${levelName}|${hma50Zone}|${hma50Trend}|${hma200Zone}|${hma200Trend}`;
+            if (!firstSignal) {
+              firstSignal = {
+                time: formatCandleTimestamp(candle.time),
+                level: levelName,
+                close: candle.close,
+                hma50: formatHmaState(hma50State),
+                hma200: formatHmaState(hma200State)
+              };
+            }
             if (!weekScenarios.has(scenarioKey)) {
               weekScenarios.set(scenarioKey, {
                 touch: levelName,
@@ -394,10 +437,9 @@ const GiftNiftyBacktest = () => {
           expiryClose,
           outcomeZone,
           expiryBias,
-          touches,
-          hmaQualifiedTouches,
-          baseCandles: baseCandles.length,
-          expiryCandles: expiryCandles.length
+          firstSignal,
+          hma50Journey,
+          hma200Journey
         });
       }
 
@@ -626,11 +668,13 @@ const GiftNiftyBacktest = () => {
                     <th>Low</th>
                     <th>Mid</th>
                     <th>High</th>
+                    <th>First Touch</th>
+                    <th>HMA50 @ Touch</th>
+                    <th>HMA200 @ Touch</th>
+                    <th>HMA50 Journey</th>
+                    <th>HMA200 Journey</th>
                     <th>Expiry Close</th>
                     <th>Outcome</th>
-                    <th>Touches L/M/H</th>
-                    <th>HMA Touches</th>
-                    <th>Candles B/E</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -641,11 +685,17 @@ const GiftNiftyBacktest = () => {
                       <td>{formatNumber(week.levels.low)}</td>
                       <td>{formatNumber(week.levels.mid)}</td>
                       <td>{formatNumber(week.levels.high)}</td>
+                      <td>
+                        {week.firstSignal
+                          ? `${week.firstSignal.level} @ ${week.firstSignal.time} (${formatNumber(week.firstSignal.close)})`
+                          : '--'}
+                      </td>
+                      <td>{week.firstSignal?.hma50 || '--'}</td>
+                      <td>{week.firstSignal?.hma200 || '--'}</td>
+                      <td className="gift-journey-cell" title={week.hma50Journey}>{week.hma50Journey}</td>
+                      <td className="gift-journey-cell" title={week.hma200Journey}>{week.hma200Journey}</td>
                       <td>{formatNumber(week.expiryClose)}</td>
                       <td>{week.outcomeZone}</td>
-                      <td>{week.touches.low}/{week.touches.mid}/{week.touches.high}</td>
-                      <td>{week.hmaQualifiedTouches}</td>
-                      <td>{week.baseCandles}/{week.expiryCandles}</td>
                     </tr>
                   ))}
                 </tbody>
