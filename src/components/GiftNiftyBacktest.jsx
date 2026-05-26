@@ -16,6 +16,18 @@ const HISTORICAL_CHUNK_DAYS = 45;
 
 const pad = (value) => String(value).padStart(2, '0');
 const toInputDate = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+const CANDLE_TIME_ZONE = 'Asia/Kolkata';
+const candleDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: CANDLE_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+const toCandleDateKey = (date) => {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  const parts = Object.fromEntries(candleDateFormatter.formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+};
 const dateTime = (date, time) => `${toInputDate(date)} ${time}`;
 const addDays = (date, days) => {
   const next = new Date(date);
@@ -25,19 +37,29 @@ const addDays = (date, days) => {
 
 const parseCandleTime = (value) => {
   if (value instanceof Date) return value;
-  if (!value) return new Date(NaN);
-  const normalized = String(value).includes('T') ? String(value) : String(value).replace(' ', 'T');
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return new Date(value > 1e12 ? value : value * 1000);
+  }
+  if (value == null || value === '') return new Date(NaN);
+  const raw = String(value).trim();
+  if (/^\d+$/.test(raw)) {
+    const numeric = Number(raw);
+    return new Date(numeric > 1e12 ? numeric : numeric * 1000);
+  }
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
   return new Date(normalized);
 };
 
 const getCandleDateKey = (value) => {
-  if (value instanceof Date) return toInputDate(value);
+  if (value instanceof Date) return toCandleDateKey(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return toCandleDateKey(parseCandleTime(value));
   if (value == null) return '';
-  const raw = String(value);
+  const raw = String(value).trim();
+  if (/^\d+$/.test(raw)) return toCandleDateKey(parseCandleTime(raw));
   const match = raw.match(/(\d{4})[-/](\d{2})[-/](\d{2})/);
   if (match) return `${match[1]}-${match[2]}-${match[3]}`;
   const parsed = parseCandleTime(value);
-  return Number.isNaN(parsed.getTime()) ? '' : toInputDate(parsed);
+  return toCandleDateKey(parsed);
 };
 
 const normalizeCandle = (candle) => {
