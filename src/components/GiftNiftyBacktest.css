@@ -229,6 +229,12 @@
   padding: 9px 10px;
 }
 
+.gift-journey-cell {
+  max-width: 340px;
+  white-space: normal;
+  line-height: 1.5;
+}
+
 .gift-table-wrap tr:hover td {
   background: rgba(44, 54, 65, 0.45);
 }
