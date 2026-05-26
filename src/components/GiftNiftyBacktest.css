@@ -148,7 +148,7 @@
 
 .gift-summary-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 14px;
   margin-top: 16px;
 }
@@ -164,9 +164,10 @@
   display: block;
   color: #44f0af;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 24px;
+  font-size: clamp(13px, 1.25vw, 24px);
   line-height: 32px;
   margin-top: 8px;
+  overflow-wrap: anywhere;
 }
 
 .gift-panel {
