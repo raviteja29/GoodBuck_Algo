@@ -92,7 +92,7 @@
 
 .gift-backtest-controls {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   margin-top: 16px;
 }
@@ -148,7 +148,7 @@
 
 .gift-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 14px;
   margin-top: 16px;
 }
@@ -199,6 +199,10 @@
 .gift-table-wrap {
   max-height: 520px;
   overflow: auto;
+}
+
+.gift-table-wrap.compact {
+  max-height: 260px;
 }
 
 .gift-table-wrap table {

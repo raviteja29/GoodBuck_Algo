@@ -11,6 +11,8 @@ import './GiftNiftyBacktest.css';
 
 const GIFT_NIFTY_FALLBACK_TOKEN = '291849';
 const DEFAULT_START = '2025-08-01';
+const DEFAULT_INDICATOR_START = '2017-01-01';
+const HISTORICAL_CHUNK_DAYS = 45;
 
 const pad = (value) => String(value).padStart(2, '0');
 const toInputDate = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -19,6 +21,13 @@ const addDays = (date, days) => {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
+};
+
+const parseCandleTime = (value) => {
+  if (value instanceof Date) return value;
+  if (!value) return new Date(NaN);
+  const normalized = String(value).includes('T') ? String(value) : String(value).replace(' ', 'T');
+  return new Date(normalized);
 };
 
 const normalizeCandle = (candle) => {
@@ -148,6 +157,7 @@ const createScenario = (touch, hma50Zone, hma200Zone) => ({
 const GiftNiftyBacktest = () => {
   const [fromDate, setFromDate] = useState(DEFAULT_START);
   const [toDate, setToDate] = useState(toInputDate(new Date()));
+  const [indicatorStartDate, setIndicatorStartDate] = useState(DEFAULT_INDICATOR_START);
   const [instrumentToken, setInstrumentToken] = useState(GIFT_NIFTY_FALLBACK_TOKEN);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState('');
@@ -174,11 +184,31 @@ const GiftNiftyBacktest = () => {
       token,
       dateTime(start, '00:00:00'),
       dateTime(end, '23:59:59'),
-      '15minute'
+      '15minute',
+      { continuous: true }
     );
     return (data?.candles || [])
       .map(normalizeCandle)
       .filter(candle => ['open', 'high', 'low', 'close'].every(key => Number.isFinite(candle[key])));
+  };
+
+  const fetchContinuousCandles = async (token, start, end) => {
+    const chunks = [];
+    const seen = new Set();
+    for (let chunkStart = new Date(start); chunkStart <= end; chunkStart = addDays(chunkStart, HISTORICAL_CHUNK_DAYS)) {
+      const chunkEnd = addDays(chunkStart, HISTORICAL_CHUNK_DAYS - 1);
+      if (chunkEnd > end) chunkEnd.setTime(end.getTime());
+      setProgress(`Fetching continuous 15m candles: ${toInputDate(chunkStart)} to ${toInputDate(chunkEnd)}`);
+      const candles = await fetchCandlesForWindow(token, chunkStart, chunkEnd);
+      candles.forEach(candle => {
+        const key = `${candle.time}|${candle.open}|${candle.high}|${candle.low}|${candle.close}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          chunks.push(candle);
+        }
+      });
+    }
+    return chunks.sort((a, b) => parseCandleTime(a.time) - parseCandleTime(b.time));
   };
 
   const runBacktest = async () => {
@@ -193,27 +223,44 @@ const GiftNiftyBacktest = () => {
       const windows = buildWeeklyWindows(fromDate, toDate);
       if (!windows.length) throw new Error('No complete Wednesday-Tuesday expiry windows found in the selected range.');
 
+      const requestedIndicatorStart = new Date(`${indicatorStartDate}T00:00:00`);
+      const minimumWarmupStart = addDays(windows[0].baseStart, -30);
+      const indicatorStart = requestedIndicatorStart < minimumWarmupStart ? requestedIndicatorStart : minimumWarmupStart;
+      const finalExpiry = windows[windows.length - 1].expiryDate;
+      setProgress(`Fetching continuous 15m GIFTNIFTY candles from ${toInputDate(indicatorStart)} to ${toInputDate(finalExpiry)}...`);
+      const allCandles = await fetchContinuousCandles(token, indicatorStart, finalExpiry);
+      if (!allCandles.length) {
+        throw new Error('No 15m candles returned. Verify the GIFTNIFTY instrument token or Kite historical access for this symbol.');
+      }
+
+      const hma50 = computeHMASeries(allCandles, 50);
+      const hma200 = computeHMASeries(allCandles, 200);
+      const candleIndexMap = new Map(allCandles.map((candle, index) => [candle, index]));
       const scenarioMap = new Map();
       const weekRows = [];
-      let processed = 0;
-      let skipped = 0;
+      const skippedRows = [];
 
-      for (const window of windows) {
-        processed += 1;
-        setProgress(`Processing ${processed}/${windows.length}: ${toInputDate(window.baseStart)} to ${toInputDate(window.expiryDate)}`);
+      for (const [index, window] of windows.entries()) {
+        setProgress(`Processing ${index + 1}/${windows.length}: ${toInputDate(window.baseStart)} to ${toInputDate(window.expiryDate)}`);
 
-        const candles = await fetchCandlesForWindow(token, window.baseStart, window.expiryDate);
-        const baseCandles = candles.filter(candle => {
-          const time = new Date(candle.time);
+        const baseCandles = allCandles.filter(candle => {
+          const time = parseCandleTime(candle.time);
           return time >= window.baseStart && time <= addDays(window.baseEnd, 1);
         });
-        const expiryCandles = candles.filter(candle => {
-          const time = new Date(candle.time);
+        const expiryCandles = allCandles.filter(candle => {
+          const time = parseCandleTime(candle.time);
           return time >= window.expiryStart && time <= addDays(window.expiryDate, 1);
         });
 
-        if (baseCandles.length < 20 || expiryCandles.length < 20 || candles.length < 220) {
-          skipped += 1;
+        if (!baseCandles.length || !expiryCandles.length) {
+          skippedRows.push({
+            baseStart: toInputDate(window.baseStart),
+            baseEnd: toInputDate(window.baseEnd),
+            expiryDate: toInputDate(window.expiryDate),
+            baseCandles: baseCandles.length,
+            expiryCandles: expiryCandles.length,
+            reason: !baseCandles.length ? 'No candles in base range' : 'No candles in expiry range'
+          });
           continue;
         }
 
@@ -221,15 +268,14 @@ const GiftNiftyBacktest = () => {
         const high = Math.max(...baseCandles.map(candle => candle.high));
         const mid = low + ((high - low) / 2);
         const levels = { low, mid, high };
-        const hma50 = computeHMASeries(candles, 50);
-        const hma200 = computeHMASeries(candles, 200);
         const expiryClose = expiryCandles[expiryCandles.length - 1]?.close;
         const outcomeZone = getOutcomeZone(expiryClose, levels);
         const expiryBias = getExpiryBias(expiryClose, levels);
         const touches = { low: 0, mid: 0, high: 0 };
+        let hmaQualifiedTouches = 0;
 
         expiryCandles.forEach(candle => {
-          const candleIndex = candles.indexOf(candle);
+          const candleIndex = candleIndexMap.get(candle);
           const h50 = hma50[candleIndex];
           const h200 = hma200[candleIndex];
           if (!Number.isFinite(h50) || !Number.isFinite(h200)) return;
@@ -237,6 +283,7 @@ const GiftNiftyBacktest = () => {
           ['low', 'mid', 'high'].forEach(levelName => {
             if (!levelWasTouched(candle, levels[levelName])) return;
             touches[levelName] += 1;
+            hmaQualifiedTouches += 1;
             const scenarioKey = `${levelName}|${getZone(h50, levels)}|${getZone(h200, levels)}`;
             if (!scenarioMap.has(scenarioKey)) {
               scenarioMap.set(scenarioKey, createScenario(levelName, getZone(h50, levels), getZone(h200, levels)));
@@ -264,16 +311,22 @@ const GiftNiftyBacktest = () => {
           expiryClose,
           outcomeZone,
           expiryBias,
-          touches
+          touches,
+          hmaQualifiedTouches,
+          baseCandles: baseCandles.length,
+          expiryCandles: expiryCandles.length
         });
       }
 
       const scenarios = Array.from(scenarioMap.values()).sort((a, b) => b.count - a.count);
       setResult({
         token,
+        indicatorStart: toInputDate(indicatorStart),
         windows: windows.length,
         processed: weekRows.length,
-        skipped,
+        skipped: skippedRows.length,
+        skippedRows,
+        totalCandles: allCandles.length,
         scenarios,
         weeks: weekRows
       });
@@ -318,6 +371,10 @@ const GiftNiftyBacktest = () => {
           <input type="date" value={toDate} max={toInputDate(new Date())} onChange={event => setToDate(event.target.value)} />
         </label>
         <label>
+          <span><CalendarDaysIcon /> HMA History From</span>
+          <input type="date" value={indicatorStartDate} max={fromDate} onChange={event => setIndicatorStartDate(event.target.value)} />
+        </label>
+        <label>
           <span>GIFTNIFTY Token</span>
           <input value={instrumentToken} onChange={event => setInstrumentToken(event.target.value)} placeholder="Auto / 291849" />
         </label>
@@ -347,10 +404,51 @@ const GiftNiftyBacktest = () => {
               <strong>{result.skipped}</strong>
             </div>
             <div>
+              <span>Total 15m Candles</span>
+              <strong>{result.totalCandles}</strong>
+            </div>
+            <div>
+              <span>HMA History From</span>
+              <strong>{result.indicatorStart}</strong>
+            </div>
+            <div>
               <span>Mid Touch Above-Mid Expiry</span>
               <strong>{headline ? pct(headline.aboveMid, headline.totalMid) : '0.0%'}</strong>
             </div>
           </section>
+
+          {result.skippedRows.length > 0 && (
+            <section className="gift-panel">
+              <div className="gift-panel-title">
+                <h2>Skipped Windows</h2>
+                <p>These windows did not have candles in either the base or expiry range.</p>
+              </div>
+              <div className="gift-table-wrap compact">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Base Week</th>
+                      <th>Expiry</th>
+                      <th>Base Candles</th>
+                      <th>Expiry Candles</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.skippedRows.map(row => (
+                      <tr key={`${row.baseStart}-${row.expiryDate}`}>
+                        <td>{row.baseStart} {'->'} {row.baseEnd}</td>
+                        <td>{row.expiryDate}</td>
+                        <td>{row.baseCandles}</td>
+                        <td>{row.expiryCandles}</td>
+                        <td>{row.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
           <section className="gift-panel">
             <div className="gift-panel-title">
@@ -408,6 +506,8 @@ const GiftNiftyBacktest = () => {
                     <th>Expiry Close</th>
                     <th>Outcome</th>
                     <th>Touches L/M/H</th>
+                    <th>HMA Touches</th>
+                    <th>Candles B/E</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -421,6 +521,8 @@ const GiftNiftyBacktest = () => {
                       <td>{formatNumber(week.expiryClose)}</td>
                       <td>{week.outcomeZone}</td>
                       <td>{week.touches.low}/{week.touches.mid}/{week.touches.high}</td>
+                      <td>{week.hmaQualifiedTouches}</td>
+                      <td>{week.baseCandles}/{week.expiryCandles}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -655,8 +655,18 @@ class TradingService {
    * @param {string} interval - Candle interval (minute, day, 3minute, 5minute, etc.)
    * @returns {Promise<Object>} Historical data with candles array
    */
-  async getHistoricalData(instrumentToken, fromDate, toDate, interval) {
-    const response = await fetch(`/api/historical?instrumentToken=${instrumentToken}&fromDate=${fromDate}&toDate=${toDate}&interval=${interval}`, {
+  async getHistoricalData(instrumentToken, fromDate, toDate, interval, options = {}) {
+    const params = new URLSearchParams({
+      instrumentToken: String(instrumentToken),
+      fromDate,
+      toDate,
+      interval
+    });
+
+    if (options.continuous !== undefined) params.set('continuous', options.continuous ? '1' : '0');
+    if (options.oi !== undefined) params.set('oi', options.oi ? '1' : '0');
+
+    const response = await fetch(`/api/historical?${params.toString()}`, {
       method: 'GET',
       credentials: 'include',
       headers: this.getAuthHeaders(),
