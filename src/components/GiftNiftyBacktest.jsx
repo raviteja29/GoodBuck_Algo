@@ -184,8 +184,7 @@ const GiftNiftyBacktest = () => {
       token,
       dateTime(start, '00:00:00'),
       dateTime(end, '23:59:59'),
-      '15minute',
-      { continuous: true }
+      '15minute'
     );
     return (data?.candles || [])
       .map(normalizeCandle)
@@ -194,21 +193,33 @@ const GiftNiftyBacktest = () => {
 
   const fetchContinuousCandles = async (token, start, end) => {
     const chunks = [];
+    const failedChunks = [];
     const seen = new Set();
     for (let chunkStart = new Date(start); chunkStart <= end; chunkStart = addDays(chunkStart, HISTORICAL_CHUNK_DAYS)) {
       const chunkEnd = addDays(chunkStart, HISTORICAL_CHUNK_DAYS - 1);
       if (chunkEnd > end) chunkEnd.setTime(end.getTime());
       setProgress(`Fetching continuous 15m candles: ${toInputDate(chunkStart)} to ${toInputDate(chunkEnd)}`);
-      const candles = await fetchCandlesForWindow(token, chunkStart, chunkEnd);
-      candles.forEach(candle => {
-        const key = `${candle.time}|${candle.open}|${candle.high}|${candle.low}|${candle.close}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          chunks.push(candle);
-        }
-      });
+      try {
+        const candles = await fetchCandlesForWindow(token, chunkStart, chunkEnd);
+        candles.forEach(candle => {
+          const key = `${candle.time}|${candle.open}|${candle.high}|${candle.low}|${candle.close}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            chunks.push(candle);
+          }
+        });
+      } catch (err) {
+        failedChunks.push({
+          from: toInputDate(chunkStart),
+          to: toInputDate(chunkEnd),
+          reason: err.message || 'Historical fetch failed'
+        });
+      }
     }
-    return chunks.sort((a, b) => parseCandleTime(a.time) - parseCandleTime(b.time));
+    return {
+      candles: chunks.sort((a, b) => parseCandleTime(a.time) - parseCandleTime(b.time)),
+      failedChunks
+    };
   };
 
   const runBacktest = async () => {
@@ -228,9 +239,9 @@ const GiftNiftyBacktest = () => {
       const indicatorStart = requestedIndicatorStart < minimumWarmupStart ? requestedIndicatorStart : minimumWarmupStart;
       const finalExpiry = windows[windows.length - 1].expiryDate;
       setProgress(`Fetching continuous 15m GIFTNIFTY candles from ${toInputDate(indicatorStart)} to ${toInputDate(finalExpiry)}...`);
-      const allCandles = await fetchContinuousCandles(token, indicatorStart, finalExpiry);
+      const { candles: allCandles, failedChunks } = await fetchContinuousCandles(token, indicatorStart, finalExpiry);
       if (!allCandles.length) {
-        throw new Error('No 15m candles returned. Verify the GIFTNIFTY instrument token or Kite historical access for this symbol.');
+        throw new Error(`No 15m candles returned. Verify the GIFTNIFTY instrument token or Kite historical access for this symbol. Failed chunks: ${failedChunks.length}`);
       }
 
       const hma50 = computeHMASeries(allCandles, 50);
@@ -326,6 +337,7 @@ const GiftNiftyBacktest = () => {
         processed: weekRows.length,
         skipped: skippedRows.length,
         skippedRows,
+        failedChunks,
         totalCandles: allCandles.length,
         scenarios,
         weeks: weekRows
@@ -441,6 +453,35 @@ const GiftNiftyBacktest = () => {
                         <td>{row.expiryDate}</td>
                         <td>{row.baseCandles}</td>
                         <td>{row.expiryCandles}</td>
+                        <td>{row.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {result.failedChunks.length > 0 && (
+            <section className="gift-panel">
+              <div className="gift-panel-title">
+                <h2>Historical Fetch Failures</h2>
+                <p>These chunks failed at the Kite/backend historical endpoint. The backtest continues with the chunks that returned candles.</p>
+              </div>
+              <div className="gift-table-wrap compact">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>From</th>
+                      <th>To</th>
+                      <th>Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.failedChunks.slice(0, 50).map(row => (
+                      <tr key={`${row.from}-${row.to}`}>
+                        <td>{row.from}</td>
+                        <td>{row.to}</td>
                         <td>{row.reason}</td>
                       </tr>
                     ))}
