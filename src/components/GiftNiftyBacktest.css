@@ -1,0 +1,244 @@
+.gift-backtest {
+  min-height: calc(100vh - 48px);
+  overflow: auto;
+  background: #0a141f;
+  color: #d9e3f3;
+  padding: 24px;
+}
+
+.gift-backtest-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid #3c4a42;
+  border-radius: 8px;
+  background: #17202b;
+  padding: 18px;
+}
+
+.gift-backtest-header p,
+.gift-backtest-controls span,
+.gift-summary-grid span,
+.gift-panel-title p,
+.gift-table-wrap th {
+  color: #bacabf;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.gift-backtest-header p,
+.gift-backtest-header h1,
+.gift-backtest-header span {
+  margin: 0;
+}
+
+.gift-backtest-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #44f0af;
+  font-size: 24px;
+  line-height: 32px;
+  margin-top: 8px;
+}
+
+.gift-backtest-header h1 svg,
+.gift-run-btn svg,
+.gift-error svg,
+.gift-backtest-controls svg {
+  width: 18px;
+  height: 18px;
+}
+
+.gift-backtest-header > div > span {
+  display: block;
+  color: #bacabf;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.gift-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: #44f0af;
+  color: #003825;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 12px 16px;
+  text-transform: uppercase;
+}
+
+.gift-run-btn:disabled {
+  opacity: 0.7;
+}
+
+.spin {
+  animation: gift-spin 900ms linear infinite;
+}
+
+@keyframes gift-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.gift-backtest-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.gift-backtest-controls label {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #3c4a42;
+  border-radius: 6px;
+  background: #131c27;
+  padding: 12px;
+}
+
+.gift-backtest-controls span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gift-backtest-controls input {
+  width: 100%;
+  border: 1px solid #3c4a42;
+  border-radius: 4px;
+  background: #050f19;
+  color: #d9e3f3;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 10px;
+}
+
+.gift-backtest-controls input:focus {
+  border-color: #44f0af;
+  outline: none;
+}
+
+.gift-progress,
+.gift-error,
+.gift-empty {
+  margin-top: 16px;
+  border: 1px solid #3c4a42;
+  border-radius: 6px;
+  background: #131c27;
+  color: #bacabf;
+  padding: 14px;
+}
+
+.gift-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-color: rgba(255, 179, 181, 0.45);
+  color: #ffb3b5;
+}
+
+.gift-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.gift-summary-grid div {
+  border: 1px solid #3c4a42;
+  border-radius: 6px;
+  background: #17202b;
+  padding: 14px;
+}
+
+.gift-summary-grid strong {
+  display: block;
+  color: #44f0af;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 24px;
+  line-height: 32px;
+  margin-top: 8px;
+}
+
+.gift-panel {
+  border: 1px solid #3c4a42;
+  border-radius: 8px;
+  background: #17202b;
+  margin-top: 16px;
+  overflow: hidden;
+}
+
+.gift-panel-title {
+  border-bottom: 1px solid #3c4a42;
+  background: #131c27;
+  padding: 14px 16px;
+}
+
+.gift-panel-title h2 {
+  color: #d9e3f3;
+  font-size: 16px;
+  line-height: 22px;
+  margin: 0 0 6px;
+}
+
+.gift-panel-title p {
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.gift-table-wrap {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.gift-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.gift-table-wrap th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid #3c4a42;
+  background: #212b36;
+  padding: 10px;
+  text-align: left;
+}
+
+.gift-table-wrap td {
+  border-bottom: 1px solid rgba(60, 74, 66, 0.35);
+  color: #d9e3f3;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 9px 10px;
+}
+
+.gift-table-wrap tr:hover td {
+  background: rgba(44, 54, 65, 0.45);
+}
+
+@media (max-width: 960px) {
+  .gift-backtest {
+    padding: 16px;
+  }
+
+  .gift-backtest-header {
+    flex-direction: column;
+  }
+
+  .gift-backtest-controls,
+  .gift-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}

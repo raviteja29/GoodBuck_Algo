@@ -19,6 +19,7 @@ import MarketIndices from './MarketIndices';
 import Strategies from '../Strategies';
 import Analytics from '../Analytics';
 import RiskManager from '../RiskManager';
+import GiftNiftyBacktest from '../GiftNiftyBacktest';
 import './DashboardGrid.css';
 
 const WATCHLIST_CONFIG = [
@@ -1432,6 +1433,10 @@ const DashboardGrid = ({ activeSection, dashboardData: _dashboardData, userInfo:
 
   if (activeSection === 'risk') {
     return <RiskManager />;
+  }
+
+  if (activeSection === 'backtest') {
+    return <GiftNiftyBacktest />;
   }
 
   if (activeSection !== 'dashboard') {
