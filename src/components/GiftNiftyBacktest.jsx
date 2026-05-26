@@ -30,10 +30,22 @@ const parseCandleTime = (value) => {
   return new Date(normalized);
 };
 
+const getCandleDateKey = (value) => {
+  if (value instanceof Date) return toInputDate(value);
+  if (value == null) return '';
+  const raw = String(value);
+  const match = raw.match(/(\d{4})[-/](\d{2})[-/](\d{2})/);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+  const parsed = parseCandleTime(value);
+  return Number.isNaN(parsed.getTime()) ? '' : toInputDate(parsed);
+};
+
 const normalizeCandle = (candle) => {
   if (Array.isArray(candle)) {
+    const time = candle[0];
     return {
-      time: candle[0],
+      time,
+      dateKey: getCandleDateKey(time),
       open: Number(candle[1]),
       high: Number(candle[2]),
       low: Number(candle[3]),
@@ -42,8 +54,10 @@ const normalizeCandle = (candle) => {
     };
   }
 
+  const time = candle?.date || candle?.time || candle?.timestamp;
   return {
-    time: candle?.date || candle?.time || candle?.timestamp,
+    time,
+    dateKey: getCandleDateKey(time),
     open: Number(candle?.open),
     high: Number(candle?.high),
     low: Number(candle?.low),
@@ -119,6 +133,11 @@ const getOutcomeZone = (value, levels) => {
   if (value < levels.mid) return 'low-mid';
   if (value <= levels.high) return 'mid-high';
   return 'above-high';
+};
+
+const isDateKeyInRange = (dateKey, startDate, endDate) => {
+  if (!dateKey) return false;
+  return dateKey >= toInputDate(startDate) && dateKey <= toInputDate(endDate);
 };
 
 const getExpiryBias = (expiryClose, levels) => {
@@ -217,7 +236,11 @@ const GiftNiftyBacktest = () => {
       }
     }
     return {
-      candles: chunks.sort((a, b) => parseCandleTime(a.time) - parseCandleTime(b.time)),
+      candles: chunks.sort((a, b) => {
+        const byDate = a.dateKey.localeCompare(b.dateKey);
+        if (byDate !== 0) return byDate;
+        return parseCandleTime(a.time) - parseCandleTime(b.time);
+      }),
       failedChunks
     };
   };
@@ -254,23 +277,17 @@ const GiftNiftyBacktest = () => {
       for (const [index, window] of windows.entries()) {
         setProgress(`Processing ${index + 1}/${windows.length}: ${toInputDate(window.baseStart)} to ${toInputDate(window.expiryDate)}`);
 
-        const baseCandles = allCandles.filter(candle => {
-          const time = parseCandleTime(candle.time);
-          return time >= window.baseStart && time <= addDays(window.baseEnd, 1);
-        });
-        const expiryCandles = allCandles.filter(candle => {
-          const time = parseCandleTime(candle.time);
-          return time >= window.expiryStart && time <= addDays(window.expiryDate, 1);
-        });
+        const baseCandles = allCandles.filter(candle => isDateKeyInRange(candle.dateKey, window.baseStart, window.baseEnd));
+        const expiryCandles = allCandles.filter(candle => isDateKeyInRange(candle.dateKey, window.expiryStart, window.expiryDate));
 
         if (!baseCandles.length || !expiryCandles.length) {
-          skippedRows.push({
+        skippedRows.push({
             baseStart: toInputDate(window.baseStart),
             baseEnd: toInputDate(window.baseEnd),
             expiryDate: toInputDate(window.expiryDate),
             baseCandles: baseCandles.length,
             expiryCandles: expiryCandles.length,
-            reason: !baseCandles.length ? 'No candles in base range' : 'No candles in expiry range'
+            reason: !baseCandles.length ? 'No candles matched base date keys' : 'No candles matched expiry date keys'
           });
           continue;
         }
@@ -333,6 +350,8 @@ const GiftNiftyBacktest = () => {
       setResult({
         token,
         indicatorStart: toInputDate(indicatorStart),
+        firstCandleDate: allCandles[0]?.dateKey || '',
+        lastCandleDate: allCandles[allCandles.length - 1]?.dateKey || '',
         windows: windows.length,
         processed: weekRows.length,
         skipped: skippedRows.length,
@@ -422,6 +441,10 @@ const GiftNiftyBacktest = () => {
             <div>
               <span>HMA History From</span>
               <strong>{result.indicatorStart}</strong>
+            </div>
+            <div>
+              <span>Candle Coverage</span>
+              <strong>{result.firstCandleDate || '--'} → {result.lastCandleDate || '--'}</strong>
             </div>
             <div>
               <span>Mid Touch Above-Mid Expiry</span>
