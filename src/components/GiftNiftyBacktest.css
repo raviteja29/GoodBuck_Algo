@@ -235,6 +235,14 @@
   line-height: 1.5;
 }
 
+.gift-pnl-positive {
+  color: #44f0af !important;
+}
+
+.gift-pnl-negative {
+  color: #ffb3b5 !important;
+}
+
 .gift-table-wrap tr:hover td {
   background: rgba(44, 54, 65, 0.45);
 }

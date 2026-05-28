@@ -173,6 +173,7 @@ const getHmaState = (series, index, levels) => {
   if (!Number.isFinite(current) || !Number.isFinite(previous)) return null;
   return {
     value: current,
+    previousValue: previous,
     zone: getZone(current, levels),
     trend: getTrend(current, previous)
   };
@@ -180,15 +181,301 @@ const getHmaState = (series, index, levels) => {
 
 const formatHmaState = (state) => state ? `${state.zone} / ${state.trend}` : '--';
 
-const buildHmaJourney = (candles, series, candleIndexMap, levels) => {
-  const transitions = [];
-  candles.forEach(candle => {
-    const state = getHmaState(series, candleIndexMap.get(candle), levels);
-    if (!state) return;
-    const label = formatHmaState(state);
-    if (transitions[transitions.length - 1] !== label) transitions.push(label);
+const crossesAbove = (previous, current, level) => previous <= level && current > level;
+const crossesBelow = (previous, current, level) => previous >= level && current < level;
+const isAboveMid = (state, levels) => state.value > levels.mid;
+const isBelowMid = (state, levels) => state.value < levels.mid;
+
+const STRATEGY_SETUPS = [
+  {
+    key: 'mid-bounce-long',
+    name: 'Mid Bounce Long',
+    side: 'long',
+    entry: (candle, levels) => levels.mid,
+    stop: levels => levels.low,
+    target: levels => levels.high,
+    matches: ({ candle, levels, hma50State, hma200State }) => (
+      levelWasTouched(candle, levels.mid)
+      && hma50State.zone === 'mid-high'
+      && hma200State.zone === 'mid-high'
+    )
+  },
+  {
+    key: 'mid-rejection-short',
+    name: 'Mid Rejection Short',
+    side: 'short',
+    entry: (candle, levels) => levels.mid,
+    stop: levels => levels.high,
+    target: levels => levels.low,
+    matches: ({ candle, levels, hma50State, hma200State }) => (
+      levelWasTouched(candle, levels.mid)
+      && hma50State.zone === 'low-mid'
+      && hma200State.zone === 'low-mid'
+    )
+  },
+  {
+    key: 'low-reclaim-long',
+    name: 'Low Reclaim Long',
+    side: 'long',
+    entry: candle => candle.close,
+    stop: levels => levels.low,
+    target: levels => levels.high,
+    matches: ({ candle, levels, hma50State, hma200State }) => (
+      levelWasTouched(candle, levels.low)
+      && crossesAbove(hma50State.previousValue, hma50State.value, levels.low)
+      && hma50State.trend === 'increasing'
+      && (hma200State.zone !== 'below-low' || hma200State.trend === 'increasing')
+    )
+  },
+  {
+    key: 'mid-recovery-long',
+    name: 'Mid Recovery Long',
+    side: 'long',
+    entry: candle => candle.close,
+    stop: levels => levels.low,
+    target: levels => levels.high,
+    matches: ({ candle, levels, hma50State, hma200State }) => (
+      candle.close >= levels.mid
+      && crossesAbove(hma50State.previousValue, hma50State.value, levels.mid)
+      && hma50State.trend === 'increasing'
+      && ['low-mid', 'mid-high'].includes(hma200State.zone)
+    )
+  },
+  {
+    key: 'high-continuation-long',
+    name: 'High Continuation Long',
+    side: 'long',
+    entry: candle => candle.close,
+    stop: levels => levels.mid,
+    target: levels => levels.high,
+    matches: ({ candle, levels, hma50State, hma200State }) => (
+      levelWasTouched(candle, levels.high)
+      && isAboveMid(hma50State, levels)
+      && isAboveMid(hma200State, levels)
+      && hma50State.trend === 'increasing'
+      && hma200State.trend === 'increasing'
+    )
+  },
+  {
+    key: 'high-rejection-short',
+    name: 'High Rejection Short',
+    side: 'short',
+    entry: candle => candle.close,
+    stop: levels => levels.high,
+    target: levels => levels.low,
+    matches: ({ candle, levels, hma50State, hma200State }) => (
+      levelWasTouched(candle, levels.high)
+      && hma50State.value <= levels.high
+      && hma50State.trend === 'decreasing'
+      && (hma200State.zone === 'mid-high' || hma200State.value < levels.high)
+    )
+  },
+  {
+    key: 'mid-breakdown-short',
+    name: 'Mid Breakdown Short',
+    side: 'short',
+    entry: candle => candle.close,
+    stop: levels => levels.high,
+    target: levels => levels.low,
+    matches: ({ candle, levels, hma50State, hma200State }) => (
+      candle.close <= levels.mid
+      && crossesBelow(hma50State.previousValue, hma50State.value, levels.mid)
+      && hma50State.trend === 'decreasing'
+      && !(hma200State.zone === 'above-high' && hma200State.trend === 'increasing')
+    )
+  },
+  {
+    key: 'low-continuation-short',
+    name: 'Low Continuation Short',
+    side: 'short',
+    entry: candle => candle.close,
+    stop: levels => levels.mid,
+    target: levels => levels.low,
+    matches: ({ candle, levels, hma50State, hma200State }) => (
+      levelWasTouched(candle, levels.low)
+      && isBelowMid(hma50State, levels)
+      && isBelowMid(hma200State, levels)
+      && hma50State.trend === 'decreasing'
+      && hma200State.trend === 'decreasing'
+    )
+  }
+];
+
+const getTradePoints = (side, entryPrice, exitPrice) => side === 'long'
+  ? exitPrice - entryPrice
+  : entryPrice - exitPrice;
+
+const getExitDeadline = (expiryDate) => new Date(`${toInputDate(expiryDate)}T15:15:00+05:30`);
+
+const isTargetHit = (side, candle, target) => Number.isFinite(target) && (side === 'long'
+  ? candle.high >= target
+  : candle.low <= target);
+
+const isStopHit = (side, candle, stop) => Number.isFinite(stop) && (side === 'long'
+  ? candle.low <= stop
+  : candle.high >= stop);
+
+const shouldReverse = (activeSide, originalSide, hma50State, levels) => {
+  if (activeSide === originalSide && activeSide === 'long') {
+    return crossesBelow(hma50State.previousValue, hma50State.value, levels.mid);
+  }
+  if (activeSide === originalSide && activeSide === 'short') {
+    return crossesAbove(hma50State.previousValue, hma50State.value, levels.mid);
+  }
+  if (originalSide === 'long') {
+    return crossesAbove(hma50State.previousValue, hma50State.value, levels.mid)
+      || (hma50State.trend === 'increasing' && hma50State.value > levels.mid);
+  }
+  return crossesBelow(hma50State.previousValue, hma50State.value, levels.mid)
+    || (hma50State.trend === 'decreasing' && hma50State.value < levels.mid);
+};
+
+const getReverseSide = (side) => side === 'long' ? 'short' : 'long';
+
+const getSideLevels = (side, levels) => side === 'long'
+  ? { target: levels.high, stop: levels.low }
+  : { target: levels.low, stop: levels.high };
+
+const normalizeTradeLevels = (side, entryPrice, levels) => {
+  const target = Number.isFinite(levels.target) && (
+    (side === 'long' && levels.target > entryPrice)
+    || (side === 'short' && levels.target < entryPrice)
+  ) ? levels.target : null;
+
+  const stop = Number.isFinite(levels.stop) && (
+    (side === 'long' && levels.stop < entryPrice)
+    || (side === 'short' && levels.stop > entryPrice)
+  ) ? levels.stop : null;
+
+  return { target, stop };
+};
+
+const createLeg = (side, entryPrice, entryTime, levels, tradeLevels = getSideLevels(side, levels)) => ({
+  side,
+  entryPrice,
+  entryTime,
+  ...normalizeTradeLevels(side, entryPrice, tradeLevels)
+});
+
+const closeLeg = (leg, exitPrice, exitTime, exitReason) => ({
+  ...leg,
+  exitPrice,
+  exitTime,
+  exitReason,
+  points: getTradePoints(leg.side, leg.entryPrice, exitPrice)
+});
+
+const simulateStrategyTrade = ({
+  setup,
+  triggerIndex,
+  candles,
+  hma50,
+  candleIndexMap,
+  levels,
+  window,
+  hma50State,
+  hma200State
+}) => {
+  const triggerCandle = candles[triggerIndex];
+  const entryPrice = setup.entry(triggerCandle, levels);
+  if (!Number.isFinite(entryPrice)) return null;
+
+  const originalSide = setup.side;
+  const legs = [];
+  let activeLeg = createLeg(originalSide, entryPrice, formatCandleTimestamp(triggerCandle.time), levels, {
+    target: setup.target(levels),
+    stop: setup.stop(levels)
   });
-  return transitions.length ? transitions.join(' -> ') : '--';
+  let exitReason = 'expiry';
+
+  for (let index = triggerIndex + 1; index < candles.length; index += 1) {
+    const candle = candles[index];
+    const hmaState = getHmaState(hma50, candleIndexMap.get(candle), levels);
+
+    if (isStopHit(activeLeg.side, candle, activeLeg.stop)) {
+      legs.push(closeLeg(activeLeg, activeLeg.stop, formatCandleTimestamp(candle.time), 'stop loss'));
+      exitReason = 'stop loss';
+      activeLeg = null;
+      break;
+    }
+
+    if (isTargetHit(activeLeg.side, candle, activeLeg.target)) {
+      legs.push(closeLeg(activeLeg, activeLeg.target, formatCandleTimestamp(candle.time), 'target'));
+      exitReason = 'target';
+      activeLeg = null;
+      break;
+    }
+
+    if (hmaState && shouldReverse(activeLeg.side, originalSide, hmaState, levels)) {
+      const reason = activeLeg.side === originalSide ? 'HMA50 mid reversal' : 'HMA50 re-entry';
+      legs.push(closeLeg(activeLeg, candle.close, formatCandleTimestamp(candle.time), reason));
+      const nextSide = activeLeg.side === originalSide ? getReverseSide(originalSide) : originalSide;
+      activeLeg = createLeg(nextSide, candle.close, formatCandleTimestamp(candle.time), levels);
+      exitReason = reason;
+    }
+  }
+
+  if (activeLeg) {
+    const finalCandle = candles[candles.length - 1];
+    legs.push(closeLeg(activeLeg, finalCandle.close, formatCandleTimestamp(finalCandle.time), 'expiry'));
+    exitReason = 'expiry';
+  }
+
+  const points = legs.reduce((sum, leg) => sum + leg.points, 0);
+  const firstLeg = legs[0];
+  const lastLeg = legs[legs.length - 1];
+
+  return {
+    key: `${window.baseStart.toISOString()}|${setup.key}|${triggerCandle.time}`,
+    setupKey: setup.key,
+    setupName: setup.name,
+    side: originalSide,
+    baseStart: toInputDate(window.baseStart),
+    baseEnd: toInputDate(window.baseEnd),
+    expiryDate: toInputDate(window.expiryDate),
+    entryTime: firstLeg?.entryTime || formatCandleTimestamp(triggerCandle.time),
+    entryPrice,
+    exitTime: lastLeg?.exitTime || formatCandleTimestamp(triggerCandle.time),
+    exitPrice: lastLeg?.exitPrice || entryPrice,
+    exitReason,
+    points,
+    result: points > 0 ? 'win' : points < 0 ? 'loss' : 'flat',
+    legs,
+    hma50AtEntry: formatHmaState(hma50State),
+    hma200AtEntry: formatHmaState(hma200State)
+  };
+};
+
+const buildStrategySummary = (trades) => {
+  const summary = new Map();
+  trades.forEach(trade => {
+    if (!summary.has(trade.setupKey)) {
+      summary.set(trade.setupKey, {
+        setupKey: trade.setupKey,
+        setupName: trade.setupName,
+        side: trade.side,
+        trades: 0,
+        wins: 0,
+        losses: 0,
+        flats: 0,
+        points: 0
+      });
+    }
+    const row = summary.get(trade.setupKey);
+    row.trades += 1;
+    row.points += trade.points;
+    if (trade.points > 0) row.wins += 1;
+    else if (trade.points < 0) row.losses += 1;
+    else row.flats += 1;
+  });
+
+  return Array.from(summary.values())
+    .map(row => ({
+      ...row,
+      winRate: row.trades ? (row.wins / row.trades) * 100 : 0,
+      avgPoints: row.trades ? row.points / row.trades : 0
+    }))
+    .sort((a, b) => b.points - a.points);
 };
 
 const getOutcomeZone = (value, levels) => {
@@ -337,6 +624,7 @@ const GiftNiftyBacktest = () => {
       const hma200 = computeHMASeries(allCandles, 200);
       const candleIndexMap = new Map(allCandles.map((candle, index) => [candle, index]));
       const scenarioMap = new Map();
+      const strategyTrades = [];
       const weekRows = [];
       const skippedRows = [];
 
@@ -345,15 +633,16 @@ const GiftNiftyBacktest = () => {
 
         const baseCandles = allCandles.filter(candle => isDateKeyInRange(candle.dateKey, window.baseStart, window.baseEnd));
         const expiryCandles = allCandles.filter(candle => isDateKeyInRange(candle.dateKey, window.expiryStart, window.expiryDate));
+        const tradeCandles = expiryCandles.filter(candle => parseCandleTime(candle.time) <= getExitDeadline(window.expiryDate));
 
-        if (!baseCandles.length || !expiryCandles.length) {
+        if (!baseCandles.length || !tradeCandles.length) {
         skippedRows.push({
             baseStart: toInputDate(window.baseStart),
             baseEnd: toInputDate(window.baseEnd),
             expiryDate: toInputDate(window.expiryDate),
             baseCandles: baseCandles.length,
-            expiryCandles: expiryCandles.length,
-            reason: !baseCandles.length ? 'No candles matched base date keys' : 'No candles matched expiry date keys'
+            expiryCandles: tradeCandles.length,
+            reason: !baseCandles.length ? 'No candles matched base date keys' : 'No candles before Tuesday 15:15 expiry exit'
           });
           continue;
         }
@@ -362,19 +651,40 @@ const GiftNiftyBacktest = () => {
         const high = Math.max(...baseCandles.map(candle => candle.high));
         const mid = low + ((high - low) / 2);
         const levels = { low, mid, high };
-        const expiryClose = expiryCandles[expiryCandles.length - 1]?.close;
+        const expiryClose = tradeCandles[tradeCandles.length - 1]?.close;
         const outcomeZone = getOutcomeZone(expiryClose, levels);
         const expiryBias = getExpiryBias(expiryClose, levels);
-        const hma50Journey = buildHmaJourney(expiryCandles, hma50, candleIndexMap, levels);
-        const hma200Journey = buildHmaJourney(expiryCandles, hma200, candleIndexMap, levels);
         let firstSignal = null;
         const weekScenarios = new Map();
+        const weekTrades = [];
+        const triggeredSetups = new Set();
 
-        expiryCandles.forEach(candle => {
+        tradeCandles.forEach((candle, tradeIndex) => {
           const candleIndex = candleIndexMap.get(candle);
           const hma50State = getHmaState(hma50, candleIndex, levels);
           const hma200State = getHmaState(hma200, candleIndex, levels);
           if (!hma50State || !hma200State) return;
+
+          STRATEGY_SETUPS.forEach(setup => {
+            if (triggeredSetups.has(setup.key)) return;
+            if (!setup.matches({ candle, levels, hma50State, hma200State })) return;
+            const trade = simulateStrategyTrade({
+              setup,
+              triggerIndex: tradeIndex,
+              candles: tradeCandles,
+              hma50,
+              candleIndexMap,
+              levels,
+              window,
+              hma50State,
+              hma200State
+            });
+            if (trade) {
+              triggeredSetups.add(setup.key);
+              weekTrades.push(trade);
+              strategyTrades.push(trade);
+            }
+          });
 
           ['low', 'mid', 'high'].forEach(levelName => {
             if (!levelWasTouched(candle, levels[levelName])) return;
@@ -438,12 +748,13 @@ const GiftNiftyBacktest = () => {
           outcomeZone,
           expiryBias,
           firstSignal,
-          hma50Journey,
-          hma200Journey
+          trades: weekTrades,
+          tradePoints: weekTrades.reduce((sum, trade) => sum + trade.points, 0)
         });
       }
 
       const scenarios = Array.from(scenarioMap.values()).sort((a, b) => b.count - a.count);
+      const strategySummary = buildStrategySummary(strategyTrades);
       setResult({
         token,
         indicatorStart: toInputDate(indicatorStart),
@@ -456,6 +767,8 @@ const GiftNiftyBacktest = () => {
         failedChunks,
         totalCandles: allCandles.length,
         scenarios,
+        strategyTrades,
+        strategySummary,
         weeks: weekRows
       });
       setProgress('');
@@ -473,6 +786,19 @@ const GiftNiftyBacktest = () => {
     const totalMid = midTouch.reduce((sum, scenario) => sum + scenario.count, 0);
     const aboveMid = midTouch.reduce((sum, scenario) => sum + scenario.aboveMid, 0);
     return { totalMid, aboveMid };
+  }, [result]);
+
+  const strategyHeadline = useMemo(() => {
+    if (!result) return null;
+    const trades = result.strategyTrades || [];
+    const wins = trades.filter(trade => trade.points > 0).length;
+    const points = trades.reduce((sum, trade) => sum + trade.points, 0);
+    return {
+      trades: trades.length,
+      wins,
+      points,
+      winRate: trades.length ? (wins / trades.length) * 100 : 0
+    };
   }, [result]);
 
   return (
@@ -546,6 +872,18 @@ const GiftNiftyBacktest = () => {
             <div>
               <span>Mid Touch Above-Mid Expiry</span>
               <strong>{headline ? pct(headline.aboveMid, headline.totalMid) : '0.0%'}</strong>
+            </div>
+            <div>
+              <span>Strategy Trades</span>
+              <strong>{strategyHeadline?.trades || 0}</strong>
+            </div>
+            <div>
+              <span>Strategy Win %</span>
+              <strong>{strategyHeadline ? `${strategyHeadline.winRate.toFixed(1)}%` : '0.0%'}</strong>
+            </div>
+            <div>
+              <span>Strategy P&L Points</span>
+              <strong>{formatNumber(strategyHeadline?.points || 0)}</strong>
             </div>
           </section>
 
@@ -656,6 +994,86 @@ const GiftNiftyBacktest = () => {
 
           <section className="gift-panel">
             <div className="gift-panel-title">
+              <h2>Strategy Summary</h2>
+              <p>Named setups with target, stop loss, HMA50 reversal, and Tuesday 15:15 expiry exit.</p>
+            </div>
+            <div className="gift-table-wrap compact">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Setup</th>
+                    <th>Side</th>
+                    <th>Trades</th>
+                    <th>Wins</th>
+                    <th>Losses</th>
+                    <th>Win %</th>
+                    <th>Total P&L</th>
+                    <th>Avg P&L</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.strategySummary.map(row => (
+                    <tr key={row.setupKey}>
+                      <td>{row.setupName}</td>
+                      <td>{row.side}</td>
+                      <td>{row.trades}</td>
+                      <td>{row.wins}</td>
+                      <td>{row.losses}</td>
+                      <td>{row.winRate.toFixed(1)}%</td>
+                      <td className={row.points >= 0 ? 'gift-pnl-positive' : 'gift-pnl-negative'}>{formatNumber(row.points)}</td>
+                      <td className={row.avgPoints >= 0 ? 'gift-pnl-positive' : 'gift-pnl-negative'}>{formatNumber(row.avgPoints)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="gift-panel">
+            <div className="gift-panel-title">
+              <h2>Strategy Trades</h2>
+              <p>Each row is one setup trigger. Multi-leg rows include HMA50 reversal and re-entry legs in the same P&L.</p>
+            </div>
+            <div className="gift-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Base Week</th>
+                    <th>Expiry</th>
+                    <th>Setup</th>
+                    <th>Side</th>
+                    <th>HMA50 @ Entry</th>
+                    <th>HMA200 @ Entry</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Exit Reason</th>
+                    <th>Legs</th>
+                    <th>P&L Points</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.strategyTrades.map(trade => (
+                    <tr key={trade.key}>
+                      <td>{trade.baseStart} {'->'} {trade.baseEnd}</td>
+                      <td>{trade.expiryDate}</td>
+                      <td>{trade.setupName}</td>
+                      <td>{trade.side}</td>
+                      <td>{trade.hma50AtEntry}</td>
+                      <td>{trade.hma200AtEntry}</td>
+                      <td>{trade.entryTime} @ {formatNumber(trade.entryPrice)}</td>
+                      <td>{trade.exitTime} @ {formatNumber(trade.exitPrice)}</td>
+                      <td>{trade.exitReason}</td>
+                      <td>{trade.legs.length}</td>
+                      <td className={trade.points >= 0 ? 'gift-pnl-positive' : 'gift-pnl-negative'}>{formatNumber(trade.points)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="gift-panel">
+            <div className="gift-panel-title">
               <h2>Weekly Expiry Outcomes</h2>
               <p>Levels are calculated from the previous Wednesday-Tuesday range.</p>
             </div>
@@ -668,11 +1086,8 @@ const GiftNiftyBacktest = () => {
                     <th>Low</th>
                     <th>Mid</th>
                     <th>High</th>
-                    <th>First Touch</th>
-                    <th>HMA50 @ Touch</th>
-                    <th>HMA200 @ Touch</th>
-                    <th>HMA50 Journey</th>
-                    <th>HMA200 Journey</th>
+                    <th>Strategy Trades</th>
+                    <th>Week P&L</th>
                     <th>Expiry Close</th>
                     <th>Outcome</th>
                   </tr>
@@ -685,15 +1100,8 @@ const GiftNiftyBacktest = () => {
                       <td>{formatNumber(week.levels.low)}</td>
                       <td>{formatNumber(week.levels.mid)}</td>
                       <td>{formatNumber(week.levels.high)}</td>
-                      <td>
-                        {week.firstSignal
-                          ? `${week.firstSignal.level} @ ${week.firstSignal.time} (${formatNumber(week.firstSignal.close)})`
-                          : '--'}
-                      </td>
-                      <td>{week.firstSignal?.hma50 || '--'}</td>
-                      <td>{week.firstSignal?.hma200 || '--'}</td>
-                      <td className="gift-journey-cell" title={week.hma50Journey}>{week.hma50Journey}</td>
-                      <td className="gift-journey-cell" title={week.hma200Journey}>{week.hma200Journey}</td>
+                      <td>{week.trades.length ? week.trades.map(trade => trade.setupName).join(', ') : '--'}</td>
+                      <td className={week.tradePoints >= 0 ? 'gift-pnl-positive' : 'gift-pnl-negative'}>{formatNumber(week.tradePoints)}</td>
                       <td>{formatNumber(week.expiryClose)}</td>
                       <td>{week.outcomeZone}</td>
                     </tr>
