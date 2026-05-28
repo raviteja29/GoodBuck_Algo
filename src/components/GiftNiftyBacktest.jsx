@@ -167,6 +167,23 @@ const formatCandleTimestamp = (value) => {
   }).format(parsed);
 };
 
+const getCandleSessionMinutes = (value) => {
+  const parsed = parseCandleTime(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: CANDLE_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(parsed).map(part => [part.type, part.value]));
+  return (Number(parts.hour) * 60) + Number(parts.minute);
+};
+
+const isTradingSessionCandle = (candle) => {
+  const minutes = getCandleSessionMinutes(candle.time);
+  return minutes != null && minutes >= 555 && minutes <= 930;
+};
+
 const getHmaState = (series, index, levels) => {
   const current = series[index];
   const previous = series[index - 1];
@@ -633,7 +650,10 @@ const GiftNiftyBacktest = () => {
 
         const baseCandles = allCandles.filter(candle => isDateKeyInRange(candle.dateKey, window.baseStart, window.baseEnd));
         const expiryCandles = allCandles.filter(candle => isDateKeyInRange(candle.dateKey, window.expiryStart, window.expiryDate));
-        const tradeCandles = expiryCandles.filter(candle => parseCandleTime(candle.time) <= getExitDeadline(window.expiryDate));
+        const tradeCandles = expiryCandles.filter(candle => (
+          isTradingSessionCandle(candle)
+          && parseCandleTime(candle.time) <= getExitDeadline(window.expiryDate)
+        ));
 
         if (!baseCandles.length || !tradeCandles.length) {
         skippedRows.push({
