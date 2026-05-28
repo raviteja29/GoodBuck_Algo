@@ -198,125 +198,53 @@ const getHmaState = (series, index, levels) => {
 
 const formatHmaState = (state) => state ? `${state.zone} / ${state.trend}` : '--';
 
-const crossesAbove = (previous, current, level) => previous <= level && current > level;
-const crossesBelow = (previous, current, level) => previous >= level && current < level;
-const isAboveMid = (state, levels) => state.value > levels.mid;
-const isBelowMid = (state, levels) => state.value < levels.mid;
+const LEVEL_CONFIGS = [
+  { key: 'low', label: 'Low', value: levels => levels.low },
+  { key: 'mid', label: 'Mid', value: levels => levels.mid },
+  { key: 'high', label: 'High', value: levels => levels.high }
+];
 
-const STRATEGY_SETUPS = [
+const bothIncreasing = (hma50State, hma200State) => (
+  hma50State.trend === 'increasing' && hma200State.trend === 'increasing'
+);
+
+const getTrendSignalSide = (hma50State, hma200State) => bothIncreasing(hma50State, hma200State) ? 'long' : 'short';
+
+const getTouchedLevelSignals = (candle, levels, hma50State, hma200State) => LEVEL_CONFIGS
+  .filter(levelConfig => levelWasTouched(candle, levelConfig.value(levels)))
+  .map(levelConfig => ({
+    level: levelConfig.key,
+    levelLabel: levelConfig.label,
+    price: levelConfig.value(levels),
+    side: getTrendSignalSide(hma50State, hma200State)
+  }));
+
+const STRATEGY_SETUPS = LEVEL_CONFIGS.flatMap(levelConfig => [
   {
-    key: 'mid-bounce-long',
-    name: 'Mid Bounce Long',
+    key: `${levelConfig.key}-rising-long`,
+    name: `${levelConfig.label} Rising Long`,
     side: 'long',
-    entry: (candle, levels) => levels.mid,
+    entry: (candle, levels) => levelConfig.value(levels),
     stop: levels => levels.low,
     target: levels => levels.high,
     matches: ({ candle, levels, hma50State, hma200State }) => (
-      levelWasTouched(candle, levels.mid)
-      && hma50State.zone === 'mid-high'
-      && hma200State.zone === 'mid-high'
+      levelWasTouched(candle, levelConfig.value(levels))
+      && bothIncreasing(hma50State, hma200State)
     )
   },
   {
-    key: 'mid-rejection-short',
-    name: 'Mid Rejection Short',
+    key: `${levelConfig.key}-non-rising-short`,
+    name: `${levelConfig.label} Non-Rising Short`,
     side: 'short',
-    entry: (candle, levels) => levels.mid,
+    entry: (candle, levels) => levelConfig.value(levels),
     stop: levels => levels.high,
     target: levels => levels.low,
     matches: ({ candle, levels, hma50State, hma200State }) => (
-      levelWasTouched(candle, levels.mid)
-      && hma50State.zone === 'low-mid'
-      && hma200State.zone === 'low-mid'
-    )
-  },
-  {
-    key: 'low-reclaim-long',
-    name: 'Low Reclaim Long',
-    side: 'long',
-    entry: candle => candle.close,
-    stop: levels => levels.low,
-    target: levels => levels.high,
-    matches: ({ candle, levels, hma50State, hma200State }) => (
-      levelWasTouched(candle, levels.low)
-      && crossesAbove(hma50State.previousValue, hma50State.value, levels.low)
-      && hma50State.trend === 'increasing'
-      && (hma200State.zone !== 'below-low' || hma200State.trend === 'increasing')
-    )
-  },
-  {
-    key: 'mid-recovery-long',
-    name: 'Mid Recovery Long',
-    side: 'long',
-    entry: candle => candle.close,
-    stop: levels => levels.low,
-    target: levels => levels.high,
-    matches: ({ candle, levels, hma50State, hma200State }) => (
-      candle.close >= levels.mid
-      && crossesAbove(hma50State.previousValue, hma50State.value, levels.mid)
-      && hma50State.trend === 'increasing'
-      && ['low-mid', 'mid-high'].includes(hma200State.zone)
-    )
-  },
-  {
-    key: 'high-continuation-long',
-    name: 'High Continuation Long',
-    side: 'long',
-    entry: candle => candle.close,
-    stop: levels => levels.mid,
-    target: levels => levels.high,
-    matches: ({ candle, levels, hma50State, hma200State }) => (
-      levelWasTouched(candle, levels.high)
-      && isAboveMid(hma50State, levels)
-      && isAboveMid(hma200State, levels)
-      && hma50State.trend === 'increasing'
-      && hma200State.trend === 'increasing'
-    )
-  },
-  {
-    key: 'high-rejection-short',
-    name: 'High Rejection Short',
-    side: 'short',
-    entry: candle => candle.close,
-    stop: levels => levels.high,
-    target: levels => levels.low,
-    matches: ({ candle, levels, hma50State, hma200State }) => (
-      levelWasTouched(candle, levels.high)
-      && hma50State.value <= levels.high
-      && hma50State.trend === 'decreasing'
-      && (hma200State.zone === 'mid-high' || hma200State.value < levels.high)
-    )
-  },
-  {
-    key: 'mid-breakdown-short',
-    name: 'Mid Breakdown Short',
-    side: 'short',
-    entry: candle => candle.close,
-    stop: levels => levels.high,
-    target: levels => levels.low,
-    matches: ({ candle, levels, hma50State, hma200State }) => (
-      candle.close <= levels.mid
-      && crossesBelow(hma50State.previousValue, hma50State.value, levels.mid)
-      && hma50State.trend === 'decreasing'
-      && !(hma200State.zone === 'above-high' && hma200State.trend === 'increasing')
-    )
-  },
-  {
-    key: 'low-continuation-short',
-    name: 'Low Continuation Short',
-    side: 'short',
-    entry: candle => candle.close,
-    stop: levels => levels.mid,
-    target: levels => levels.low,
-    matches: ({ candle, levels, hma50State, hma200State }) => (
-      levelWasTouched(candle, levels.low)
-      && isBelowMid(hma50State, levels)
-      && isBelowMid(hma200State, levels)
-      && hma50State.trend === 'decreasing'
-      && hma200State.trend === 'decreasing'
+      levelWasTouched(candle, levelConfig.value(levels))
+      && !bothIncreasing(hma50State, hma200State)
     )
   }
-];
+]);
 
 const getTradePoints = (side, entryPrice, exitPrice) => side === 'long'
   ? exitPrice - entryPrice
@@ -331,23 +259,6 @@ const isTargetHit = (side, candle, target) => Number.isFinite(target) && (side =
 const isStopHit = (side, candle, stop) => Number.isFinite(stop) && (side === 'long'
   ? candle.low <= stop
   : candle.high >= stop);
-
-const shouldReverse = (activeSide, originalSide, hma50State, levels) => {
-  if (activeSide === originalSide && activeSide === 'long') {
-    return crossesBelow(hma50State.previousValue, hma50State.value, levels.mid);
-  }
-  if (activeSide === originalSide && activeSide === 'short') {
-    return crossesAbove(hma50State.previousValue, hma50State.value, levels.mid);
-  }
-  if (originalSide === 'long') {
-    return crossesAbove(hma50State.previousValue, hma50State.value, levels.mid)
-      || (hma50State.trend === 'increasing' && hma50State.value > levels.mid);
-  }
-  return crossesBelow(hma50State.previousValue, hma50State.value, levels.mid)
-    || (hma50State.trend === 'decreasing' && hma50State.value < levels.mid);
-};
-
-const getReverseSide = (side) => side === 'long' ? 'short' : 'long';
 
 const getSideLevels = (side, levels) => side === 'long'
   ? { target: levels.high, stop: levels.low }
@@ -387,6 +298,7 @@ const simulateStrategyTrade = ({
   triggerIndex,
   candles,
   hma50,
+  hma200,
   candleIndexMap,
   levels,
   window,
@@ -407,7 +319,6 @@ const simulateStrategyTrade = ({
 
   for (let index = triggerIndex + 1; index < candles.length; index += 1) {
     const candle = candles[index];
-    const hmaState = getHmaState(hma50, candleIndexMap.get(candle), levels);
 
     if (isStopHit(activeLeg.side, candle, activeLeg.stop)) {
       legs.push(closeLeg(activeLeg, activeLeg.stop, formatCandleTimestamp(candle.time), 'stop loss'));
@@ -423,12 +334,23 @@ const simulateStrategyTrade = ({
       break;
     }
 
-    if (hmaState && shouldReverse(activeLeg.side, originalSide, hmaState, levels)) {
-      const reason = activeLeg.side === originalSide ? 'HMA50 mid reversal' : 'HMA50 re-entry';
-      legs.push(closeLeg(activeLeg, candle.close, formatCandleTimestamp(candle.time), reason));
-      const nextSide = activeLeg.side === originalSide ? getReverseSide(originalSide) : originalSide;
-      activeLeg = createLeg(nextSide, candle.close, formatCandleTimestamp(candle.time), levels);
-      exitReason = reason;
+    const candleIndex = candleIndexMap.get(candle);
+    const currentHma50State = getHmaState(hma50, candleIndex, levels);
+    const currentHma200State = getHmaState(hma200, candleIndex, levels);
+    if (!currentHma50State || !currentHma200State) continue;
+
+    const oppositeSignal = getTouchedLevelSignals(candle, levels, currentHma50State, currentHma200State)
+      .find(signal => signal.side !== activeLeg.side);
+
+    if (oppositeSignal) {
+      legs.push(closeLeg(
+        activeLeg,
+        oppositeSignal.price,
+        formatCandleTimestamp(candle.time),
+        `${oppositeSignal.levelLabel} ${oppositeSignal.side} signal`
+      ));
+      activeLeg = createLeg(oppositeSignal.side, oppositeSignal.price, formatCandleTimestamp(candle.time), levels);
+      exitReason = `${oppositeSignal.levelLabel} ${oppositeSignal.side} signal`;
     }
   }
 
@@ -693,6 +615,7 @@ const GiftNiftyBacktest = () => {
               triggerIndex: tradeIndex,
               candles: tradeCandles,
               hma50,
+              hma200,
               candleIndexMap,
               levels,
               window,
@@ -1015,7 +938,7 @@ const GiftNiftyBacktest = () => {
           <section className="gift-panel">
             <div className="gift-panel-title">
               <h2>Strategy Summary</h2>
-              <p>Named setups with target, stop loss, HMA50 reversal, and Tuesday 15:15 expiry exit.</p>
+              <p>Level-based trades: both HMAs increasing go long; mixed or falling HMAs go short. Opposite level signals flip the active trade.</p>
             </div>
             <div className="gift-table-wrap compact">
               <table>
@@ -1052,7 +975,7 @@ const GiftNiftyBacktest = () => {
           <section className="gift-panel">
             <div className="gift-panel-title">
               <h2>Strategy Trades</h2>
-              <p>Each row is one setup trigger. Multi-leg rows include HMA50 reversal and re-entry legs in the same P&L.</p>
+              <p>Each row is one setup trigger. P&L includes any same-week flips caused by opposite level signals.</p>
             </div>
             <div className="gift-table-wrap">
               <table>
