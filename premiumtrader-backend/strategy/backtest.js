@@ -10,9 +10,10 @@ import { computeHMASeries, getHmaState } from './indicators.js';
 import { STRATEGY_SETUPS, getSetup } from './rules/levelTouch.js';
 import { createTradeMachine } from './engine.js';
 import {
-  buildWeeklyWindows, formatCandleTimestamp, getCandleDateKey, getExitDeadline,
-  isTradingSessionCandle, normalizeCandle, parseCandleTime, toCandleDateKey, toInputDate, addDays,
+  buildWeeklyWindows, formatCandleTimestamp, getCandleDateKey, getCandleSessionMinutes,
+  normalizeCandle, parseCandleTime, toCandleDateKey, toInputDate, addDays,
 } from './session.js';
+import { DEFAULT_CONFIG, toMinutes } from './config.js';
 
 const dateKeysBetween = (start, end) => {
   const keys = new Set();
@@ -25,30 +26,42 @@ const dateKeysBetween = (start, end) => {
  * @param {Array}    opts.candles   raw candles (Kite arrays or objects)
  * @param {string}   opts.from      YYYY-MM-DD
  * @param {string}   opts.to        YYYY-MM-DD
- * @param {string[]} [opts.setupKeys] limit to these setups
+ * @param {object}   [opts.config]  saved strategy config (strategy/config.js); defaults
+ *                                  reproduce the original hard-coded strategy
+ * @param {string[]} [opts.setupKeys] limit to these setups (overrides config.setups)
  * @returns {{trades:Array, summary:Array, metrics:object, skipped:Array}}
  */
-export function runBacktest({ candles, from, to, setupKeys = null }) {
+export function runBacktest({ candles, from, to, config = DEFAULT_CONFIG, setupKeys = null }) {
+  const { fastPeriod, slowPeriod } = config.trend;
+  const sessionStart = toMinutes(config.session.start);
+  const sessionEnd = toMinutes(config.session.end);
+  const inSession = (c) => {
+    const m = getCandleSessionMinutes(c.time);
+    return m != null && m >= sessionStart && m <= sessionEnd;
+  };
+
   const normalized = candles.map(normalizeCandle).filter((c) => Number.isFinite(c.close));
   normalized.sort((a, b) => parseCandleTime(a.time) - parseCandleTime(b.time));
 
   const candleIndexMap = new Map(normalized.map((c, i) => [c, i]));
-  const hma50 = computeHMASeries(normalized, 50);
-  const hma200 = computeHMASeries(normalized, 200);
+  // Named hma50/hma200 for history; periods now come from the config.
+  const hma50 = computeHMASeries(normalized, fastPeriod);
+  const hma200 = computeHMASeries(normalized, slowPeriod);
 
-  const setups = setupKeys ? setupKeys.map(getSetup).filter(Boolean) : STRATEGY_SETUPS;
+  const keys = setupKeys || config.setups;
+  const setups = keys ? keys.map(getSetup).filter(Boolean) : STRATEGY_SETUPS;
   const trades = [];
   const skipped = [];
 
   for (const window of buildWeeklyWindows(from, to)) {
     const baseKeys = dateKeysBetween(window.baseStart, window.baseEnd);
     const expiryKeys = dateKeysBetween(window.expiryStart, window.expiryDate);
-    const deadline = getExitDeadline(window.expiryDate);
+    const deadline = new Date(`${toInputDate(window.expiryDate)}T${config.session.exitTime}:00+05:30`);
 
     const baseCandles = normalized.filter((c) => baseKeys.has(getCandleDateKey(c.time)));
     const tradeCandles = normalized.filter(
       (c) => expiryKeys.has(getCandleDateKey(c.time))
-        && isTradingSessionCandle(c)
+        && inSession(c)
         && parseCandleTime(c.time) <= deadline,
     );
 

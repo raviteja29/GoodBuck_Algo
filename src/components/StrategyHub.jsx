@@ -55,8 +55,8 @@ const Stat = ({ label, value, className = '', hint }) => (
   </div>
 );
 
-const StrategyHub = () => {
-  const [tab, setTab] = useState('overview');
+const StrategyHub = ({ initialTab = 'overview' }) => {
+  const [tab, setTab] = useState(initialTab);
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
   const [brokerError, setBrokerError] = useState(null);

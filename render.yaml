@@ -9,3 +9,11 @@ services:
         value: production
       - key: PORT
         value: 5000
+      # Secrets: set these in the Render dashboard (Environment tab), never in git.
+      - key: KITE_API_KEY
+        sync: false
+      - key: KITE_API_SECRET
+        sync: false
+      # Needed at build time: Vite bakes it into the login URL.
+      - key: VITE_KITE_API_KEY
+        sync: false

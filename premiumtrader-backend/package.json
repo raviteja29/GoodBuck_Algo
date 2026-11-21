@@ -17,7 +17,7 @@
   },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server.js",
-    "test": "node --disable-warning=ExperimentalWarning --test 'db/__tests__/*.test.mjs' && node strategy/__tests__/equivalence.test.mjs && node strategy/__tests__/trade-equivalence.test.mjs"
+    "test": "node --disable-warning=ExperimentalWarning --test 'db/__tests__/*.test.mjs' 'strategy/__tests__/config.test.mjs' && node strategy/__tests__/equivalence.test.mjs && node strategy/__tests__/trade-equivalence.test.mjs"
   },
   "engines": {
     "node": ">=22.13"

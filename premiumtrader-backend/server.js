@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const { KiteTicker } = require('kiteconnect');
 import { openDb, schemaVersion } from './db/index.js';
 import { saveKiteSession, loadKiteSession, clearKiteSession, publicSessionInfo } from './kiteSession.js';
+import { strategiesRouter, seedDefaultStrategy } from './strategies.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -81,6 +82,8 @@ const app = express();
 // SQLite store (strategies, backtests, candles, signals, snapshots, Kite session)
 const db = openDb();
 console.log(`[DB] Ready (schema v${schemaVersion(db)})`);
+const seeded = seedDefaultStrategy(db);
+if (seeded) console.log(`[STRATEGIES] Saved the default strategy "${seeded.name}"`);
 
 // In-memory instrument cache (15 min TTL)
 // Instrument cache + performance instrumentation
@@ -137,6 +140,18 @@ app.use(cors({
 
 // 2) Enable JSON body parsing (this **must** come before your routes)
 app.use(express.json());
+
+// Saved strategies (Phase 1)
+app.use('/api/strategies', strategiesRouter(db, {
+  verifyToken: async (token) => {
+    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+    kc.setAccessToken(token);
+    const profile = await kc.getProfile();
+    globalLastAccessToken = token;
+    initTickerIfPossible(token);
+    return profile;
+  },
+}));
 
 // 3) Define routes after json parser
 app.post('/api/generate_session', async (req, res) => {
