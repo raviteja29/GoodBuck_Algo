@@ -23,17 +23,21 @@ class AuthService {
       access_token: localStorage.getItem('access_token'),
     };
   }
-  constructor() {
-    this.apiKey = import.meta.env.VITE_KITE_API_KEY;
-  }
-
-  getLoginUrl() {
-    return `https://kite.zerodha.com/connect/login?v=3&api_key=${this.apiKey}`;
+  // The API key comes from the server at runtime (/api/config), so a deploy
+  // works without baking VITE_KITE_API_KEY into the build.
+  async getLoginUrl() {
+    let apiKey = null;
+    try {
+      const res = await fetch('/api/config');
+      if (res.ok) apiKey = (await res.json()).kiteApiKey;
+    } catch { /* fall back below */ }
+    apiKey = apiKey || import.meta.env.VITE_KITE_API_KEY;
+    if (!apiKey) throw new Error('Kite API key is not configured on the server (set KITE_API_KEY).');
+    return `https://kite.zerodha.com/connect/login?v=3&api_key=${encodeURIComponent(apiKey)}`;
   }
 
 
   async generateSession(requestToken) {
-    console.log('[AuthService] Starting session generation with requestToken:', requestToken);
     const response = await fetch('/api/generate_session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -45,16 +49,14 @@ class AuthService {
       throw new Error(err.error || 'Session generation failed');
     }
     const data = await response.json();
-    console.log('[AuthService] Session data received from backend:', data);
     if (!data.access_token) {
-      console.error('[AuthService] No access_token in backend response:', data);
+      console.error('[AuthService] No access_token in backend response');
       throw new Error('No access_token received from backend');
     }
     localStorage.setItem('access_token', data.access_token);
     localStorage.setItem('user_id', data.user_id);
     localStorage.setItem('user_name', data.user_name);
     localStorage.setItem('login_time', new Date().toISOString());
-    console.log('[AuthService] access_token stored in localStorage:', localStorage.getItem('access_token'));
     return data;
   }
 

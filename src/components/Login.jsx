@@ -10,16 +10,19 @@ import './Login.css';
 
 const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
+  const [loginError, setLoginError] = useState(null);
   const matrixCanvasRef = useRef(null);
   const chartCanvasRef = useRef(null);
 
   const handleLogin = async () => {
     setIsLoading(true);
+    setLoginError(null);
     try {
-      const loginUrl = AuthService.getLoginUrl();
+      const loginUrl = await AuthService.getLoginUrl();
       window.location.href = loginUrl;
     } catch (e) {
       console.error('Login error:', e);
+      setLoginError(e.message);
       setIsLoading(false);
     }
   };
@@ -182,6 +185,9 @@ const Login = () => {
                 </>
               )}
             </button>
+            {loginError && (
+              <p role="alert" style={{ color: '#FF453A', fontSize: 13, margin: '12px 0 0' }}>{loginError}</p>
+            )}
           </div>
 
           <footer className="terminal-login__footer">

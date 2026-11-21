@@ -1074,6 +1074,12 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Public client config. The Kite API key is not a secret (it appears in the
+// login URL); serving it at runtime means the frontend build doesn't need it.
+app.get('/api/config', (req, res) => {
+  res.json({ kiteApiKey: process.env.KITE_API_KEY || null });
+});
+
 // Server-side session status (token never returned)
 app.get('/api/session', (req, res) => {
   res.json(publicSessionInfo(loadKiteSession(db)));
