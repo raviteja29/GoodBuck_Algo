@@ -25,3 +25,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Secrets and local data
+.env
+.env.*
+!.env.example
+premiumtrader-backend/data/

@@ -13,6 +13,8 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { KiteTicker } = require('kiteconnect');
+import { openDb, schemaVersion } from './db/index.js';
+import { saveKiteSession, loadKiteSession, clearKiteSession, publicSessionInfo } from './kiteSession.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -57,7 +59,6 @@ function initTickerIfPossible(accessToken) {
       if (wss && wss.clients && wss.clients.size) {
         const msg = JSON.stringify({ type: 'ticks', data: ticks });
         let sent = 0; wss.clients.forEach(c => { if (c.readyState === WebSocket.OPEN) { try { c.send(msg); sent++; } catch (_) { } } });
-        if (sent) console.log(`[TICKER] Broadcast ${ticks.length} ticks to ${sent} clients`);
       }
     });
     ticker.on('error', e => console.error('[TICKER] Error', e.message));
@@ -76,6 +77,10 @@ console.log('Using API Secret:', process.env.KITE_API_SECRET ? '***secret redact
 // Breeze key sanity check removed
 
 const app = express();
+
+// SQLite store (strategies, backtests, candles, signals, snapshots, Kite session)
+const db = openDb();
+console.log(`[DB] Ready (schema v${schemaVersion(db)})`);
 
 // In-memory instrument cache (15 min TTL)
 // Instrument cache + performance instrumentation
@@ -136,14 +141,13 @@ app.use(express.json());
 // 3) Define routes after json parser
 app.post('/api/generate_session', async (req, res) => {
   const { request_token } = req.body;
-  console.log('Received request_token:', request_token);
 
   if (!request_token) {
     console.error('No request_token in request body');
     return res.status(400).json({ error: 'request_token required' });
   }
   if (usedTokens.has(request_token)) {
-    console.error('Duplicate request_token detected:', request_token);
+    console.error('Duplicate request_token rejected');
     return res.status(400).json({ error: 'request_token already used' });
   }
   usedTokens.add(request_token);
@@ -167,6 +171,7 @@ app.post('/api/generate_session', async (req, res) => {
         login_time: new Date().toISOString()
       });
       globalLastAccessToken = sessionData.access_token;
+      try { saveKiteSession(db, sessionData); } catch (e) { console.error('[SESSION] Could not persist session:', e.message); }
       initTickerIfPossible(globalLastAccessToken);
       return res.json(sessionData);
     } catch (apiErr) {
@@ -263,7 +268,6 @@ app.get('/api/profile', async (req, res) => {
     const access_token = getAccessToken(req);
     console.log('[PROFILE] Received request for /api/profile');
     console.log('[PROFILE] Authorization header:', req.headers['authorization']);
-    console.log('[PROFILE] Extracted access_token:', access_token);
     if (!access_token) {
       console.warn('[PROFILE] No access token provided, returning 401');
       return res.status(401).json({ error: 'Access token required' });
@@ -290,7 +294,6 @@ app.get('/api/margins', async (req, res) => {
     const access_token = getAccessToken(req);
     console.log('[MARGINS] Received request for /api/margins');
     console.log('[MARGINS] Authorization header:', req.headers['authorization']);
-    console.log('[MARGINS] Extracted access_token:', access_token);
     if (!access_token) {
       console.warn('[MARGINS] No access token provided, returning 401');
       return res.status(401).json({ error: 'Access token required' });
@@ -1044,53 +1047,33 @@ app.get('/api/instruments/details', async (req, res) => {
   }
 });
 
-// Cache status endpoint
-app.get('/api/instruments/cache/status', (req, res) => {
+// Health: one call to see if the server, store, Kite session and feed are OK
+app.get('/api/health', (req, res) => {
+  const session = loadKiteSession(db);
   res.json({
-    hasData: !!instrumentCache.data,
-    count: instrumentCache.data ? instrumentCache.data.length : 0,
-    ageMs: instrumentCache.data ? (Date.now() - instrumentCache.timestamp) : null,
-    warmed: instrumentCache.warmed,
-    ttlMs: INSTRUMENT_TTL_MS
+    ok: true,
+    uptimeSec: Math.round(process.uptime()),
+    db: { schema: schemaVersion(db) },
+    kite: publicSessionInfo(session),
+    ticker: { initialized: !!ticker, connected: !!(ticker && ticker.connected), subscribed: subscribedTokens.size },
   });
 });
 
-// Fresh instruments endpoint with daily caching
-app.get('/api/instruments/fresh', async (req, res) => {
-  try {
-    const { exchange } = req.query;
+// Server-side session status (token never returned)
+app.get('/api/session', (req, res) => {
+  res.json(publicSessionInfo(loadKiteSession(db)));
+});
 
-    console.log(`[/api/instruments/fresh] Fetching fresh instruments${exchange ? ` for ${exchange}` : ''}`);
-
-    // Force fresh load to ensure we get the latest instruments
-    const instruments = await loadInstruments(true, 'fresh-request');
-
-    if (!instruments || !Array.isArray(instruments)) {
-      return res.status(500).json({ error: 'Failed to load instruments data' });
-    }
-
-    // Filter by exchange if specified
-    let filteredInstruments = instruments;
-    if (exchange) {
-      filteredInstruments = instruments.filter(inst =>
-        inst.exchange && inst.exchange.toUpperCase() === exchange.toUpperCase()
-      );
-      console.log(`[/api/instruments/fresh] Filtered ${filteredInstruments.length} instruments for ${exchange}`);
-    }
-
-    // Sort by tradingsymbol for consistent results
-    filteredInstruments.sort((a, b) => (a.tradingsymbol || '').localeCompare(b.tradingsymbol || ''));
-
-    console.log(`[/api/instruments/fresh] Returning ${filteredInstruments.length} instruments`);
-    res.json(filteredInstruments);
-
-  } catch (error) {
-    console.error('[/api/instruments/fresh] Error:', error);
-    res.status(500).json({
-      error: 'Failed to fetch fresh instruments',
-      details: error.message
-    });
+// Logout: drop the persisted session and stop the feed
+app.post('/api/logout', (req, res) => {
+  const saved = loadKiteSession(db);
+  if (saved && getAccessToken(req) !== saved.access_token) {
+    return res.status(401).json({ error: 'Not the active session' });
   }
+  clearKiteSession(db);
+  globalLastAccessToken = null;
+  if (ticker) { try { ticker.disconnect(); } catch (_) { } ticker = null; tickerAccessToken = null; }
+  res.json({ ok: true });
 });
 
 // Ticker status endpoint
@@ -1150,8 +1133,6 @@ app.post('/api/webhook/orders', (req, res) => {
       // Compare the calculated signature with the one provided by Zerodha
       if (signature !== calculatedSignature) {
         console.error('Webhook signature verification failed');
-        console.log('Received signature:', signature);
-        console.log('Calculated signature:', calculatedSignature);
         return res.status(403).json({ status: 'error', message: 'Invalid signature' });
       }
 
@@ -1231,7 +1212,6 @@ const wss = new WebSocketServer({
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
       console.log('WebSocket connection attempt from:', req.socket.remoteAddress);
-      console.log('Request URL:', req.url);
 
       const token = url.searchParams.get('token');
       console.log('Token present:', !!token);
@@ -1429,6 +1409,15 @@ wss.on('connection', (ws, req) => {
 // Start the server
 server.listen(port, '0.0.0.0', () => {
   console.log(`Backend server running on port ${port}`);
+  // Resume today's Kite session if one was saved before a restart
+  const saved = loadKiteSession(db);
+  if (saved) {
+    globalLastAccessToken = saved.access_token;
+    initTickerIfPossible(saved.access_token);
+    console.log(`[SESSION] Resumed Kite session for ${saved.user_id}, valid until ${new Date(saved.expires_at).toISOString()}`);
+  } else {
+    console.log('[SESSION] No valid Kite session saved — log in from the app');
+  }
   console.log(`WebSocket server running on port ${port}`);
   // Warm instrument cache in background (non-blocking)
   loadInstruments(false, 'warm-start').catch(e => console.warn('[INSTRUMENTS] Warm load failed:', e.message));
