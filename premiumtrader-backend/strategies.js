@@ -2,15 +2,18 @@
 
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { normalizeConfig, describeConfig, DEFAULT_CONFIG, SETUP_CATALOGUE, TIMEFRAMES } from './strategy/config.js';
+import { normalizeConfig, describeConfig, INDICATOR_TYPES, DEFAULT_CONFIG, SETUP_CATALOGUE, TIMEFRAMES } from './strategy/config.js';
 import { loadKiteSession, saveKiteSession } from './kiteSession.js';
 
 const STATUSES = ['draft', 'active', 'paused'];
 export const SEED_NAME = 'Weekly Levels · GIFT NIFTY';
 
+// Configs saved before a field existed get that field's default (e.g. HMA for trend lines added in v1.1).
+const fullConfig = (raw) => normalizeConfig(raw).config;
+
 const rowToStrategy = (r) => {
   if (!r) return null;
-  const config = JSON.parse(r.config);
+  const config = fullConfig(JSON.parse(r.config));
   return { id: r.id, name: r.name, status: r.status, config, summary: describeConfig(config), createdAt: r.created_at, updatedAt: r.updated_at };
 };
 
@@ -30,7 +33,7 @@ const withLastBacktest = (s, last) => {
   if (!s) return s;
   if (!last) return { ...s, lastBacktest: null };
   const { config, ...rest } = last;
-  return { ...s, lastBacktest: { ...rest, stale: JSON.stringify(config) !== JSON.stringify(s.config) } };
+  return { ...s, lastBacktest: { ...rest, stale: JSON.stringify(fullConfig(config)) !== JSON.stringify(s.config) } };
 };
 
 export function listStrategies(db) {
@@ -142,7 +145,7 @@ export function strategiesRouter(db, { verifyToken } = {}) {
 
   // Everything the builder needs to render its form.
   r.get('/meta', handle((req, res) => {
-    res.json({ defaults: DEFAULT_CONFIG, setups: SETUP_CATALOGUE, timeframes: TIMEFRAMES, statuses: STATUSES });
+    res.json({ defaults: DEFAULT_CONFIG, setups: SETUP_CATALOGUE, timeframes: TIMEFRAMES, indicators: INDICATOR_TYPES, statuses: STATUSES });
   }));
 
   r.get('/', handle((req, res) => res.json(listStrategies(db))));

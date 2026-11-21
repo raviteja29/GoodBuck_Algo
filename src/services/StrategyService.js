@@ -62,6 +62,8 @@ export const BacktestService = {
 
 export const timeframeLabel = (tf) => (tf === 'minute' ? '1m' : String(tf).replace('minute', 'm'));
 
+const lineName = (type, period) => `${String(type || 'hma').toUpperCase()} ${period}`;
+
 const SIDE_TEXT = { long: 'long', short: 'short' };
 
 /** The config in plain words — shown beside the builder so the rules are never ambiguous. */
@@ -75,8 +77,8 @@ export function describeInWords(config, setupCatalogue = []) {
   const parts = [
     `Each Wednesday, take the previous week's high, mid and low on ${config.instrument.symbol || 'the instrument'}.`,
     `The following week, when a ${tf} bar touches a level between ${config.session.start} and ${config.session.end}:`,
-    longs.length ? `go ${SIDE_TEXT.long} at ${list(longs)} if HMA ${config.trend.fastPeriod} and HMA ${config.trend.slowPeriod} are both rising` : null,
-    shorts.length ? `${longs.length ? 'otherwise ' : ''}go ${SIDE_TEXT.short} at ${list(shorts)}${longs.length ? '' : ' unless both HMAs are rising'}` : null,
+    longs.length ? `go ${SIDE_TEXT.long} at ${list(longs)} if ${lineName(config.trend.fastType, config.trend.fastPeriod)} and ${lineName(config.trend.slowType, config.trend.slowPeriod)} are both rising` : null,
+    shorts.length ? `${longs.length ? 'otherwise ' : ''}go ${SIDE_TEXT.short} at ${list(shorts)}${longs.length ? '' : ' unless both lines are rising'}` : null,
   ].filter(Boolean);
   return `${parts[0]} ${parts[1]} ${parts.slice(2).join('; ')}. Stop at the far end of the box, target the near end, and exit by ${config.session.exitTime} on expiry day.`;
 }

@@ -70,6 +70,37 @@ export function hmaWarmup(period) {
   return period + Math.max(1, Math.floor(Math.sqrt(period))) - 1;
 }
 
+/**
+ * Simple Moving Average of CLOSE prices; null until `period` bars exist.
+ *
+ * Each value is summed over its own window (not a running sum) so the result
+ * at a bar depends only on the last `period` closes - identical no matter how
+ * much earlier history was loaded, which keeps backtest and live in step.
+ */
+export function computeSMASeries(candles, period) {
+  const closes = candles.map((candle) => candle.close);
+  const out = new Array(closes.length);
+  for (let index = 0; index < closes.length; index += 1) {
+    if (index + 1 < period) { out[index] = null; continue; }
+    let sum = 0;
+    for (let k = index - period + 1; k <= index; k += 1) sum += closes[k];
+    out[index] = sum / period;
+  }
+  return out;
+}
+
+export const INDICATOR_TYPES = ['hma', 'sma'];
+
+/** Series for a trend line of the given type. */
+export function computeTrendSeries(candles, type, period) {
+  return type === 'sma' ? computeSMASeries(candles, period) : computeHMASeries(candles, period);
+}
+
+/** Bars of history required before a trend line of this type yields a value. */
+export function trendWarmup(type, period) {
+  return type === 'sma' ? period : hmaWarmup(period);
+}
+
 export const getTrend = (currentValue, previousValue) => {
   if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue)) return 'missing';
   return currentValue > previousValue ? 'increasing' : 'decreasing';

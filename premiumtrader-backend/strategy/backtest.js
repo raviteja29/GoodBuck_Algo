@@ -6,7 +6,7 @@
  * Nothing here knows about Kite or HTTP - hand it candles, get trades back.
  */
 
-import { computeHMASeries, getHmaState } from './indicators.js';
+import { computeTrendSeries, getHmaState } from './indicators.js';
 import { STRATEGY_SETUPS, getSetup } from './rules/levelTouch.js';
 import { createTradeMachine } from './engine.js';
 import {
@@ -35,7 +35,7 @@ const dateKeysBetween = (start, end) => {
  * @returns {{trades:Array, summary:Array, metrics:object, skipped:Array}}
  */
 export function runBacktest({ candles, from, to, config = DEFAULT_CONFIG, setupKeys = null }) {
-  const { fastPeriod, slowPeriod } = config.trend;
+  const { fastPeriod, slowPeriod, fastType = 'hma', slowType = 'hma' } = config.trend;
   const sessionStart = toMinutes(config.session.start);
   const sessionEnd = toMinutes(config.session.end);
   const inSession = (c) => {
@@ -47,9 +47,10 @@ export function runBacktest({ candles, from, to, config = DEFAULT_CONFIG, setupK
   normalized.sort((a, b) => parseCandleTime(a.time) - parseCandleTime(b.time));
 
   const candleIndexMap = new Map(normalized.map((c, i) => [c, i]));
-  // Named hma50/hma200 for history; periods now come from the config.
-  const hma50 = computeHMASeries(normalized, fastPeriod);
-  const hma200 = computeHMASeries(normalized, slowPeriod);
+  // hma50/hma200 are the fast/slow trend lines (names kept from the original);
+  // each is an HMA or SMA with the period from the config.
+  const hma50 = computeTrendSeries(normalized, fastType, fastPeriod);
+  const hma200 = computeTrendSeries(normalized, slowType, slowPeriod);
 
   const keys = setupKeys || config.setups;
   const setups = keys ? keys.map(getSetup).filter(Boolean) : STRATEGY_SETUPS;

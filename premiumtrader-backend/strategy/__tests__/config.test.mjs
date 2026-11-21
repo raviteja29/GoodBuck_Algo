@@ -92,3 +92,41 @@ test('validation catches bad input and fills defaults', () => {
   const ordered = normalizeConfig({ setups: ['high-rising-long', 'low-rising-long', 'high-rising-long'] }).config;
   assert.deepEqual(ordered.setups, ['low-rising-long', 'high-rising-long']);
 });
+
+// ---------- SMA trend lines ----------
+import { computeSMASeries, computeTrendSeries, computeHMASeries } from '../indicators.js';
+
+test('SMA values are correct and independent of earlier history', () => {
+  const bars = [1, 2, 3, 4, 5, 6].map((close) => ({ close }));
+  assert.deepEqual(computeSMASeries(bars, 3), [null, null, 2, 3, 4, 5]);
+  const long = Array.from({ length: 3000 }, (_, i) => ({ close: 24000 + 300 * Math.sin(i / 41) + 0.1 * i }));
+  const full = computeSMASeries(long, 200);
+  const tail = computeSMASeries(long.slice(1000), 200);
+  for (let i = 199; i < tail.length; i++) assert.equal(tail[i], full[1000 + i]);
+  assert.deepEqual(computeTrendSeries(long, 'hma', 50), computeHMASeries(long, 50));
+  assert.deepEqual(computeTrendSeries(long, 'sma', 50), computeSMASeries(long, 50));
+});
+
+test('SMA lines change the backtest; mixed HMA + SMA is allowed', () => {
+  const candles = makeCandles({ seed: 7 });
+  const args = { candles, from: '2026-06-01', to: '2026-09-06' };
+  const hma = runBacktest(args);
+  const mixed = normalizeConfig({ trend: { fastType: 'hma', fastPeriod: 50, slowType: 'sma', slowPeriod: 200 } });
+  assert.deepEqual(mixed.errors, []);
+  assert.equal(describeConfig(mixed.config), 'GIFTNIFTY · 15m · HMA 50 + SMA 200 · 6 setups');
+  const smaRun = runBacktest({ ...args, config: mixed.config });
+  assert.notDeepEqual(strip(smaRun.trades), strip(hma.trades));
+
+  const bothSma = normalizeConfig({ trend: { fastType: 'sma', fastPeriod: 20, slowType: 'sma', slowPeriod: 50 } });
+  assert.equal(describeConfig(bothSma.config), 'GIFTNIFTY · 15m · SMA 20/50 · 6 setups');
+
+  // Same type needs fast < slow; different types may share a period.
+  assert.ok(normalizeConfig({ trend: { fastType: 'sma', fastPeriod: 50, slowType: 'sma', slowPeriod: 50 } }).errors.some((e) => e.field === 'trend.slowPeriod'));
+  assert.deepEqual(normalizeConfig({ trend: { fastType: 'hma', fastPeriod: 50, slowType: 'sma', slowPeriod: 50 } }).errors, []);
+  assert.ok(normalizeConfig({ trend: { fastType: 'ema' } }).errors.some((e) => e.field === 'trend.fastType'));
+
+  // Configs saved before trend types existed behave exactly as HMA/HMA.
+  const legacy = { ...JSON.parse(JSON.stringify(DEFAULT_CONFIG)), trend: { fastPeriod: 50, slowPeriod: 200 } };
+  assert.deepEqual(strip(runBacktest({ ...args, config: legacy })), strip(hma));
+  assert.equal(normalizeConfig(legacy).config.trend.fastType, 'hma');
+});

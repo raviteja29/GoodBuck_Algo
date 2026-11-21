@@ -13,7 +13,8 @@ const signed = (v, digits = 0) => {
   const s = Math.abs(v).toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits });
   return `${v > 0 ? '+' : v < 0 ? '−' : ''}${s}`;
 };
-const price = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 2 }) : '—');
+// Fixed 2 decimals so prices line up in columns.
+const price = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—');
 const pct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—');
 const tone = (v) => (v > 0 ? 'gb-pos' : v < 0 ? 'gb-neg' : '');
 
@@ -298,17 +299,17 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
               </div>
               <div className="gb-card gb-table-wrap">
                 <table className="gb-table">
-                  <thead><tr><th>Entry</th><th>Setup</th><th>In</th><th>Out</th><th>Exit</th><th>Pts</th></tr></thead>
+                  <thead><tr><th>Entry</th><th className="gb-l">Setup</th><th className="gb-hide-sm">In</th><th className="gb-hide-sm">Out</th><th className="gb-l">Exit</th><th>Pts</th></tr></thead>
                   <tbody>
                     {visible.length === 0 && <tr><td colSpan="6" className="gb-muted">No trades in this period</td></tr>}
                     {visible.map((t) => (
                       <tr key={`${t.entryTs}-${t.setupKey}`}>
                         <td>{fmtDateTime(t.entryTs)}</td>
-                        <td>{setupLabel(t.setupName)}</td>
-                        <td>{price(t.entryPrice)}</td>
-                        <td>{price(t.exitPrice)}</td>
-                        <td title={t.legs.length > 1 ? `${t.legs.length} legs (reversed)` : t.exitReason}>
-                          {exitLabel(t.exitReason)}{t.legs.length > 1 && <span className="gb-muted"> · {t.legs.length} legs</span>}
+                        <td className="gb-l">{setupLabel(t.setupName)}</td>
+                        <td className="gb-hide-sm">{price(t.entryPrice)}</td>
+                        <td className="gb-hide-sm">{price(t.exitPrice)}</td>
+                        <td className="gb-l" title={t.legs.length > 1 ? `${t.legs.length} legs (reversed)` : t.exitReason}>
+                          {exitLabel(t.exitReason)}{t.legs.length > 1 && <span className="gb-muted gb-legs"> · {t.legs.length} legs</span>}
                         </td>
                         <td className={tone(t.points)}>{signed(t.points, 1)}</td>
                       </tr>

@@ -5,7 +5,7 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { runBacktest } from './strategy/backtest.js';
 import { buildWeeklyWindows, addDays, toInputDate } from './strategy/session.js';
-import { hmaWarmup } from './strategy/indicators.js';
+import { trendWarmup } from './strategy/indicators.js';
 import { ensureCandles, getCandles, todayIST } from './candles.js';
 import { getStrategy, requireSession } from './strategies.js';
 
@@ -21,12 +21,14 @@ const BARS_PER_DAY = { minute: 375, '3minute': 125, '5minute': 75, '10minute': 3
 
 /**
  * Calendar days of history to load before the first base week so both HMAs
- * are warm. The HMA only depends on its last (period + sqrt(period)) bars, so
+ * are warm. Both indicators depend only on a fixed window of recent bars (HMA:
+ * period + sqrt(period); SMA: period), so
  * any start at least this far back yields identical values - matching the
  * browser backtest, which warmed up from 2017.
  */
 export function warmupDays(config) {
-  const bars = hmaWarmup(config.trend.slowPeriod) + 2;
+  const { fastType = 'hma', fastPeriod, slowType = 'hma', slowPeriod } = config.trend;
+  const bars = Math.max(trendWarmup(fastType, fastPeriod), trendWarmup(slowType, slowPeriod)) + 2;
   const tradingDays = Math.ceil(bars / (BARS_PER_DAY[config.timeframe] || 25));
   return Math.max(30, Math.ceil(tradingDays * 7 / 5) + 10);
 }
