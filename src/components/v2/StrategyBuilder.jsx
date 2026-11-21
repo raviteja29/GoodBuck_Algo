@@ -286,15 +286,32 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
           <section className="gb-form-group">
             <h2>Trend filter</h2>
             <div className="gb-rows">
-              <Row label="Fast HMA" error={errors['trend.fastPeriod']} htmlFor="sb-fast">
-                <input id="sb-fast" type="number" min="2" max="500" step="1" value={config.trend.fastPeriod} onChange={(e) => update('trend.fastPeriod', e.target.value === '' ? '' : Number(e.target.value))} />
-              </Row>
-              <Row label="Slow HMA" error={errors['trend.slowPeriod']} htmlFor="sb-slow">
-                <input id="sb-slow" type="number" min="2" max="1000" step="1" value={config.trend.slowPeriod} onChange={(e) => update('trend.slowPeriod', e.target.value === '' ? '' : Number(e.target.value))} />
-              </Row>
-              <Row label="Go long when"><span className="gb-row-value">Both HMAs rising</span></Row>
+              {[['fast', 'Fast line', 500], ['slow', 'Slow line', 1000]].map(([which, label, max]) => (
+                <Row key={which} label={label} error={errors[`trend.${which}Type`] || errors[`trend.${which}Period`]} htmlFor={`sb-${which}`}>
+                  <div className="gb-trend-line">
+                    <div role="radiogroup" aria-label={`${label} indicator`} className="gb-segmented">
+                      {(meta.indicators || ['hma', 'sma']).map((type) => (
+                        <button key={type} type="button" role="radio" aria-checked={config.trend[`${which}Type`] === type} onClick={() => update(`trend.${which}Type`, type)}>
+                          {type.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      id={`sb-${which}`}
+                      type="number"
+                      min="2"
+                      max={max}
+                      step="1"
+                      aria-label={`${label} period`}
+                      value={config.trend[`${which}Period`]}
+                      onChange={(e) => update(`trend.${which}Period`, e.target.value === '' ? '' : Number(e.target.value))}
+                    />
+                  </div>
+                </Row>
+              ))}
+              <Row label="Go long when"><span className="gb-row-value">Both lines rising</span></Row>
             </div>
-            <p>Otherwise the touch is taken short.</p>
+            <p>HMA reacts faster; SMA is smoother. Otherwise the touch is taken short.</p>
           </section>
 
           <section className="gb-form-group">

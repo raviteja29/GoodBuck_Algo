@@ -197,3 +197,28 @@ test('HTTP routes', async () => {
     server.close();
   }
 });
+
+test('legacy saved config (no trend types) loads as HMA and is not flagged stale', async () => {
+  const db = openDb(':memory:');
+  const kite = fakeKite();
+  const s = createStrategy(db, { name: 'WL', config: DEFAULT_CONFIG });
+  await runStrategyBacktest(db, kite.fetch, { strategyId: s.id, from: '2026-03-01', to: '2026-05-31', now: NOW });
+  // Simulate rows written before trend types existed.
+  const legacy = { ...JSON.parse(JSON.stringify(DEFAULT_CONFIG)), trend: { fastPeriod: 50, slowPeriod: 200 } };
+  db.prepare('UPDATE strategies SET config = ?').run(JSON.stringify(legacy));
+  const p = JSON.parse(db.prepare('SELECT params FROM backtests').get().params);
+  db.prepare('UPDATE backtests SET params = ?').run(JSON.stringify({ ...p, config: legacy }));
+  const listed = listStrategies(db)[0];
+  assert.equal(listed.config.trend.fastType, 'hma');
+  assert.equal(listed.lastBacktest.stale, false);
+});
+
+test('SMA strategy warms up and backtests on the server', async () => {
+  const db = openDb(':memory:');
+  const kite = fakeKite();
+  const s = createStrategy(db, { name: 'SMA', config: { trend: { fastType: 'sma', fastPeriod: 20, slowType: 'sma', slowPeriod: 300 } } });
+  assert.ok(warmupDays(s.config) >= 30);
+  const bt = await runStrategyBacktest(db, kite.fetch, { strategyId: s.id, from: '2026-03-01', to: '2026-08-31', now: NOW });
+  assert.equal(bt.status, 'done');
+  assert.ok(bt.trades.length > 0);
+});
