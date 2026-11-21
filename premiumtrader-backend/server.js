@@ -16,6 +16,7 @@ const { KiteTicker } = require('kiteconnect');
 import { openDb, schemaVersion } from './db/index.js';
 import { saveKiteSession, loadKiteSession, clearKiteSession, publicSessionInfo } from './kiteSession.js';
 import { strategiesRouter, seedDefaultStrategy } from './strategies.js';
+import { backtestsRouter } from './backtests.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -141,17 +142,24 @@ app.use(cors({
 // 2) Enable JSON body parsing (this **must** come before your routes)
 app.use(express.json());
 
-// Saved strategies (Phase 1)
-app.use('/api/strategies', strategiesRouter(db, {
-  verifyToken: async (token) => {
-    const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
-    kc.setAccessToken(token);
-    const profile = await kc.getProfile();
-    globalLastAccessToken = token;
-    initTickerIfPossible(token);
-    return profile;
-  },
-}));
+// Confirms a browser token with Kite before it replaces the saved session.
+const verifyToken = async (token) => {
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(token);
+  const profile = await kc.getProfile();
+  globalLastAccessToken = token;
+  initTickerIfPossible(token);
+  return profile;
+};
+const kiteFor = (token) => {
+  const kc = new KiteConnect({ api_key: process.env.KITE_API_KEY });
+  kc.setAccessToken(token);
+  return kc;
+};
+
+// Saved strategies (Phase 1) and server-side backtests (Phase 2)
+app.use('/api/strategies', strategiesRouter(db, { verifyToken }));
+app.use('/api/backtests', backtestsRouter(db, { verifyToken, kiteFor }));
 
 // 3) Define routes after json parser
 app.post('/api/generate_session', async (req, res) => {

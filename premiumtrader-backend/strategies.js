@@ -14,12 +14,37 @@ const rowToStrategy = (r) => {
   return { id: r.id, name: r.name, status: r.status, config, summary: describeConfig(config), createdAt: r.created_at, updatedAt: r.updated_at };
 };
 
+/** Latest finished backtest per strategy: headline metrics, and whether the rules changed since. */
+function latestBacktests(db) {
+  const rows = db.prepare(`SELECT b.id, b.strategy_id, b.params, b.metrics, b.finished_at FROM backtests b
+    JOIN (SELECT strategy_id, MAX(created_at) AS m FROM backtests WHERE status = 'done' GROUP BY strategy_id) l
+      ON l.strategy_id = b.strategy_id AND l.m = b.created_at
+    WHERE b.status = 'done'`).all();
+  return new Map(rows.map((r) => {
+    const p = JSON.parse(r.params);
+    return [r.strategy_id, { id: r.id, from: p.from, to: p.to, config: p.config, metrics: JSON.parse(r.metrics), finishedAt: r.finished_at }];
+  }));
+}
+
+const withLastBacktest = (s, last) => {
+  if (!s) return s;
+  if (!last) return { ...s, lastBacktest: null };
+  const { config, ...rest } = last;
+  return { ...s, lastBacktest: { ...rest, stale: JSON.stringify(config) !== JSON.stringify(s.config) } };
+};
+
 export function listStrategies(db) {
-  return db.prepare('SELECT * FROM strategies ORDER BY (status = \'active\') DESC, updated_at DESC').all().map(rowToStrategy);
+  const last = latestBacktests(db);
+  return db.prepare('SELECT * FROM strategies ORDER BY (status = \'active\') DESC, updated_at DESC').all()
+    .map(rowToStrategy).map((s) => withLastBacktest(s, last.get(s.id)));
 }
 
 export function getStrategy(db, id) {
   return rowToStrategy(db.prepare('SELECT * FROM strategies WHERE id = ?').get(id));
+}
+
+export function getStrategyWithBacktest(db, id) {
+  return withLastBacktest(getStrategy(db, id), latestBacktests(db).get(id));
 }
 
 class ValidationError extends Error {
@@ -123,7 +148,7 @@ export function strategiesRouter(db, { verifyToken } = {}) {
   r.get('/', handle((req, res) => res.json(listStrategies(db))));
 
   r.get('/:id', handle((req, res) => {
-    const s = getStrategy(db, req.params.id);
+    const s = getStrategyWithBacktest(db, req.params.id);
     return s ? res.json(s) : res.status(404).json({ error: 'Strategy not found' });
   }));
 
@@ -133,7 +158,7 @@ export function strategiesRouter(db, { verifyToken } = {}) {
 
   r.put('/:id', handle((req, res) => {
     const s = updateStrategy(db, req.params.id, req.body || {});
-    return s ? res.json(s) : res.status(404).json({ error: 'Strategy not found' });
+    return s ? res.json(getStrategyWithBacktest(db, s.id)) : res.status(404).json({ error: 'Strategy not found' });
   }));
 
   r.post('/:id/duplicate', handle((req, res) => {

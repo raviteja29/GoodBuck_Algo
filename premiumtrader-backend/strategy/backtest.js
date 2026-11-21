@@ -10,14 +10,17 @@ import { computeHMASeries, getHmaState } from './indicators.js';
 import { STRATEGY_SETUPS, getSetup } from './rules/levelTouch.js';
 import { createTradeMachine } from './engine.js';
 import {
-  buildWeeklyWindows, formatCandleTimestamp, getCandleDateKey, getCandleSessionMinutes,
-  normalizeCandle, parseCandleTime, toCandleDateKey, toInputDate, addDays,
+  buildWeeklyWindows, formatCandleTimestamp, getCandleSessionMinutes,
+  normalizeCandle, parseCandleTime, toInputDate, addDays,
 } from './session.js';
 import { DEFAULT_CONFIG, toMinutes } from './config.js';
 
+// Windows are built from local calendar dates (buildWeeklyWindows), so key them
+// with toInputDate - the same convention the browser backtest used. Converting
+// local midnight to IST instead would shift a day on servers east of IST.
 const dateKeysBetween = (start, end) => {
   const keys = new Set();
-  for (let d = new Date(start); d <= end; d = addDays(d, 1)) keys.add(toCandleDateKey(d));
+  for (let d = new Date(start); d <= end; d = addDays(d, 1)) keys.add(toInputDate(d));
   return keys;
 };
 
@@ -58,9 +61,9 @@ export function runBacktest({ candles, from, to, config = DEFAULT_CONFIG, setupK
     const expiryKeys = dateKeysBetween(window.expiryStart, window.expiryDate);
     const deadline = new Date(`${toInputDate(window.expiryDate)}T${config.session.exitTime}:00+05:30`);
 
-    const baseCandles = normalized.filter((c) => baseKeys.has(getCandleDateKey(c.time)));
+    const baseCandles = normalized.filter((c) => baseKeys.has(c.dateKey));
     const tradeCandles = normalized.filter(
-      (c) => expiryKeys.has(getCandleDateKey(c.time))
+      (c) => expiryKeys.has(c.dateKey)
         && inSession(c)
         && parseCandleTime(c.time) <= deadline,
     );
@@ -101,12 +104,15 @@ export function runBacktest({ candles, from, to, config = DEFAULT_CONFIG, setupK
           formatTime: formatCandleTimestamp,
         });
 
+        let exitBar = null;
         for (let i = tradeIndex + 1; i < tradeCandles.length && machine.isOpen; i += 1) {
           const next = tradeCandles[i];
           const ni = candleIndexMap.get(next);
           machine.onBar(next, getHmaState(hma50, ni, levels), getHmaState(hma200, ni, levels));
+          exitBar = next;
         }
         const last = tradeCandles[tradeCandles.length - 1];
+        if (machine.isOpen) exitBar = last;
         machine.settle(last.close, last.time);
 
         const points = machine.points();
@@ -125,6 +131,9 @@ export function runBacktest({ candles, from, to, config = DEFAULT_CONFIG, setupK
           points,
           result: points > 0 ? 'win' : points < 0 ? 'loss' : 'flat',
           legs,
+          // Epoch ms of the entry and final exit bars, for charts, sorting and CSV.
+          entryTs: parseCandleTime(candle.time).getTime(),
+          exitTs: parseCandleTime((exitBar || candle).time).getTime(),
         });
       }
     });

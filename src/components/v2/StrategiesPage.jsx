@@ -13,6 +13,8 @@ const livePnl = (p) =>
   (Number(p.sell_value) || 0) - (Number(p.buy_value) || 0)
   + (Number(p.quantity) || 0) * (Number(p.last_price) || 0) * (Number(p.multiplier) || 1);
 
+const signedPts = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })} pts`;
+
 const STATUS_LABEL = { draft: 'Draft', active: 'Live', paused: 'Paused' };
 
 const StrategiesPage = ({ onOpen, onNew, onBacktest }) => {
@@ -110,10 +112,26 @@ const StrategiesPage = ({ onOpen, onNew, onBacktest }) => {
                     <button type="button" onClick={() => onOpen(s.id)}>{s.name}</button>
                     {s.status !== 'active' && <span className={`gb-badge gb-badge-${s.status}`}>{STATUS_LABEL[s.status]}</span>}
                   </div>
-                  <span className="gb-strat-meta">{s.summary} · not backtested yet</span>
+                  <span className="gb-strat-meta">
+                    {s.summary}
+                    {!s.lastBacktest && ' · not backtested yet'}
+                    {s.lastBacktest?.stale && ' · rules changed since last backtest'}
+                  </span>
                 </div>
+                {s.lastBacktest && (
+                  <div className="gb-strat-metrics">
+                    <div><span>Win rate</span><b>{(s.lastBacktest.metrics.winRate * 100).toFixed(1)}%</b></div>
+                    <div>
+                      <span>Backtest</span>
+                      <b className={s.lastBacktest.metrics.points > 0 ? 'gb-pos' : s.lastBacktest.metrics.points < 0 ? 'gb-neg' : ''}>
+                        {signedPts(s.lastBacktest.metrics.points)}
+                      </b>
+                    </div>
+                    <div><span>Trades</span><b>{s.lastBacktest.metrics.trades}</b></div>
+                  </div>
+                )}
                 <div className="gb-strat-actions">
-                  <button type="button" className="gb-pill" onClick={() => onBacktest(s.id)}>Run Backtest</button>
+                  <button type="button" className="gb-pill" onClick={() => onBacktest(s.id)}>{s.lastBacktest ? 'Backtest' : 'Run Backtest'}</button>
                   <label className="gb-switch-label">
                     Live
                     <input

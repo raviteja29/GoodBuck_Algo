@@ -363,6 +363,15 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
               {message.text}
             </div>
           )}
+          {!isNew && original.lastBacktest && (dirty || original.lastBacktest.stale) && (
+            <div className="gb-note gb-note-warn">
+              <b>Rules changed since the last backtest</b>
+              <span>
+                That run made {original.lastBacktest.metrics.points >= 0 ? '+' : '−'}{Math.abs(Math.round(original.lastBacktest.metrics.points)).toLocaleString('en-IN')} pts
+                at {(original.lastBacktest.metrics.winRate * 100).toFixed(1)}%. Rerun before going live.
+              </span>
+            </div>
+          )}
           {!isNew && original.status === 'active' && dirty && (
             <div className="gb-note gb-note-warn">
               <b>This strategy is switched on for live signals</b>
