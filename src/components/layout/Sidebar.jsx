@@ -1,102 +1,12 @@
-import React, { useState } from 'react';
-import {
-  ChartBarIcon,
-  CogIcon,
-  BoltIcon,
-  DocumentChartBarIcon,
-  ShieldCheckIcon,
-  ClockIcon,
-  PlayIcon,
-  PauseIcon,
-  StopIcon,
-  EyeIcon,
-  LockClosedIcon,
-  PowerIcon
-} from '@heroicons/react/24/outline';
+import React from 'react';
+import { BoltIcon, PowerIcon } from '@heroicons/react/24/outline';
 import './Sidebar.css';
 
 const Sidebar = ({ collapsed, activeSection, onSectionChange, onLogout }) => {
-  const [strategies] = useState([
-    { id: 1, name: 'NIFTY Momentum', status: 'running', pnl: '+₹12,450' },
-    { id: 2, name: 'Bank Index Scalp', status: 'running', pnl: '+₹8,230' },
-    { id: 3, name: 'Options Straddle', status: 'paused', pnl: '-₹1,250' }
-  ]);
-
   const navigationItems = [
-    {
-      id: 'dashboard',
-      label: 'Live Trade',
-      icon: ChartBarIcon,
-      section: 'main'
-    },
-    {
-      id: 'strategies',
-      label: 'Strategies',
-      icon: BoltIcon,
-      section: 'main',
-      badge: strategies.filter(s => s.status === 'running').length
-    },
-    {
-      id: 'analytics',
-      label: 'Analytics',
-      icon: ChartBarIcon,
-      section: 'main'
-    },
-    {
-      id: 'backtest',
-      label: 'Lab',
-      icon: DocumentChartBarIcon,
-      section: 'main'
-    },
-    {
-      id: 'risk',
-      label: 'Portfolio',
-      icon: ShieldCheckIcon,
-      section: 'tools'
-    },
-    {
-      id: 'portfolio',
-      label: 'Security',
-      icon: LockClosedIcon,
-      section: 'tools'
-    },
-    {
-      id: 'history',
-      label: 'Trade History',
-      icon: ClockIcon,
-      section: 'tools'
-    },
-    {
-      id: 'settings',
-      label: 'Settings',
-      icon: CogIcon,
-      section: 'system'
-    },
-    {
-      id: 'logout',
-      label: 'Logout',
-      icon: PowerIcon,
-      section: 'system'
-    }
+    { id: 'strategies', label: 'Strategies', icon: BoltIcon, section: 'main' },
+    { id: 'logout', label: 'Logout', icon: PowerIcon, section: 'system' }
   ];
-
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'running': return PlayIcon;
-      case 'paused': return PauseIcon;
-      case 'stopped': return StopIcon;
-      default: return EyeIcon;
-    }
-  };
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'running': return 'var(--strategy-running)';
-      case 'paused': return 'var(--strategy-paused)';
-      case 'stopped': return 'var(--strategy-stopped)';
-      default: return 'var(--text-tertiary)';
-    }
-  };
 
   const renderNavigationSection = (sectionName, items) => {
     if (collapsed) return null;
@@ -138,7 +48,6 @@ const Sidebar = ({ collapsed, activeSection, onSectionChange, onLogout }) => {
   };
 
   const mainItems = navigationItems.filter(item => item.section === 'main');
-  const toolItems = navigationItems.filter(item => item.section === 'tools');
   const systemItems = navigationItems.filter(item => item.section === 'system');
 
   return (
@@ -162,60 +71,11 @@ const Sidebar = ({ collapsed, activeSection, onSectionChange, onLogout }) => {
         ) : (
           <>
             {renderNavigationSection('Trading', mainItems)}
-            {renderNavigationSection('Tools', toolItems)}
             {renderNavigationSection('System', systemItems)}
           </>
         )}
       </nav>
 
-      {/* Strategy Monitor Section */}
-      {!collapsed && (
-        <div className="strategy-monitor">
-          <div className="monitor-header">
-            <h3 className="monitor-title">Live Strategies</h3>
-            <div className="monitor-stats">
-              <span className="stats-item">
-                <span className="stats-label">Running:</span>
-                <span className="stats-value running">{strategies.filter(s => s.status === 'running').length}</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="strategy-list">
-            {strategies.map((strategy) => {
-              const StatusIcon = getStatusIcon(strategy.status);
-              return (
-                <div key={strategy.id} className="strategy-item">
-                  <div className="strategy-header">
-                    <div 
-                      className="strategy-status-icon"
-                      style={{ color: getStatusColor(strategy.status) }}
-                    >
-                      <StatusIcon />
-                    </div>
-                    <div className="strategy-info">
-                      <span className="strategy-name">{strategy.name}</span>
-                      <span className="strategy-status">{strategy.status.toUpperCase()}</span>
-                    </div>
-                  </div>
-                  <div className="strategy-pnl">
-                    <span className={`pnl-value ${strategy.pnl.startsWith('+') ? 'positive' : 'negative'}`}>
-                      {strategy.pnl}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="strategy-actions">
-            <button className="action-btn primary">
-              <BoltIcon />
-              <span>NEW_STRATEGY</span>
-            </button>
-          </div>
-        </div>
-      )}
     </aside>
   );
 };
