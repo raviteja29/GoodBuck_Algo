@@ -30,7 +30,8 @@ function makeCandles({ from = '2026-06-01', weeks = 14, seed = 7 } = {}) {
   return out;
 }
 
-const strip = (r) => JSON.parse(JSON.stringify(r));
+// entryTs/exitTs were added after the original; compare everything else.
+const strip = (r) => JSON.parse(JSON.stringify(r, (k, v) => (k === 'entryTs' || k === 'exitTs' ? undefined : v)));
 
 test('default config reproduces the original hard-coded backtest exactly', () => {
   for (const seed of [1, 7, 42, 1234]) {
@@ -42,6 +43,9 @@ test('default config reproduces the original hard-coded backtest exactly', () =>
     assert.ok(original.trades.length > 5, `seed ${seed}: fixture should produce trades`);
     assert.deepEqual(strip(viaDefault), strip(original), `seed ${seed}: implicit default`);
     assert.deepEqual(strip(viaSaved), strip(original), `seed ${seed}: saved default config`);
+    for (const t of viaDefault.trades) {
+      assert.ok(Number.isFinite(t.entryTs) && t.exitTs >= t.entryTs, 'trade timestamps present and ordered');
+    }
   }
 });
 

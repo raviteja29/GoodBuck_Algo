@@ -13,8 +13,8 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path = '', body) {
-  const res = await fetch(`/api/strategies${path}`, {
+async function request(method, path = '', body, base = '/api/strategies') {
+  const res = await fetch(`${base}${path}`, {
     method,
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -36,6 +36,27 @@ const StrategyService = {
   session: async () => {
     const res = await fetch('/api/session');
     return res.ok ? res.json() : { loggedIn: false };
+  },
+};
+
+const bt = (method, path, body) => request(method, path, body, '/api/backtests');
+
+export const BacktestService = {
+  run: (strategyId, from, to) => bt('POST', '', { strategyId, from, to }),
+  list: (strategyId, limit = 20) => bt('GET', `?strategyId=${encodeURIComponent(strategyId)}&limit=${limit}`),
+  get: (id) => bt('GET', `/${encodeURIComponent(id)}`),
+  remove: (id) => bt('DELETE', `/${encodeURIComponent(id)}`),
+  /** Download the trades CSV (needs the auth header, so fetch + blob rather than a plain link). */
+  downloadCsv: async (id) => {
+    const res = await fetch(`/api/backtests/${encodeURIComponent(id)}/trades.csv`, { headers: authHeaders() });
+    if (!res.ok) throw new ApiError(`Export failed (${res.status})`, res.status);
+    const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '')?.[1] || 'trades.csv';
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   },
 };
 

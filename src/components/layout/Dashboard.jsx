@@ -2,20 +2,20 @@ import React, { useEffect, useState } from 'react';
 import AppShell from '../v2/AppShell';
 import StrategiesPage from '../v2/StrategiesPage';
 import StrategyBuilder from '../v2/StrategyBuilder';
+import BacktestPage from '../v2/BacktestPage';
 import StrategyHub from '../StrategyHub';
 import TradingService from '../../services/TradingService';
 import '../../styles/v2.css';
 
 // The section lives in the URL hash so refresh and the browser back button work:
-// #strategies, #strategies/new, #strategies/<id>, #backtests, #performance
+// #strategies, #strategies/new, #strategies/<id>, #backtests, #backtests/<strategyId>, #performance
 const parseHash = () => {
-  const [section = 'strategies', id = null] = window.location.hash.replace(/^#\/?/, '').split('/');
-  return { section: section || 'strategies', id };
+  const [section = 'strategies', id = null, action = null] = window.location.hash.replace(/^#\/?/, '').split('/');
+  return { section: section || 'strategies', id, action };
 };
 
 const Dashboard = ({ onLogout }) => {
   const [route, setRoute] = useState(parseHash);
-  const [backtestFor, setBacktestFor] = useState(null);
 
   // Order polling dispatches 'orderUpdate' events that StrategyHub listens to.
   useEffect(() => TradingService.startOrderPolling(10000), []);
@@ -26,14 +26,11 @@ const Dashboard = ({ onLogout }) => {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  const go = (section, id) => {
-    window.location.hash = id ? `${section}/${id}` : section;
+  const go = (section, id, action) => {
+    window.location.hash = [section, id, action].filter(Boolean).join('/');
   };
 
-  const openBacktest = (strategyId) => {
-    setBacktestFor(strategyId);
-    go('backtests');
-  };
+  const openBacktest = (strategyId) => go('backtests', strategyId);
 
   let page;
   if (route.section === 'strategies' && route.id) {
@@ -43,21 +40,18 @@ const Dashboard = ({ onLogout }) => {
         strategyId={route.id === 'new' ? null : route.id}
         onBack={(openId) => go('strategies', openId)}
         onSaved={(s) => { if (route.id === 'new') window.location.replace(`#strategies/${s.id}`); }}
-        onBacktest={openBacktest}
+        onBacktest={(id) => go('backtests', id, 'run')}
       />
     );
   } else if (route.section === 'backtests') {
     page = (
-      <div className="gb-legacy">
-        <h1 className="gb-title" style={{ marginBottom: 12 }}>Backtests</h1>
-        {backtestFor && (
-          <div className="gb-note gb-note-info" style={{ marginBottom: 16 }}>
-            <b>Saved strategies get server backtests in Phase 2</b>
-            <span>Until then this lab runs the original Weekly Levels rules (the default config) in the browser.</span>
-          </div>
-        )}
-        <StrategyHub key="backtests" initialTab="backtest" />
-      </div>
+      <BacktestPage
+        key={route.id || 'all'}
+        initialStrategyId={route.id}
+        autoRun={route.action === 'run'}
+        onAutoRunStarted={() => window.location.replace(`#backtests/${route.id}`)}
+        onEditStrategy={(id) => go('strategies', id)}
+      />
     );
   } else if (route.section === 'performance') {
     page = (

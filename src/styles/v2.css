@@ -180,6 +180,10 @@
 .gb-strat-name button { border: none; background: none; padding: 0; color: var(--gb-text); font-size: 17px; font-weight: 600; cursor: pointer; text-align: left; }
 .gb-strat-name button:hover { color: var(--gb-blue-hover); }
 .gb-strat-meta { font-size: 13px; color: var(--gb-text-2); }
+.gb-strat-metrics { display: flex; gap: 28px; font-size: 13px; }
+.gb-strat-metrics > div { display: flex; flex-direction: column; gap: 2px; align-items: flex-end; }
+.gb-strat-metrics span { color: var(--gb-text-3); }
+.gb-strat-metrics b { font-size: 15px; font-weight: 500; }
 .gb-strat-actions { display: flex; align-items: center; gap: 16px; }
 .gb-switch-label { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--gb-text-2); min-height: 44px; cursor: pointer; }
 
@@ -202,6 +206,64 @@
 .gb-empty p { margin: 0; color: var(--gb-text-2); }
 
 .gb-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- Backtest ---------- */
+.gb-bt-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.gb-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--gb-text-2); }
+.gb-field select, .gb-field input {
+  min-height: 44px; padding: 0 12px; border-radius: 10px; border: none; background: var(--gb-surface);
+  color: var(--gb-text); font: inherit; font-size: 15px; color-scheme: dark; max-width: 280px;
+}
+.gb-hero { padding: 28px; display: flex; flex-direction: column; gap: 20px; }
+.gb-hero-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.gb-hero-head > div { display: flex; flex-direction: column; gap: 2px; }
+.gb-hero-value { font-size: 44px; font-weight: 700; letter-spacing: -0.8px; line-height: 1.1; }
+
+.gb-chart { display: flex; flex-direction: column; gap: 8px; }
+.gb-chart-plot { display: flex; gap: 10px; }
+.gb-chart-y { position: relative; width: 52px; flex: none; font-size: 12px; color: var(--gb-text-3); }
+.gb-chart-y span { position: absolute; right: 0; transform: translateY(-50%); }
+.gb-chart-area { position: relative; flex: 1; min-width: 0; height: 240px; cursor: crosshair; }
+.gb-chart-area svg { width: 100%; height: 100%; display: block; }
+.gb-crosshair { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--gb-text-3); pointer-events: none; }
+.gb-chart-dot {
+  position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
+  background: var(--gb-blue); box-shadow: 0 0 0 2px var(--gb-surface); pointer-events: none;
+}
+.gb-tooltip {
+  position: absolute; top: 8px; margin-left: 12px; padding: 8px 12px; border-radius: 10px; pointer-events: none;
+  background: var(--gb-surface-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); display: flex; flex-direction: column; gap: 2px;
+  font-size: 13px; color: var(--gb-text-2); white-space: nowrap;
+}
+.gb-tooltip b { color: var(--gb-text); font-size: 15px; font-weight: 600; }
+.gb-tooltip.left { transform: translateX(calc(-100% - 24px)); }
+.gb-chart-x { display: flex; justify-content: space-between; padding-left: 62px; font-size: 12px; color: var(--gb-text-3); }
+.gb-chart-empty { height: 120px; display: grid; place-items: center; color: var(--gb-text-2); }
+
+.gb-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); row-gap: 16px; border-top: 1px solid var(--gb-separator); padding-top: 20px; }
+.gb-metrics > div { display: flex; flex-direction: column; gap: 4px; }
+.gb-metrics span { font-size: 13px; color: var(--gb-text-2); }
+.gb-metrics b { font-size: 20px; font-weight: 600; }
+
+.gb-bt-grid { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+.gb-bt-setups { flex: 1 1 340px; }
+.gb-bt-trades { flex: 999 1 520px; min-width: 0; }
+.gb-table-wrap { padding: 8px 0; overflow-x: auto; }
+.gb-table { width: 100%; border-collapse: collapse; font-size: 15px; white-space: nowrap; }
+.gb-table th { color: var(--gb-text-3); font-size: 13px; font-weight: 500; text-align: right; padding: 10px 12px; }
+.gb-table td { text-align: right; padding: 12px; border-top: 1px solid var(--gb-separator); }
+.gb-table th:first-child, .gb-table td:first-child { text-align: left; padding-left: 20px; }
+.gb-table th:last-child, .gb-table td:last-child { padding-right: 20px; }
+
+.gb-details { font-size: 14px; color: var(--gb-text-2); }
+.gb-details summary { cursor: pointer; }
+.gb-details ul { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+
+.gb-run { display: flex; align-items: center; gap: 16px; padding: 12px 20px; }
+.gb-run.current { background: rgba(10, 132, 255, 0.10); }
+.gb-run-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; border: none; background: none; color: var(--gb-text); text-align: left; cursor: pointer; padding: 4px 0; font-size: 15px; }
+.gb-run-main:disabled { cursor: default; }
+.gb-run-delete { color: var(--gb-text-3); font-size: 13px; }
 
 /* Legacy screens (Backtests, Performance) still use the v1 hub styles until Phases 2 and 4 */
 .gb-legacy { width: 100%; }

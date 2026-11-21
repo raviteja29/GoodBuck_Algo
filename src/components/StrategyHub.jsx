@@ -1,11 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import TradingService from '../services/TradingService';
-import GiftNiftyBacktest from './GiftNiftyBacktest';
 import './StrategyHub.css';
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
-  { id: 'backtest', label: 'Backtest' },
   { id: 'positions', label: 'Positions' },
   { id: 'orders', label: 'Orders' },
 ];
@@ -17,7 +15,6 @@ const inr = (value) =>
     ? value.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 })
     : '--';
 const num = (value, digits = 2) => (Number.isFinite(value) ? value.toFixed(digits) : '--');
-const pct = (value) => (Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '--');
 const tone = (value) => (value > 0 ? 'pos' : value < 0 ? 'neg' : '');
 
 // Kite's own P&L formula: realised + unrealised, valid for open and closed rows.
@@ -25,27 +22,6 @@ const livePnl = (p) =>
   (Number(p.sell_value) || 0) - (Number(p.buy_value) || 0)
   + (Number(p.quantity) || 0) * (Number(p.last_price) || 0) * (Number(p.multiplier) || 1);
 
-/** Aggregate backtest trades into the numbers a trader actually checks. */
-function backtestMetrics(trades = []) {
-  if (!trades.length) return null;
-  let equity = 0, peak = 0, maxDrawdown = 0, grossWin = 0, grossLoss = 0, wins = 0, losses = 0;
-  for (const t of trades) {
-    equity += t.points;
-    peak = Math.max(peak, equity);
-    maxDrawdown = Math.max(maxDrawdown, peak - equity);
-    if (t.points > 0) { wins += 1; grossWin += t.points; }
-    else if (t.points < 0) { losses += 1; grossLoss += Math.abs(t.points); }
-  }
-  return {
-    trades: trades.length,
-    points: equity,
-    winRate: wins / trades.length,
-    avgWin: wins ? grossWin / wins : 0,
-    avgLoss: losses ? -grossLoss / losses : 0,
-    profitFactor: grossLoss ? grossWin / grossLoss : null,
-    maxDrawdown,
-  };
-}
 
 const Stat = ({ label, value, className = '', hint }) => (
   <div className="hub-stat">
@@ -61,7 +37,6 @@ const StrategyHub = ({ initialTab = 'overview' }) => {
   const [orders, setOrders] = useState([]);
   const [brokerError, setBrokerError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
-  const [backtest, setBacktest] = useState(null);
 
   const refresh = useCallback(async () => {
     const [pos, ord] = await Promise.allSettled([TradingService.getPositions(), TradingService.getOrders()]);
@@ -115,15 +90,12 @@ const StrategyHub = ({ initialTab = 'overview' }) => {
     };
   }, [positions, orders]);
 
-  const bt = useMemo(() => backtestMetrics(backtest?.strategyTrades), [backtest]);
-
   return (
     <div className="hub">
       <header className="hub-header">
         <div>
-          <h1>Strategies</h1>
           <p>
-            Backtest, live positions and orders in one place
+            Today's positions and orders from Kite
             {lastSync && <> · synced {lastSync.toLocaleTimeString('en-IN')}</>}
           </p>
         </div>
@@ -147,7 +119,7 @@ const StrategyHub = ({ initialTab = 'overview' }) => {
         ))}
       </nav>
 
-      {brokerError && tab !== 'backtest' && (
+      {brokerError && (
         <div className="hub-error">Broker data unavailable: {brokerError}. Log in to Zerodha to load positions and orders.</div>
       )}
 
@@ -162,52 +134,9 @@ const StrategyHub = ({ initialTab = 'overview' }) => {
             <Stat label="Rejected" value={day.rejected} className={day.rejected ? 'neg' : ''} />
           </div>
 
-          <h2>Strategy backtest</h2>
-          {bt ? (
-            <>
-              <div className="hub-stats">
-                <Stat label="Net points" value={num(bt.points)} className={tone(bt.points)} />
-                <Stat label="Trades" value={bt.trades} />
-                <Stat label="Win rate" value={pct(bt.winRate)} />
-                <Stat label="Profit factor" value={bt.profitFactor == null ? '∞' : num(bt.profitFactor)} />
-                <Stat label="Avg win / loss" value={`${num(bt.avgWin)} / ${num(bt.avgLoss)}`} />
-                <Stat label="Max drawdown" value={num(bt.maxDrawdown)} className={bt.maxDrawdown ? 'neg' : ''} hint="points" />
-              </div>
-              {backtest.strategySummary?.length > 0 && (
-                <div className="hub-table-wrap">
-                  <table className="hub-table">
-                    <thead>
-                      <tr><th>Setup</th><th>Side</th><th>Trades</th><th>Win rate</th><th>Net pts</th><th>Avg pts</th></tr>
-                    </thead>
-                    <tbody>
-                      {backtest.strategySummary.map((s) => (
-                        <tr key={s.setupKey}>
-                          <td>{s.setupName}</td>
-                          <td className={s.side === 'long' ? 'pos' : 'neg'}>{s.side}</td>
-                          <td>{s.trades}</td>
-                          <td>{pct(s.trades ? s.wins / s.trades : NaN)}</td>
-                          <td className={tone(s.points)}>{num(s.points)}</td>
-                          <td>{num(s.trades ? s.points / s.trades : NaN)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          ) : (
-            <div className="hub-empty">
-              No backtest run yet in this session.{' '}
-              <button type="button" className="hub-link" onClick={() => setTab('backtest')}>Run one</button>
-            </div>
-          )}
         </section>
       )}
 
-      {/* Kept mounted so a finished backtest survives switching tabs. */}
-      <div style={{ display: tab === 'backtest' ? 'block' : 'none' }}>
-        <GiftNiftyBacktest onResult={setBacktest} />
-      </div>
 
       {tab === 'positions' && (
         <section className="hub-panel">

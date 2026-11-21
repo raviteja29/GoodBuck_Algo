@@ -105,6 +105,24 @@ const MIGRATIONS = [
     PRIMARY KEY (day, kind, ref_id)
   ) WITHOUT ROWID;
   `,
+
+  // 2 — backtest trades stored as JSON (the engine's trade shape, legs included),
+  //     plus the strategy's config snapshot on each backtest for staleness checks.
+  `
+  DROP TABLE backtest_trades;
+  CREATE TABLE backtest_trades (
+    backtest_id  TEXT NOT NULL REFERENCES backtests(id) ON DELETE CASCADE,
+    seq          INTEGER NOT NULL,
+    setup_key    TEXT NOT NULL,
+    side         TEXT NOT NULL,
+    entry_ts     INTEGER NOT NULL,
+    points       REAL NOT NULL,
+    data         TEXT NOT NULL,             -- JSON trade incl. legs
+    PRIMARY KEY (backtest_id, seq)
+  );
+  ALTER TABLE backtests ADD COLUMN summary TEXT;   -- JSON per-setup rows
+  ALTER TABLE backtests ADD COLUMN info TEXT;      -- JSON: candles used, skipped weeks, timings
+  `,
 ];
 
 export function openDb(file = process.env.DB_PATH || DEFAULT_DB_PATH) {
