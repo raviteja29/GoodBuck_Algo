@@ -8,36 +8,29 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "start": "node premiumtrader-backend/server.js",
-    "postinstall": "cd premiumtrader-backend && npm install"
+    "start": "node --disable-warning=ExperimentalWarning premiumtrader-backend/server.js",
+    "postinstall": "cd premiumtrader-backend && npm install",
+    "test": "node --disable-warning=ExperimentalWarning --test 'premiumtrader-backend/db/__tests__/*.test.mjs' 'premiumtrader-backend/strategy/__tests__/config.test.mjs' && node premiumtrader-backend/strategy/__tests__/equivalence.test.mjs && node premiumtrader-backend/strategy/__tests__/trade-equivalence.test.mjs"
   },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
-    "@headlessui/react": "^2.2.8",
     "@heroicons/react": "^2.2.0",
-    "@mui/material": "^7.3.2",
-    "@vitejs/plugin-react": "^5.0.2",
-    "axios": "^1.12.2",
-    "chart.js": "^4.5.0",
-    "crypto-js": "^4.2.0",
-    "framer-motion": "^12.23.15",
     "lucide-react": "^0.544.0",
     "react": "^19.1.1",
-    "react-chartjs-2": "^5.3.0",
     "react-dom": "^19.1.1",
-    "react-router-dom": "^7.9.1",
-    "recharts": "^3.2.1",
-    "uuid": "^13.0.0",
-    "vite": "^7.1.6"
+    "react-router-dom": "^7.9.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.35.0",
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
     "eslint": "^9.35.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
-    "globals": "^16.4.0"
+    "globals": "^16.4.0",
+    "vite": "^7.1.6"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

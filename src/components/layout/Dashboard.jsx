@@ -1,79 +1,87 @@
-import React, { useState, useEffect } from 'react';
-import Header from './Header';
-import Sidebar from './Sidebar';
-import DashboardGrid from './DashboardGrid';
+import React, { useEffect, useState } from 'react';
+import AppShell from '../v2/AppShell';
+import StrategiesPage from '../v2/StrategiesPage';
+import StrategyBuilder from '../v2/StrategyBuilder';
+import StrategyHub from '../StrategyHub';
 import TradingService from '../../services/TradingService';
-import './Dashboard.css';
+import '../../styles/v2.css';
 
-const Dashboard = ({ userInfo, onLogout }) => {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [activeSection, setActiveSection] = useState('dashboard');
-  const [dashboardData, setDashboardData] = useState({
-    totalPnL: 0,
-    todayPnL: 0,
-    positions: [],
-    orders: [],
-    strategies: [],
-    alerts: []
-  });
+// The section lives in the URL hash so refresh and the browser back button work:
+// #strategies, #strategies/new, #strategies/<id>, #backtests, #performance
+const parseHash = () => {
+  const [section = 'strategies', id = null] = window.location.hash.replace(/^#\/?/, '').split('/');
+  return { section: section || 'strategies', id };
+};
 
-  // Toggle sidebar collapse
-  const handleToggleSidebar = () => {
-    setSidebarCollapsed(!sidebarCollapsed);
-  };
+const Dashboard = ({ onLogout }) => {
+  const [route, setRoute] = useState(parseHash);
+  const [backtestFor, setBacktestFor] = useState(null);
 
-  // Handle section navigation
-  const handleSectionChange = (section) => {
-    setActiveSection(section);
-  };
+  // Order polling dispatches 'orderUpdate' events that StrategyHub listens to.
+  useEffect(() => TradingService.startOrderPolling(10000), []);
 
-  // Mock data update - replace with real data fetching
   useEffect(() => {
-    // Simulate data updates
-    const updateData = () => {
-      setDashboardData(prev => ({
-        ...prev,
-        totalPnL: Math.random() * 100000 - 50000,
-        todayPnL: Math.random() * 10000 - 5000,
-        // Add more real-time data updates here
-      }));
-    };
-
-    const interval = setInterval(updateData, 2000);
-    
-    // Start polling for order updates
-    const stopOrderPolling = TradingService.startOrderPolling(10000); // Poll every 10 seconds
-    
-    return () => {
-      clearInterval(interval);
-      stopOrderPolling(); // Stop order polling when component unmounts
-    };
+    const onHash = () => setRoute(parseHash());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  const go = (section, id) => {
+    window.location.hash = id ? `${section}/${id}` : section;
+  };
+
+  const openBacktest = (strategyId) => {
+    setBacktestFor(strategyId);
+    go('backtests');
+  };
+
+  let page;
+  if (route.section === 'strategies' && route.id) {
+    page = (
+      <StrategyBuilder
+        key={route.id}
+        strategyId={route.id === 'new' ? null : route.id}
+        onBack={(openId) => go('strategies', openId)}
+        onSaved={(s) => { if (route.id === 'new') window.location.replace(`#strategies/${s.id}`); }}
+        onBacktest={openBacktest}
+      />
+    );
+  } else if (route.section === 'backtests') {
+    page = (
+      <div className="gb-legacy">
+        <h1 className="gb-title" style={{ marginBottom: 12 }}>Backtests</h1>
+        {backtestFor && (
+          <div className="gb-note gb-note-info" style={{ marginBottom: 16 }}>
+            <b>Saved strategies get server backtests in Phase 2</b>
+            <span>Until then this lab runs the original Weekly Levels rules (the default config) in the browser.</span>
+          </div>
+        )}
+        <StrategyHub key="backtests" initialTab="backtest" />
+      </div>
+    );
+  } else if (route.section === 'performance') {
+    page = (
+      <div className="gb-legacy">
+        <h1 className="gb-title" style={{ marginBottom: 12 }}>Performance</h1>
+        <StrategyHub key="performance" initialTab="positions" />
+      </div>
+    );
+  } else {
+    page = (
+      <StrategiesPage
+        onOpen={(id) => go('strategies', id)}
+        onNew={() => go('strategies', 'new')}
+        onBacktest={openBacktest}
+      />
+    );
+  }
+
+  const section = ['backtests', 'performance'].includes(route.section) ? route.section : 'strategies';
+
   return (
-    <div className="dashboard-layout">
-      <Header 
-        userInfo={userInfo}
-        onLogout={onLogout}
-        onToggleSidebar={handleToggleSidebar}
-        sidebarCollapsed={sidebarCollapsed}
-      />
-      
-      <Sidebar 
-        collapsed={sidebarCollapsed}
-        activeSection={activeSection}
-        onSectionChange={handleSectionChange}
-        onLogout={onLogout}
-      />
-      
-      <main className={`dashboard-main ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-        <DashboardGrid 
-          activeSection={activeSection}
-          dashboardData={dashboardData}
-          userInfo={userInfo}
-        />
-      </main>
-    </div>
+    <AppShell section={section} onNavigate={(s) => go(s)} onLogout={onLogout}>
+      {page}
+    </AppShell>
   );
 };
 

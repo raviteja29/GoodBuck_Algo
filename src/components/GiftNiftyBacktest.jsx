@@ -465,7 +465,7 @@ const createScenario = (touch, hma50Zone, hma50Trend, hma200Zone, hma200Trend) =
   examples: []
 });
 
-const GiftNiftyBacktest = () => {
+const GiftNiftyBacktest = ({ onResult } = {}) => {
   const [fromDate, setFromDate] = useState(DEFAULT_START);
   const [toDate, setToDate] = useState(toInputDate(new Date()));
   const [indicatorStartDate, setIndicatorStartDate] = useState(DEFAULT_INDICATOR_START);
@@ -698,7 +698,7 @@ const GiftNiftyBacktest = () => {
 
       const scenarios = Array.from(scenarioMap.values()).sort((a, b) => b.count - a.count);
       const strategySummary = buildStrategySummary(strategyTrades);
-      setResult({
+      const nextResult = {
         token,
         indicatorStart: toInputDate(indicatorStart),
         firstCandleDate: allCandles[0]?.dateKey || '',
@@ -713,7 +713,9 @@ const GiftNiftyBacktest = () => {
         strategyTrades,
         strategySummary,
         weeks: weekRows
-      });
+      };
+      setResult(nextResult);
+      onResult?.(nextResult);
       setProgress('');
     } catch (err) {
       setError(err.message || 'Backtest failed');

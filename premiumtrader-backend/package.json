@@ -8,14 +8,18 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "express": "^5.1.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
+    "express": "^5.1.0",
     "kiteconnect": "^5.1.0",
+    "uuid": "^13.0.0",
     "ws": "^8.18.3"
   },
   "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test 'db/__tests__/*.test.mjs' 'strategy/__tests__/config.test.mjs' && node strategy/__tests__/equivalence.test.mjs && node strategy/__tests__/trade-equivalence.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

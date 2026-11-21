@@ -4,7 +4,6 @@ import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import Login from './components/Login';
 import AuthCallback from './components/AuthCallback';
 import Dashboard from './components/layout/Dashboard';
-import WebSocketDebugger from './components/WebSocketDebugger';
 import AuthService from './services/AuthService';
 import TradingService from './services/TradingService';
 
@@ -16,7 +15,6 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [userInfo, setUserInfo] = useState(null);
-  const [showDebugger, setShowDebugger] = useState(true); // Enable debugger by default
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -97,19 +95,6 @@ function App() {
     navigate('/');
   };
 
-  // Toggle debugger with keyboard shortcut (Ctrl+Shift+D)
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
-        e.preventDefault();
-        setShowDebugger(prev => !prev);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
   if (isLoading) {
     return (
       <div className="loading-container">
@@ -154,8 +139,6 @@ function App() {
         />
       </Routes>
 
-      {/* WebSocket Debugger - only shown when authenticated */}
-      {isAuthenticated && showDebugger && <WebSocketDebugger />}
     </>
   );
 }
