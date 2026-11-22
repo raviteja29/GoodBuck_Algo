@@ -171,12 +171,12 @@ const isoIST = (ms) => new Date(ms + 330 * 60000).toISOString().replace('T', ' '
 
 export function tradesCsv(backtest) {
   const ma = backtest.trades.find((t) => t.overlay)?.overlay.label.toLowerCase().replace(' ', '') || 'ma';
-  const head = ['entry_time_ist', 'exit_time_ist', 'setup', 'side', 'entry_price', 'exit_price', 'exit_reason', 'points', 'stop', 'target', 'touch_point',
-    `${ma}_at_entry`, `entry_minus_${ma}`, `${ma}_at_exit`, `exit_minus_${ma}`, 'week_base_start', 'expiry_date', 'legs'];
+  const head = ['entry_time_ist', 'exit_time_ist', 'setup', 'side', 'entry_price', 'exit_price', 'exit_reason', 'points', 'stop', 'target', 'touch_point', 'first_touch_time_ist',
+    `${ma}_at_first_touch`, `touch_minus_${ma}`, `${ma}_at_entry`, `entry_minus_${ma}`, `${ma}_at_exit`, `exit_minus_${ma}`, 'week_base_start', 'expiry_date', 'legs'];
   const lines = backtest.trades.map((t) => [
     isoIST(t.entryTs), isoIST(t.exitTs), t.setupName, t.side, t.entryPrice, t.exitPrice, t.exitReason,
-    Math.round(t.points * 100) / 100, t.stop ?? '', t.target ?? '', t.touchPoint ?? '',
-    t.overlay?.atEntry ?? '', t.overlay?.entryVsLine ?? '', t.overlay?.atExit ?? '', t.overlay?.exitVsLine ?? '', t.baseStart ?? '', t.expiryDate ?? '', t.legs?.length ?? 0,
+    Math.round(t.points * 100) / 100, t.stop ?? '', t.target ?? '', t.touchPoint ?? '', t.touchTs != null ? isoIST(t.touchTs) : '',
+    t.overlay?.atTouch ?? '', t.overlay?.touchVsLine ?? '', t.overlay?.atEntry ?? '', t.overlay?.entryVsLine ?? '', t.overlay?.atExit ?? '', t.overlay?.exitVsLine ?? '', t.baseStart ?? '', t.expiryDate ?? '', t.legs?.length ?? 0,
   ].map(csvCell).join(','));
   return [head.join(','), ...lines].join('\n') + '\n';
 }
@@ -208,7 +208,7 @@ export function chartWindow(db, backtest, { at = null, before = 120, after = 80 
     labels: { overlay: overlay ? `${INDICATOR_LABEL[config.overlay.type]} ${config.overlay.period}` : null, fast: `${INDICATOR_LABEL[fastType]} ${fastPeriod}`, slow: `${INDICATOR_LABEL[slowType]} ${slowPeriod}`, trend: describeTrend(config.trend) },
     trades: backtest.trades
       .filter((t) => t.exitTs >= t0 && t.entryTs <= t1)
-      .map((t) => ({ entryTs: t.entryTs, exitTs: t.exitTs, side: t.side, entryPrice: t.entryPrice, exitPrice: t.exitPrice, exitReason: t.exitReason, stop: t.stop ?? null, target: t.target ?? null, touchPoint: t.touchPoint ?? null, overlay: t.overlay ?? null, setupName: t.setupName, points: t.points })),
+      .map((t) => ({ entryTs: t.entryTs, exitTs: t.exitTs, side: t.side, entryPrice: t.entryPrice, exitPrice: t.exitPrice, exitReason: t.exitReason, stop: t.stop ?? null, target: t.target ?? null, touchPoint: t.touchPoint ?? null, touchTs: t.touchTs ?? null, touchMarket: t.touchMarket ?? null, overlay: t.overlay ?? null, setupName: t.setupName, points: t.points })),
   };
 }
 

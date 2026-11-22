@@ -80,7 +80,8 @@ export default function TradeChart({ backtestId, trade }) {
       </div>
       {sel?.overlay && (
         <div className="gb-tc-ma">
-          <span><b>{sel.overlay.label}</b> at entry <b>{px(sel.overlay.atEntry)}</b>{sel.overlay.entryVsLine != null && <> · price {vsText(sel.overlay.entryVsLine)}</>}</span>
+          {sel.overlay.atTouch != null && <span><b>{sel.overlay.label}</b> at first touch ({fmtTime(sel.touchTs)}) <b>{px(sel.overlay.atTouch)}</b>{sel.overlay.touchVsLine != null && <> · price {vsText(sel.overlay.touchVsLine)}</>}</span>}
+          <span>{sel.overlay.atTouch == null && <b>{sel.overlay.label} </b>}at entry <b>{px(sel.overlay.atEntry)}</b>{sel.overlay.entryVsLine != null && <> · price {vsText(sel.overlay.entryVsLine)}</>}</span>
           <span>at exit ({sel.exitReason}) <b>{px(sel.overlay.atExit)}</b>{sel.overlay.exitVsLine != null && <> · price {vsText(sel.overlay.exitVsLine)}</>}</span>
         </div>
       )}

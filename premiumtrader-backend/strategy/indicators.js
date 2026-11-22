@@ -101,6 +101,45 @@ export function trendWarmup(type, period) {
   return type === 'sma' ? period : hmaWarmup(period);
 }
 
+/** HMA value at bar i alone (same maths as computeHMASeries); null before warm-up. */
+function hmaAt(closes, period, i) {
+  if (i + 1 < hmaWarmup(period)) return null;
+  const half = Math.floor(period / 2);
+  const sq = Math.max(1, Math.floor(Math.sqrt(period)));
+  const diffs = [];
+  for (let j = i - sq + 1; j <= i; j += 1) diffs.push(2 * computeWMA(closes, half, j) - computeWMA(closes, period, j));
+  return computeWMA(diffs, sq, sq - 1);
+}
+
+function smaAt(closes, period, i) {
+  if (i + 1 < period) return null;
+  let sum = 0;
+  for (let k = i - period + 1; k <= i; k += 1) sum += closes[k];
+  return sum / period;
+}
+
+/**
+ * The LIVE value of a trend line during bar i - what a chart shows while the bar
+ * is still forming, with the current price standing in for bar i's close.
+ *
+ * Every supported line (HMA, SMA) is a weighted sum of closes, so its value is
+ * linear in the current price: line(p) = a + b*p. Returns { a, b } (null before
+ * warm-up). `closes` is borrowed and restored.
+ */
+export function liveLineAt(closes, type, period, i) {
+  const at = (p) => {
+    const saved = closes[i];
+    closes[i] = p;
+    try { return type === 'sma' ? smaAt(closes, period, i) : hmaAt(closes, period, i); } finally { closes[i] = saved; }
+  };
+  const a = at(0);
+  const b = a == null ? null : at(1) - a;
+  return a == null ? null : { a, b };
+}
+
+/** Price p at which price and the live line meet: p = a + b*p. */
+export const liveMeetingPrice = ({ a, b }) => a / (1 - b);
+
 export const getTrend = (currentValue, previousValue) => {
   if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue)) return 'missing';
   return currentValue > previousValue ? 'increasing' : 'decreasing';
