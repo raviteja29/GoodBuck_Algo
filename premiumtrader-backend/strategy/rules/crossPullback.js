@@ -33,7 +33,8 @@
  *  - a bar that triggers an entry and also reaches the stop is a stop-out;
  *  - a target is never counted in the entry bar;
  *  - after an exit, the next entry waits for the following bar.
- * Gaps fill at the bar's open.
+ * Entries fill only AT the touch point (a bar must trade that price; no fill at
+ * the open on a gap). Exits past a stop/target on a gap fill at the open.
  */
 
 import { computeTrendSeries } from '../indicators.js';
@@ -129,7 +130,9 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
 
   const endMin = toMinutes(config.session.end || '15:30');
   const touched = (side, b, price) => (side === 'short' ? b.high >= price : b.low <= price);
-  const fillAt = (side, b, price) => (side === 'short' ? Math.max(b.open, price) : Math.min(b.open, price));
+  // Entries fill only AT the touch point: the bar must actually trade that price.
+  // A bar that gaps past it and never comes back does not fill (no fill at the open).
+  const tradesAt = (b, price) => b.low <= price && b.high >= price;
   const beyond = (side, price, stop) => (side === 'short' ? price >= stop : price <= stop);
 
   for (let i = 0; i < bars.length; i++) {
@@ -179,27 +182,22 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
         // First touch of the fast line (value at the last completed bar) - at any hour.
         const line = fast[i - 1];
         if (Number.isFinite(line) && touched(side, b, line)) {
-          const fill = fillAt(side, b, line);
-          if (beyond(side, fill, setup.stop)) {
-            setup.dead = true; // already through the stop: the setup is broken
+          // The touch point is the fast line's value (e.g. 25,455), even if this bar gapped past it.
+          if (beyond(side, line, setup.stop)) {
+            setup.dead = true; // line already beyond the stop: the setup is broken
           } else {
-            setup.touch = fill;
+            setup.touch = line;
             setup.touchTs = b.ts;
-            setup.target = side === 'short' ? fill - R * (setup.stop - fill) : fill + R * (fill - setup.stop);
+            setup.target = side === 'short' ? line - R * (setup.stop - line) : line + R * (line - setup.stop);
             setup.phase = 'armed';
-            if (canTrade) enter(fill, 'first');
-            else setup.firstPending = true; // touched outside trading hours: trade it at the touch point later
+            if (canTrade && tradesAt(b, line)) enter(line, 'first');
+            else setup.firstPending = true; // touched outside trading hours, or gapped past: trade it AT the touch point later
           }
         }
-      } else if (canTrade && (setup.firstPending || config.reentry) && touched(side, b, setup.touch)) {
-        const fill = fillAt(side, b, setup.touch);
-        if (beyond(side, fill, setup.stop)) {
-          setup.dead = true;
-        } else {
-          const kind = setup.firstPending ? 'first' : 'reentry';
-          setup.firstPending = false;
-          enter(fill, kind);
-        }
+      } else if (canTrade && (setup.firstPending || config.reentry) && tradesAt(b, setup.touch)) {
+        const kind = setup.firstPending ? 'first' : 'reentry';
+        setup.firstPending = false;
+        enter(setup.touch, kind);
       }
 
       // A stop breach on the chart - at any hour - ends the setup.

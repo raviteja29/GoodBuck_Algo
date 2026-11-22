@@ -97,12 +97,12 @@ test('opposite entry closes the open trade and reverses', () => {
     ...SHORT.slice(0, 8),             // short open at 102, stop 130, target 46
     [99, 101, 90, 95, 99, 100],       // 8 nothing
     [95, 100, 92, 99, 101, 100.5],    // 9 fast (rising) crosses above slow -> long setup
-    [99, 100, 94, 97, 102, 101],      // 10 trigger = fast[9] = 101: low 94 <= 101 -> LONG at 99 (gap: open below line)
+    [99, 102, 94, 97, 102, 101],      // 10 trigger = fast[9] = 101: bar trades 101 -> LONG at 101, short reversed at 101
   ];
   const r = run(rows);
   assert.deepEqual(r.trades.map(brief), [
-    ['short-first', 102, 99, 'reversal'],
-    ['long-first', 99, 97, 'end of test'],
+    ['short-first', 102, 101, 'reversal'],
+    ['long-first', 101, 97, 'end of test'],
   ]);
 });
 
@@ -215,4 +215,44 @@ test('stop breached outside trading hours ends the setup; open trades exit at th
   c2.push({ time: Date.parse('2026-03-03T09:15:00+05:30'), open: 95, high: 103, low: 94, close: 100 }); f2.push(96); s2.push(104);
   const r2 = runCrossPullback({ candles: c2, from: '2026-01-01', to: '2026-12-31', config: cfg(), series: { fast: f2, slow: s2 } });
   assert.deepEqual(r2.trades.map(brief), [['short-first', 102, 46, 'target']], 'no re-entry at 102 after the overnight breach');
+});
+
+test('entry only AT the touch point: no fill at the open when price gaps past it', () => {
+  // Short setup from SHORT[0..5]; fast line held at 25455-equivalent (102).
+  // Bar 6 gaps ABOVE the line and never trades 102 -> touch point fixed at 102, but no trade.
+  // Bar 7 still above. Bar 8 trades down through 102 -> short at exactly 102.
+  const rows = [
+    ...SHORT.slice(0, 6),
+    [104, 108, 103, 105, 102, 104],  // 6 trigger fast[5]=102: high>=102 (touched) but low 103 > 102 -> no fill
+    [105, 107, 103.5, 104, 102, 104],// 7 still above the touch point
+    [104, 104.5, 99, 100, 101, 104], // 8 trades 102 -> SHORT at 102 (not at the 104 open)
+  ];
+  const r = run(rows);
+  assert.deepEqual(r.trades.map(brief), [['short-first', 102, 100, 'end of test']]);
+  assert.equal(r.trades[0].touchPoint, 102);
+  assert.equal(r.trades[0].target, 46, 'target from the touch point: 102 - 2 x (130 - 102)');
+});
+
+test('20 Nov case: night-session touch fixes 25455; morning open at 25361 does not trade until price returns to 25455', () => {
+  const T = (t) => Date.parse(`${t}+05:30`);
+  //  IST time               open   high   low    close  fast   slow
+  const bars = [
+    ['2026-11-19T21:00:00', 25500, 25560, 25480, 25540, 25520, 25400],
+    ['2026-11-19T21:15:00', 25540, 25600, 25520, 25580, 25530, 25410], // both lines rising -> swing high 25600 (stop)
+    ['2026-11-19T21:30:00', 25580, 25590, 25500, 25510, 25525, 25415], // fast turns down
+    ['2026-11-19T21:45:00', 25510, 25520, 25380, 25400, 25455, 25460], // fast (falling) crosses below slow -> short setup
+    ['2026-11-19T22:00:00', 25400, 25430, 25350, 25420, 25455, 25462], // line 25455: high 25430 -> no touch yet
+    ['2026-11-19T22:15:00', 25420, 25470, 25410, 25440, 25450, 25463], // NIGHT touch of 25455 -> touch point fixed, no trade (outside hours)
+    ['2026-11-20T09:15:00', 25361, 25400, 25330, 25390, 25420, 25466], // session opens at 25361 -> NO trade at 25361
+    ['2026-11-20T09:30:00', 25390, 25430, 25380, 25420, 25410, 25467], // still below 25455
+    ['2026-11-20T09:45:00', 25420, 25470, 25410, 25450, 25405, 25468], // trades 25455 -> SHORT at 25455
+  ];
+  const candles = bars.map(([t, o, h, l, c]) => ({ time: T(t), open: o, high: h, low: l, close: c }));
+  const series = { fast: bars.map((b) => b[5]), slow: bars.map((b) => b[6]) };
+  const r = runCrossPullback({ candles, from: '2026-11-01', to: '2026-11-30', config: cfg(), series });
+  assert.equal(r.trades.length, 1, JSON.stringify(r.trades.map(brief)));
+  assert.equal(r.trades[0].entryPrice, 25455);
+  assert.equal(r.trades[0].touchPoint, 25455);
+  assert.equal(r.trades[0].stop, 25600);
+  assert.equal(new Date(r.trades[0].entryTs + 330 * 60000).toISOString().slice(11, 16), '09:45');
 });
