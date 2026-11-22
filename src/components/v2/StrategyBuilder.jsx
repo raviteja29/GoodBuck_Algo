@@ -365,6 +365,21 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
                   <span className="gb-row-value">× risk</span>
                 </span>
               </Row>
+              <Row
+                label="When the stop is hit"
+                hint={config.exits.afterStop === 'red-candle'
+                  ? 'Hold; exit only if price passes the high of the first red candle after the breach (low of the first green candle for longs). Otherwise run to target. The setup ends at the breach.'
+                  : 'Exit at the stop; the setup ends.'}
+                error={errors['exits.afterStop']}
+              >
+                <div role="radiogroup" aria-label="When the stop is hit" className="gb-segmented">
+                  {(meta.stopModes || ['exit', 'red-candle']).map((m) => (
+                    <button key={m} type="button" role="radio" aria-checked={(config.exits.afterStop || 'exit') === m} onClick={() => update('exits.afterStop', m)}>
+                      {m === 'exit' ? 'Exit at stop' : 'Red-candle confirm'}
+                    </button>
+                  ))}
+                </div>
+              </Row>
               <Row label="Holding" error={errors.holding}>
                 <div role="radiogroup" aria-label="Holding" className="gb-segmented">
                   {(meta.holdingModes || ['overnight', 'intraday']).map((h) => (

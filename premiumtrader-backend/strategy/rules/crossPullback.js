@@ -19,6 +19,16 @@
  *     next cross.
  *  6. Reversal: an open trade is closed when the opposite setup's entry fires.
  *  7. Intraday mode: flat at session.exitTime; no entries until session.start.
+ *  8. Red-candle stop (exits.afterStop = 'red-candle'; default 'exit' = exit at
+ *     the stop). When price breaches the stop the trade is NOT exited:
+ *      - the setup ends (no more re-entries at the touch point);
+ *      - the first red candle (close < open) from the breach candle on - at any
+ *        hour - fixes an exit level at its high; if price later passes that
+ *        high, exit exactly there (at the open if it gapped past, or at the
+ *        session open if it passed during the night);
+ *      - otherwise the trade runs to its 2R target; an opposite cross does not
+ *        reverse it once the stop has been breached.
+ *     Long is the mirror: first green candle, exit below its low.
  *
  * CHART HOURS vs TRADING HOURS. GIFT NIFTY trades ~06:30-02:45 IST, and the
  * strategy reads that whole chart: crosses, the stop, the first touch (the
@@ -132,6 +142,7 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
       stop: round2(pos.stop),
       target: round2(pos.target),
       exitReason: reason,
+      ...(pos.breachTs != null ? { breachTs: pos.breachTs, redCandleLevel: pos.confirm != null ? round2(pos.confirm) : null } : {}),
       points: round2(points),
       result: points > 0 ? 'win' : points < 0 ? 'loss' : 'flat',
       legs: [],
@@ -145,6 +156,22 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
   // A bar that gaps past it and never comes back does not fill (no fill at the open).
   const tradesAt = (b, price) => b.low <= price && b.high >= price;
   const beyond = (side, price, stop) => (side === 'short' ? price >= stop : price <= stop);
+  const redCandleStop = config.exits.afterStop === 'red-candle';
+  // Red-candle mode: after a stop breach, look for the first candle against the trade.
+  const track = (i) => {
+    if (!pos || !redCandleStop) return;
+    const b = bars[i];
+    const short = pos.side === 'short';
+    if (!pos.breached && touched(pos.side, b, pos.stop)) {
+      pos.breached = true;
+      pos.breachTs = b.ts;
+      if (setup && setup.id === pos.setupId) setup.dead = true; // no more re-entries
+    }
+    if (pos.breached && pos.confirm == null && (short ? b.close < b.open : b.close > b.open)) {
+      pos.confirm = short ? b.high : b.low;
+      pos.confirmIdx = i;
+    }
+  };
 
   for (let i = 0; i < bars.length; i++) {
     const b = bars[i];
@@ -154,7 +181,30 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
     let exitedThisBar = false;
 
     // 1. Manage the open trade - only possible during trading hours.
-    if (pos && tradingHours) {
+    if (pos && redCandleStop) {
+      const short = pos.side === 'short';
+      const confirmHit = pos.confirm != null && i > pos.confirmIdx && touched(pos.side, b, pos.confirm);
+      if (tradingHours) {
+        if (intraday && mins >= exitMin) {
+          close(b.open, i, 'intraday exit');
+        } else if (pos.confirmTriggered) {
+          close(b.open, i, 'red candle'); // passed the level outside trading hours
+        } else if (confirmHit) {
+          close(beyond(pos.side, b.open, pos.confirm) ? b.open : pos.confirm, i, 'red candle');
+        } else if (i > pos.entryIndex && (pos.breached || !touched(pos.side, b, pos.stop)) && (short ? b.low <= pos.target : b.high >= pos.target)) {
+          // (a bar that both breaches the stop and reaches the target is not counted as a target)
+          const gap = short ? b.open <= pos.target : b.open >= pos.target;
+          close(gap ? b.open : pos.target, i, 'target');
+        }
+        if (!pos) exitedThisBar = true;
+      } else if (intraday) {
+        close(b.open, i, 'intraday exit');
+        exitedThisBar = true;
+      } else if (confirmHit) {
+        pos.confirmTriggered = true;
+      }
+      track(i);
+    } else if (pos && tradingHours) {
       const short = pos.side === 'short';
       if (intraday && mins >= exitMin) {
         close(b.open, i, 'intraday exit');
@@ -178,12 +228,14 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
     // 2. The live setup, on the full chart.
     if (setup && !setup.dead) {
       const { side } = setup;
-      const canTrade = entryWindow && !exitedThisBar && (!pos || pos.side !== side);
+      // A breached trade in red-candle mode is not reversed by the opposite setup.
+      const canTrade = entryWindow && !exitedThisBar && (!pos || (pos.side !== side && !(redCandleStop && pos.breached)));
       const enter = (fill, kind) => {
         if (pos) close(fill, i, 'reversal');
         pos = { side, kind, entry: fill, entryTs: b.ts, entryIndex: i, stop: setup.stop, target: setup.target, touch: setup.touch, touchTs: setup.touchTs, touchMarket: setup.touchMarket, setupId: setup.id };
         // Conservative: if this bar also reached the stop, assume it came after the entry.
-        if (touched(side, b, setup.stop)) {
+        if (redCandleStop) track(i);
+        else if (touched(side, b, setup.stop)) {
           close(setup.stop, i, 'stop');
           setup.dead = true;
         }

@@ -2,7 +2,7 @@
 
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { normalizeConfig, describeConfig, INDICATOR_TYPES, DEFAULT_CONFIG, DEFAULT_CROSS_CONFIG, DEFAULTS_BY_TYPE, STRATEGY_TYPES, HOLDING_MODES, SETUP_CATALOGUE, TIMEFRAMES } from './strategy/config.js';
+import { normalizeConfig, describeConfig, INDICATOR_TYPES, DEFAULT_CONFIG, DEFAULT_CROSS_CONFIG, DEFAULTS_BY_TYPE, STRATEGY_TYPES, HOLDING_MODES, STOP_MODES, SETUP_CATALOGUE, TIMEFRAMES } from './strategy/config.js';
 import { loadKiteSession, saveKiteSession } from './kiteSession.js';
 import { getMeta, setMeta } from './db/index.js';
 
@@ -117,6 +117,18 @@ export function seedCrossPullbackStrategies(db) {
   return made;
 }
 
+/** The red-candle-stop variant, next to the exit-at-stop versions for side-by-side backtests. */
+export function seedRedCandleStrategy(db) {
+  if (getMeta(db, 'seeded_cross_red_candle')) return [];
+  const made = [createStrategy(db, {
+    name: 'HMA 50/130 Cross Pullback · Red-candle stop · Overnight',
+    config: { ...DEFAULT_CROSS_CONFIG, exits: { ...DEFAULT_CROSS_CONFIG.exits, afterStop: 'red-candle' } },
+    status: 'draft',
+  })];
+  setMeta(db, 'seeded_cross_red_candle', true);
+  return made;
+}
+
 /**
  * Only the logged-in Kite user may use these routes. The browser's token must
  * match the session the server holds; a different token (a fresh login, or one
@@ -163,6 +175,7 @@ export function strategiesRouter(db, { verifyToken } = {}) {
       defaultsByType: DEFAULTS_BY_TYPE,
       types: STRATEGY_TYPES,
       holdingModes: HOLDING_MODES,
+      stopModes: STOP_MODES,
       setups: SETUP_CATALOGUE,
       timeframes: TIMEFRAMES,
       indicators: INDICATOR_TYPES,

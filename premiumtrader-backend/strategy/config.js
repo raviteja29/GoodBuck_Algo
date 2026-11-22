@@ -47,7 +47,10 @@ export const DEFAULT_CROSS_CONFIG = Object.freeze({
   instrument: { token: 291849, symbol: 'GIFTNIFTY', exchange: 'NSEIX' },
   timeframe: '15minute',
   trend: { fastType: 'hma', fastPeriod: 50, slowType: 'hma', slowPeriod: 130 },
-  exits: { targetR: 2 },
+  // afterStop: 'exit' = exit at the stop. 'red-candle' = when the stop is breached,
+  // hold; exit only if price passes the high (short) / low (long) of the first red
+  // (green) candle after the breach - otherwise the trade runs to its target.
+  exits: { targetR: 2, afterStop: 'exit' },
   reentry: true,
   // overnight: exit only on stop / target / reversal. intraday: also flat at
   // session.exitTime, no entries until session.start the next day.
@@ -68,6 +71,7 @@ export const STRATEGY_TYPES = [
 ];
 export const DEFAULTS_BY_TYPE = { 'level-touch': DEFAULT_CONFIG, 'hma-cross-pullback': DEFAULT_CROSS_CONFIG };
 export const HOLDING_MODES = ['overnight', 'intraday'];
+export const STOP_MODES = ['exit', 'red-candle'];
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -150,6 +154,7 @@ function normalizeCrossPullback(src) {
   const r = Number(config.exits.targetR);
   if (!Number.isFinite(r) || r < 0.5 || r > 20) err('exits.targetR', 'Target must be 0.5–20 × risk');
   config.exits.targetR = Math.round(r * 100) / 100;
+  if (!STOP_MODES.includes(config.exits.afterStop)) err('exits.afterStop', 'After the stop must be "exit" or "red-candle"');
   config.reentry = !!config.reentry;
   if (!HOLDING_MODES.includes(config.holding)) err('holding', 'Holding must be overnight or intraday');
   if (checkTimes(config.session, ['start', 'end', 'exitTime'], err)) {
@@ -221,7 +226,7 @@ export function describeTrend(t) {
 export function describeConfig(c) {
   const tf = c.timeframe === 'minute' ? '1m' : c.timeframe.replace('minute', 'm');
   if (c.type === 'hma-cross-pullback') {
-    return `${c.instrument.symbol} · ${tf} · ${describeTrend(c.trend)} cross · ${c.exits.targetR}R · ${c.holding}`;
+    return `${c.instrument.symbol} · ${tf} · ${describeTrend(c.trend)} cross · ${c.exits.targetR}R${c.exits.afterStop === 'red-candle' ? ' · red-candle stop' : ''} · ${c.holding}`;
   }
   return `${c.instrument.symbol} · ${tf} · ${describeTrend(c.trend)} · ${c.setups.length} setup${c.setups.length === 1 ? '' : 's'}`;
 }

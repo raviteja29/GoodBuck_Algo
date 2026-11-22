@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 const { KiteTicker } = require('kiteconnect');
 import { openDb, schemaVersion } from './db/index.js';
 import { saveKiteSession, loadKiteSession, clearKiteSession, publicSessionInfo } from './kiteSession.js';
-import { strategiesRouter, seedDefaultStrategy, seedCrossPullbackStrategies } from './strategies.js';
+import { strategiesRouter, seedDefaultStrategy, seedCrossPullbackStrategies, seedRedCandleStrategy } from './strategies.js';
 import { backtestsRouter } from './backtests.js';
 
 // ES module __dirname equivalent
@@ -86,6 +86,7 @@ console.log(`[DB] Ready (schema v${schemaVersion(db)})`);
 const seeded = seedDefaultStrategy(db);
 if (seeded) console.log(`[STRATEGIES] Saved the default strategy "${seeded.name}"`);
 for (const s of seedCrossPullbackStrategies(db)) console.log(`[STRATEGIES] Saved "${s.name}"`);
+for (const s of seedRedCandleStrategy(db)) console.log(`[STRATEGIES] Saved "${s.name}"`);
 
 // In-memory instrument cache (15 min TTL)
 // Instrument cache + performance instrumentation

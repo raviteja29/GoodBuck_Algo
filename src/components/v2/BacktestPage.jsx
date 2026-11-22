@@ -22,7 +22,7 @@ const tone = (v) => (v > 0 ? 'gb-pos' : v < 0 ? 'gb-neg' : '');
 
 const EXIT_LABELS = {
   target: 'Target', stop: 'Stop', 'stop loss': 'Stop', expiry: 'Expiry', reversal: 'Reversal',
-  'intraday exit': 'Day close', 'end of test': 'Still open',
+  'intraday exit': 'Day close', 'end of test': 'Still open', 'red candle': 'Red candle',
 };
 const exitLabel = (reason) => EXIT_LABELS[reason] || 'Reversal';
 // Weekly Levels names are "Mid Rising Long" -> "Mid · Rising Long"; Cross Pullback names already have a separator.
