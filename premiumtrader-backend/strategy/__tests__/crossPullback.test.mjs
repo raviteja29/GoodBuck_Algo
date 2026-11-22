@@ -256,3 +256,35 @@ test('20 Nov case: night-session touch fixes 25455; morning open at 25361 does n
   assert.equal(r.trades[0].stop, 25600);
   assert.equal(new Date(r.trades[0].entryTs + 330 * 60000).toISOString().slice(11, 16), '09:45');
 });
+
+// ---------- MA overlay (analysis only) ----------
+import { annotateWithOverlay, buildOverlaySummary } from '../backtest.js';
+
+test('MA overlay is recorded at entry and exit (last completed bar) and never changes trades', () => {
+  const candles = [];
+  const t0 = Date.parse('2026-01-05T09:15:00+05:30');
+  for (let i = 0; i < 6000; i++) {
+    const p = 24000 + 400 * Math.sin(i / 120) + 80 * Math.sin(i / 17);
+    const q = 24000 + 400 * Math.sin((i + 1) / 120) + 80 * Math.sin((i + 1) / 17);
+    candles.push({ time: t0 + i * 900000, open: p, high: Math.max(p, q) + 10, low: Math.min(p, q) - 10, close: q });
+  }
+  const args = { candles, from: '2026-02-01', to: '2026-03-31' };
+  const withMa = runStrategy({ ...args, config: cfg() });
+  const without = runStrategy({ ...args, config: cfg({ overlay: { enabled: false } }) });
+  const core = (r) => r.trades.map((t) => { const c = { ...t }; delete c.overlay; return c; });
+  assert.deepEqual(core(withMa), core(without), 'trades identical with or without the MA');
+  assert.ok(withMa.trades.length > 0 && withMa.trades.every((t) => t.overlay.label === 'SMA 50'));
+
+  // Spot-check one trade against a hand-computed SMA 50 of the 50 closes before the entry bar.
+  const t = withMa.trades[0];
+  const i = candles.findIndex((c) => c.time >= t.entryTs);
+  const sma = candles.slice(i - 50, i).reduce((s, c) => s + c.close, 0) / 50;
+  assert.equal(t.overlay.atEntry, Math.round(sma * 100) / 100);
+  assert.equal(t.overlay.entryVsLine, Math.round((t.entryPrice - t.overlay.atEntry) * 100) / 100);
+
+  const groups = withMa.overlaySummary;
+  assert.equal(groups.reduce((n, g) => n + g.trades, 0), withMa.trades.length, 'every trade lands in one group');
+  assert.ok(groups.every((g) => /^(Long|Short) · entry (above|below) SMA 50$/.test(g.name)));
+  assert.equal(without.overlaySummary, undefined);
+  assert.ok(typeof annotateWithOverlay === 'function' && typeof buildOverlaySummary === 'function');
+});

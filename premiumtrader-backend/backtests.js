@@ -96,6 +96,7 @@ export async function runStrategyBacktest(db, fetchHistorical, { strategyId, fro
       candles: candles.length,
       loadedFrom: loadFrom,
       loadedTo: loadTo,
+      overlaySummary: result.overlaySummary || null,
       kiteRequests: fetchInfo.requests,
       fetchedDays: fetchInfo.fetchedDays,
       fetchMs: computeStarted - fetchStarted,
@@ -169,10 +170,13 @@ const csvCell = (v) => {
 const isoIST = (ms) => new Date(ms + 330 * 60000).toISOString().replace('T', ' ').slice(0, 16);
 
 export function tradesCsv(backtest) {
-  const head = ['entry_time_ist', 'exit_time_ist', 'setup', 'side', 'entry_price', 'exit_price', 'exit_reason', 'points', 'stop', 'target', 'touch_point', 'week_base_start', 'expiry_date', 'legs'];
+  const ma = backtest.trades.find((t) => t.overlay)?.overlay.label.toLowerCase().replace(' ', '') || 'ma';
+  const head = ['entry_time_ist', 'exit_time_ist', 'setup', 'side', 'entry_price', 'exit_price', 'exit_reason', 'points', 'stop', 'target', 'touch_point',
+    `${ma}_at_entry`, `entry_minus_${ma}`, `${ma}_at_exit`, `exit_minus_${ma}`, 'week_base_start', 'expiry_date', 'legs'];
   const lines = backtest.trades.map((t) => [
     isoIST(t.entryTs), isoIST(t.exitTs), t.setupName, t.side, t.entryPrice, t.exitPrice, t.exitReason,
-    Math.round(t.points * 100) / 100, t.stop ?? '', t.target ?? '', t.touchPoint ?? '', t.baseStart ?? '', t.expiryDate ?? '', t.legs?.length ?? 0,
+    Math.round(t.points * 100) / 100, t.stop ?? '', t.target ?? '', t.touchPoint ?? '',
+    t.overlay?.atEntry ?? '', t.overlay?.entryVsLine ?? '', t.overlay?.atExit ?? '', t.overlay?.exitVsLine ?? '', t.baseStart ?? '', t.expiryDate ?? '', t.legs?.length ?? 0,
   ].map(csvCell).join(','));
   return [head.join(','), ...lines].join('\n') + '\n';
 }
@@ -188,6 +192,7 @@ export function chartWindow(db, backtest, { at = null, before = 120, after = 80 
   const { fastType = 'hma', fastPeriod, slowType = 'hma', slowPeriod } = config.trend;
   const fast = computeTrendSeries(candles, fastType, fastPeriod);
   const slow = computeTrendSeries(candles, slowType, slowPeriod);
+  const overlay = config.overlay?.enabled ? computeTrendSeries(candles, config.overlay.type, config.overlay.period) : null;
   const target = at ?? backtest.trades.at(-1)?.entryTs ?? candles.at(-1).time;
   let idx = candles.findIndex((c) => c.time >= target);
   if (idx < 0) idx = candles.length - 1;
@@ -199,10 +204,11 @@ export function chartWindow(db, backtest, { at = null, before = 120, after = 80 
     bars: candles.slice(lo, hi).map((c) => ({ t: c.time, o: c.open, h: c.high, l: c.low, c: c.close })),
     fast: fast.slice(lo, hi).map(r2),
     slow: slow.slice(lo, hi).map(r2),
-    labels: { fast: `${INDICATOR_LABEL[fastType]} ${fastPeriod}`, slow: `${INDICATOR_LABEL[slowType]} ${slowPeriod}`, trend: describeTrend(config.trend) },
+    overlay: overlay ? overlay.slice(lo, hi).map(r2) : null,
+    labels: { overlay: overlay ? `${INDICATOR_LABEL[config.overlay.type]} ${config.overlay.period}` : null, fast: `${INDICATOR_LABEL[fastType]} ${fastPeriod}`, slow: `${INDICATOR_LABEL[slowType]} ${slowPeriod}`, trend: describeTrend(config.trend) },
     trades: backtest.trades
       .filter((t) => t.exitTs >= t0 && t.entryTs <= t1)
-      .map((t) => ({ entryTs: t.entryTs, exitTs: t.exitTs, side: t.side, entryPrice: t.entryPrice, exitPrice: t.exitPrice, exitReason: t.exitReason, stop: t.stop ?? null, target: t.target ?? null, touchPoint: t.touchPoint ?? null, setupName: t.setupName, points: t.points })),
+      .map((t) => ({ entryTs: t.entryTs, exitTs: t.exitTs, side: t.side, entryPrice: t.entryPrice, exitPrice: t.exitPrice, exitReason: t.exitReason, stop: t.stop ?? null, target: t.target ?? null, touchPoint: t.touchPoint ?? null, overlay: t.overlay ?? null, setupName: t.setupName, points: t.points })),
   };
 }
 
