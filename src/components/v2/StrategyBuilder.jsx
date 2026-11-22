@@ -238,6 +238,13 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
   }
 
   const setupsByLevel = LEVEL_ORDER.flatMap((lvl) => meta.setups.filter((s) => s.key.startsWith(`${lvl}-`)));
+  const isLevel = config.type !== 'hma-cross-pullback';
+  const typeInfo = (meta.types || []).find((t) => t.key === config.type);
+  const changeType = (type) => {
+    if (type === config.type) return;
+    setConfig(clone(meta.defaultsByType[type]));
+    setErrors({});
+  };
 
   return (
     <>
@@ -248,7 +255,7 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
         </button>
         <h1 className="gb-title" style={{ marginTop: 8 }}>{name.trim() || (isNew ? 'New strategy' : 'Untitled')}</h1>
         <p className="gb-subtitle">
-          {isNew ? 'Starts from the Weekly Levels defaults.' : `Edited ${dateTime(original.updatedAt)}`}
+          {isNew ? `Starts from the ${typeInfo?.label || 'default'} settings.` : `${typeInfo?.label || ''} · edited ${dateTime(original.updatedAt)}`}
           {dirty && ' · Unsaved changes'}
         </p>
       </div>
@@ -258,6 +265,15 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
           <section className="gb-form-group">
             <h2>Market</h2>
             <div className="gb-rows">
+              <Row label="Strategy type" hint={typeInfo?.description}>
+                {isNew ? (
+                  <div role="radiogroup" aria-label="Strategy type" className="gb-segmented">
+                    {(meta.types || []).map((t) => (
+                      <button key={t.key} type="button" role="radio" aria-checked={config.type === t.key} onClick={() => changeType(t.key)}>{t.label}</button>
+                    ))}
+                  </div>
+                ) : <span className="gb-row-value">{typeInfo?.label}</span>}
+              </Row>
               <Row label="Name" error={errors.name} htmlFor="sb-name">
                 <input id="sb-name" type="text" value={name} maxLength={80} placeholder="e.g. Weekly Levels · NIFTY" onChange={(e) => { setName(e.target.value); setErrors((x) => ({ ...x, name: undefined })); }} />
               </Row>
@@ -274,6 +290,7 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
             </div>
           </section>
 
+          {isLevel && (
           <section className="gb-form-group">
             <h2>Levels</h2>
             <div className="gb-rows">
@@ -282,9 +299,10 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
             </div>
             <p>Other level sources can be added once this one is proven live.</p>
           </section>
+          )}
 
           <section className="gb-form-group">
-            <h2>Trend filter</h2>
+            <h2>{isLevel ? 'Trend filter' : 'Trend lines'}</h2>
             <div className="gb-rows">
               {[['fast', 'Fast line', 500], ['slow', 'Slow line', 1000]].map(([which, label, max]) => (
                 <Row key={which} label={label} error={errors[`trend.${which}Type`] || errors[`trend.${which}Period`]} htmlFor={`sb-${which}`}>
@@ -309,11 +327,69 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
                   </div>
                 </Row>
               ))}
-              <Row label="Go long when"><span className="gb-row-value">Both lines rising</span></Row>
+              {isLevel && <Row label="Go long when"><span className="gb-row-value">Both lines rising</span></Row>}
             </div>
-            <p>HMA reacts faster; SMA is smoother. Otherwise the touch is taken short.</p>
+            <p>{isLevel ? 'HMA reacts faster; SMA is smoother. Otherwise the touch is taken short.' : 'HMA reacts faster; SMA is smoother. The fast line crossing the slow one starts a setup.'}</p>
           </section>
 
+          {!isLevel && (
+          <section className="gb-form-group">
+            <h2>Entries</h2>
+            <div className="gb-rows">
+              <Row label="Setup"><span className="gb-row-value">Fast line, sloping that way, crosses the slow line</span></Row>
+              <Row label="First entry" hint="Line value at the last completed bar, so alerts and backtests match">
+                <span className="gb-row-value">The moment price touches the fast line</span>
+              </Row>
+              <SwitchRow
+                id="sb-reentry"
+                label="Re-enter at the touch point"
+                hint="After a target exit, trade again each time price returns to the first touch price — until the stop is breached or the next cross"
+                checked={config.reentry}
+                onChange={(v) => update('reentry', v)}
+              />
+              <Row label="Opposite signal"><span className="gb-row-value">Closes the open trade and reverses</span></Row>
+            </div>
+          </section>
+          )}
+
+          {!isLevel && (
+          <section className="gb-form-group">
+            <h2>Exits</h2>
+            <div className="gb-rows">
+              <Row label="Stop loss" hint="Highest high (short) / lowest low (long) while both lines moved the other way since the previous cross">
+                <span className="gb-row-value">Swing of the previous trend</span>
+              </Row>
+              <Row label="Target" hint="Multiple of the risk (touch point to stop)" error={errors['exits.targetR']} htmlFor="sb-target">
+                <span className="gb-trend-line">
+                  <input id="sb-target" type="number" min="0.5" max="20" step="0.5" value={config.exits.targetR} onChange={(e) => update('exits.targetR', e.target.value === '' ? '' : Number(e.target.value))} />
+                  <span className="gb-row-value">× risk</span>
+                </span>
+              </Row>
+              <Row label="Holding" error={errors.holding}>
+                <div role="radiogroup" aria-label="Holding" className="gb-segmented">
+                  {(meta.holdingModes || ['overnight', 'intraday']).map((h) => (
+                    <button key={h} type="button" role="radio" aria-checked={config.holding === h} onClick={() => update('holding', h)}>
+                      {h === 'overnight' ? 'Overnight' : 'Intraday'}
+                    </button>
+                  ))}
+                </div>
+              </Row>
+              {config.holding === 'intraday' && (
+                <>
+                  <Row label="Close open trades at" error={errors['session.exitTime']} htmlFor="sb-cp-exit">
+                    <input id="sb-cp-exit" type="time" value={config.session.exitTime} onChange={(e) => update('session.exitTime', e.target.value)} />
+                  </Row>
+                  <Row label="New entries from" hint="Each day; none between the close time and this" error={errors['session.start']} htmlFor="sb-cp-start">
+                    <input id="sb-cp-start" type="time" value={config.session.start} onChange={(e) => update('session.start', e.target.value)} />
+                  </Row>
+                </>
+              )}
+            </div>
+            <p>{config.holding === 'overnight' ? 'Overnight: a trade stays open until its stop, target or a reversal.' : 'Intraday: same rules, but everything is closed at the end of the day.'}</p>
+          </section>
+          )}
+
+          {isLevel && (
           <section className="gb-form-group">
             <h2>Setups</h2>
             <div className="gb-rows">
@@ -329,7 +405,9 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
             </div>
             {errors.setups && <p className="gb-row-error" role="alert">{errors.setups}</p>}
           </section>
+          )}
 
+          {isLevel && (
           <section className="gb-form-group">
             <h2>Session &amp; exits</h2>
             <div className="gb-rows">
@@ -346,6 +424,7 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
               <Row label="Target"><span className="gb-row-value">Near end of the box</span></Row>
             </div>
           </section>
+          )}
 
           <section className="gb-form-group">
             <h2>Position size</h2>
@@ -362,8 +441,14 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
           <section className="gb-form-group">
             <h2>Alerts</h2>
             <div className="gb-rows">
-              <SwitchRow id="sb-alert-touch" label="Early alert on touch" hint="As soon as a tick reaches a level" checked={config.alerts.touch} onChange={(v) => update('alerts.touch', v)} />
-              <SwitchRow id="sb-alert-confirmed" label="Confirmed alert" hint="When the bar closes — matches the backtest" checked={config.alerts.confirmed} onChange={(v) => update('alerts.confirmed', v)} />
+              {isLevel ? (
+                <>
+                  <SwitchRow id="sb-alert-touch" label="Early alert on touch" hint="As soon as a tick reaches a level" checked={config.alerts.touch} onChange={(v) => update('alerts.touch', v)} />
+                  <SwitchRow id="sb-alert-confirmed" label="Confirmed alert" hint="When the bar closes — matches the backtest" checked={config.alerts.confirmed} onChange={(v) => update('alerts.confirmed', v)} />
+                </>
+              ) : (
+                <SwitchRow id="sb-alert-touch" label="Alert on touch" hint="The moment price touches the entry price — not at candle close" checked={config.alerts.touch} onChange={(v) => update('alerts.touch', v)} />
+              )}
               <Row label="Channels"><span className="gb-row-value">In-app · Telegram in Phase 5</span></Row>
             </div>
           </section>

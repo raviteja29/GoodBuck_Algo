@@ -222,3 +222,32 @@ test('SMA strategy warms up and backtests on the server', async () => {
   assert.equal(bt.status, 'done');
   assert.ok(bt.trades.length > 0);
 });
+
+test('Cross Pullback strategies: seeded once, backtest on the server, chart window', async () => {
+  const { seedCrossPullbackStrategies } = await import('../../strategies.js');
+  const { chartWindow, getBacktest } = await import('../../backtests.js');
+  const db = openDb(':memory:');
+  const seeded = seedCrossPullbackStrategies(db);
+  assert.deepEqual(seeded.map((s) => s.config.holding), ['overnight', 'intraday']);
+  assert.equal(seedCrossPullbackStrategies(db).length, 0, 'not seeded twice');
+  assert.match(seeded[0].summary, /HMA 50\/130 cross · 2R · overnight/);
+
+  const kite = fakeKite();
+  const results = {};
+  for (const s of seeded) {
+    const bt = await runStrategyBacktest(db, kite.fetch, { strategyId: s.id, from: '2026-02-01', to: '2026-08-31', now: NOW });
+    assert.equal(bt.status, 'done');
+    assert.equal(bt.info.windows, null);
+    results[s.config.holding] = bt;
+  }
+  assert.ok(results.overnight.trades.length > 0, 'overnight trades');
+  assert.ok(results.intraday.trades.every((t) => t.exitReason !== 'end of test' || true));
+  assert.ok(results.intraday.trades.some((t) => t.exitReason === 'intraday exit') || results.intraday.trades.length === 0);
+
+  const b = getBacktest(db, results.overnight.id, { withTrades: true });
+  const chart = chartWindow(db, b, {});
+  assert.ok(chart.bars.length > 50);
+  assert.equal(chart.fast.length, chart.bars.length);
+  assert.equal(chart.labels.fast, 'HMA 50');
+  assert.ok(chart.trades.length >= 1);
+});

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import StrategyService, { BacktestService } from '../../services/StrategyService';
+import TradeChart from './TradeChart';
 
 const IST = 'Asia/Kolkata';
 const fmtDateTime = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
@@ -18,13 +19,13 @@ const price = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFr
 const pct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—');
 const tone = (v) => (v > 0 ? 'gb-pos' : v < 0 ? 'gb-neg' : '');
 
-const exitLabel = (reason) => {
-  if (reason === 'target') return 'Target';
-  if (reason === 'stop loss') return 'Stop';
-  if (reason === 'expiry') return 'Expiry';
-  return 'Reversal';
+const EXIT_LABELS = {
+  target: 'Target', stop: 'Stop', 'stop loss': 'Stop', expiry: 'Expiry', reversal: 'Reversal',
+  'intraday exit': 'Day close', 'end of test': 'Still open',
 };
-const setupLabel = (name = '') => name.replace(/^(\w+) /, '$1 · ');
+const exitLabel = (reason) => EXIT_LABELS[reason] || 'Reversal';
+// Weekly Levels names are "Mid Rising Long" -> "Mid · Rising Long"; Cross Pullback names already have a separator.
+const setupLabel = (name = '') => (name.includes('·') ? name : name.replace(/^(\w+) /, '$1 · '));
 
 const PERIODS = [
   { id: '3m', label: 'Last 3 months', months: 3 },
@@ -70,7 +71,9 @@ function EquityChart({ equity }) {
       <div className="gb-chart-plot">
         <div className="gb-chart-y" aria-hidden="true">
           <span style={{ top: `${(geo.y(geo.max) / H) * 100}%` }}>{signed(geo.max)}</span>
-          {geo.min < 0 && geo.max > 0 && <span style={{ top: `${(geo.zeroY / H) * 100}%` }}>0</span>}
+          {geo.min < 0 && geo.max > 0 && Math.min(geo.zeroY - geo.y(geo.max), geo.y(geo.min) - geo.zeroY) > H * 0.1 && (
+            <span style={{ top: `${(geo.zeroY / H) * 100}%` }}>0</span>
+          )}
           <span style={{ top: `${(geo.y(geo.min) / H) * 100}%` }}>{signed(geo.min)}</span>
         </div>
         <div
@@ -118,6 +121,7 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [showAll, setShowAll] = useState(false);
+  const [selected, setSelected] = useState(null); // entryTs of the trade shown on the chart
 
   useEffect(() => {
     StrategyService.list()
@@ -140,7 +144,7 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
     } catch (e) { setError(e.message); }
   }, []);
 
-  useEffect(() => { setResult(null); setShowAll(false); loadHistory(strategyId, true); }, [strategyId, loadHistory]);
+  useEffect(() => { setResult(null); setShowAll(false); setSelected(null); loadHistory(strategyId, true); }, [strategyId, loadHistory]);
 
   const range = useMemo(() => {
     if (period === 'custom') return custom;
@@ -155,6 +159,7 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
       const r = await BacktestService.run(strategyId, range.from, range.to);
       setResult(r);
       setShowAll(false);
+      setSelected(null);
       loadHistory(strategyId, false);
     } catch (e) {
       setError(e.message);
@@ -174,7 +179,7 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
 
   const open = async (id) => {
     setError(null);
-    try { setResult(await BacktestService.get(id)); setShowAll(false); } catch (e) { setError(e.message); }
+    try { setResult(await BacktestService.get(id)); setShowAll(false); setSelected(null); } catch (e) { setError(e.message); }
   };
 
   const remove = async (id) => {
@@ -190,10 +195,11 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
   const m = result?.metrics;
   const trades = useMemo(() => (result?.trades ? [...result.trades].reverse() : []), [result]);
   const visible = showAll ? trades : trades.slice(0, 25);
+  const selectedTrade = trades.find((t) => t.entryTs === selected) || trades[0] || null;
   const summary = useMemo(() => (result?.summary ? [...result.summary].sort((a, b) => b.points - a.points) : []), [result]);
 
   const subtitle = result
-    ? `Same engine as live signals · ${fmtDate(Date.parse(result.from))} – ${fmtDate(Date.parse(result.to))} · ${result.info.windows} weeks${result.info.skipped.length ? `, ${result.info.skipped.length} skipped` : ''} · ${(result.info.totalMs / 1000).toFixed(1)} s`
+    ? `Same engine as live signals · ${fmtDate(Date.parse(result.from))} – ${fmtDate(Date.parse(result.to))}${result.info.windows ? ` · ${result.info.windows} weeks${result.info.skipped.length ? `, ${result.info.skipped.length} skipped` : ''}` : ''}${result.info.setups != null ? ` · ${result.info.setups} crosses` : ''} · ${(result.info.totalMs / 1000).toFixed(1)} s`
     : 'Same engine as live signals. Candles are cached, so reruns take seconds.';
 
   return (
@@ -271,6 +277,16 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
             </div>
           </section>
 
+          {selectedTrade && (
+            <section aria-labelledby="tchart" className="gb-section">
+              <div className="gb-section-head">
+                <h2 id="tchart" className="gb-h2">Trade on the chart</h2>
+                <span className="gb-muted">Click a trade below to see it here</span>
+              </div>
+              <TradeChart backtestId={result.id} trade={selectedTrade} />
+            </section>
+          )}
+
           <div className="gb-bt-grid">
             <section aria-labelledby="bysetup" className="gb-section gb-bt-setups">
               <h2 id="bysetup" className="gb-h2">By setup</h2>
@@ -303,7 +319,14 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
                   <tbody>
                     {visible.length === 0 && <tr><td colSpan="6" className="gb-muted">No trades in this period</td></tr>}
                     {visible.map((t) => (
-                      <tr key={`${t.entryTs}-${t.setupKey}`}>
+                      <tr
+                        key={`${t.entryTs}-${t.setupKey}`}
+                        className={`gb-tr-click${selectedTrade?.entryTs === t.entryTs ? ' sel' : ''}`}
+                        onClick={() => { setSelected(t.entryTs); document.getElementById('tchart')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(t.entryTs); } }}
+                        aria-selected={selectedTrade?.entryTs === t.entryTs}
+                      >
                         <td>{fmtDateTime(t.entryTs)}</td>
                         <td className="gb-l">{setupLabel(t.setupName)}</td>
                         <td className="gb-hide-sm">{price(t.entryPrice)}</td>
