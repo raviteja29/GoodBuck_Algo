@@ -4,10 +4,11 @@ import { BacktestService } from '../../services/StrategyService';
 const IST = 'Asia/Kolkata';
 const fmtTime = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
 const fmtDay = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: '2-digit', month: 'short' }).format(new Date(ms));
+const vsText = (d) => `${Math.abs(d).toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${d >= 0 ? 'above' : 'below'}`;
 const px = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—');
 
 // Colours: candles up/down; fast line yellow and slow line white, like the user's own charts.
-const C = { up: '#30D158', down: '#FF453A', fast: '#FFD60A', slow: '#E5E5EA', stop: '#FF453A', target: '#30D158', touch: '#64D2FF', grid: '#38383A' };
+const C = { up: '#30D158', down: '#FF453A', fast: '#FFD60A', slow: '#E5E5EA', overlay: '#FF9F0A', stop: '#FF453A', target: '#30D158', touch: '#64D2FF', grid: '#38383A' };
 
 /**
  * 15-minute candles around one trade, with both trend lines, every trade in view,
@@ -41,7 +42,7 @@ export default function TradeChart({ backtestId, trade }) {
     const y = (v) => ((hi - v) / (hi - lo)) * H;
     const idxOf = (ts) => { const k = data.bars.findIndex((b) => b.t >= ts); return k < 0 ? n - 1 : k; };
     const line = (arr) => arr.map((v, i) => (Number.isFinite(v) ? `${x(i).toFixed(1)},${y(v).toFixed(1)}` : null)).filter(Boolean).join(' ');
-    return { W, H, n, step, x, y, lo, hi, idxOf, fastLine: line(data.fast), slowLine: line(data.slow) };
+    return { W, H, n, step, x, y, lo, hi, idxOf, fastLine: line(data.fast), slowLine: line(data.slow), overlayLine: data.overlay ? line(data.overlay) : null };
   }, [data, trade]);
 
   if (error) return <div className="gb-note gb-note-error" role="alert">{error}</div>;
@@ -70,12 +71,19 @@ export default function TradeChart({ backtestId, trade }) {
         <div className="gb-tc-legend">
           <span><i style={{ background: C.fast }} />{data.labels.fast}</span>
           <span><i style={{ background: C.slow }} />{data.labels.slow}</span>
+          {data.labels.overlay && <span><i style={{ background: C.overlay }} />{data.labels.overlay}</span>}
           {sel && <span><i style={{ background: C.stop }} />Stop</span>}
           {sel && <span><i style={{ background: C.target }} />Target</span>}
           {sel?.touchPoint != null && <span><i style={{ background: C.touch }} />Touch point</span>}
         </div>
         {sel && <span className="gb-muted">{sel.setupName} · {fmtTime(sel.entryTs)} → {fmtTime(sel.exitTs)} · {sel.exitReason}</span>}
       </div>
+      {sel?.overlay && (
+        <div className="gb-tc-ma">
+          <span><b>{sel.overlay.label}</b> at entry <b>{px(sel.overlay.atEntry)}</b>{sel.overlay.entryVsLine != null && <> · price {vsText(sel.overlay.entryVsLine)}</>}</span>
+          <span>at exit ({sel.exitReason}) <b>{px(sel.overlay.atExit)}</b>{sel.overlay.exitVsLine != null && <> · price {vsText(sel.overlay.exitVsLine)}</>}</span>
+        </div>
+      )}
       <div className="gb-tc-plot">
         <div className="gb-tc-area" ref={area} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
           <svg
@@ -95,6 +103,7 @@ export default function TradeChart({ backtestId, trade }) {
                 </g>
               );
             })}
+            {geo.overlayLine && <polyline points={geo.overlayLine} fill="none" stroke={C.overlay} strokeWidth="1.6" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />}
             <polyline points={geo.slowLine} fill="none" stroke={C.slow} strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
             <polyline points={geo.fastLine} fill="none" stroke={C.fast} strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
           </svg>
@@ -131,6 +140,7 @@ export default function TradeChart({ backtestId, trade }) {
                 <span>L {px(h.l)} · C {px(h.c)}</span>
                 <span style={{ color: C.fast }}>{data.labels.fast} {px(data.fast[hover])}</span>
                 <span>{data.labels.slow} {px(data.slow[hover])}</span>
+                {data.overlay && <span style={{ color: C.overlay }}>{data.labels.overlay} {px(data.overlay[hover])}</span>}
               </div>
             </>
           )}

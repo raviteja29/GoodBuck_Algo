@@ -57,6 +57,9 @@ export const DEFAULT_CROSS_CONFIG = Object.freeze({
   session: { start: '09:15', end: '15:30', exitTime: '15:15' },
   risk: { lots: 1, lotSize: 1 },
   alerts: { touch: true },
+  // Analysis only: drawn on the trade chart and recorded on each trade (value at
+  // entry / exit). It does NOT affect entries or exits.
+  overlay: { enabled: true, type: 'sma', period: 50 },
 });
 
 export const STRATEGY_TYPES = [
@@ -137,9 +140,13 @@ function normalizeCrossPullback(src) {
     session: { ...d.session, ...(src.session || {}) },
     risk: { ...d.risk, ...(src.risk || {}) },
     alerts: { ...d.alerts, ...(src.alerts || {}) },
+    overlay: { ...d.overlay, ...(src.overlay || {}) },
   };
   checkInstrument(config, err);
   checkTrend(config, err);
+  config.overlay.enabled = !!config.overlay.enabled;
+  if (!INDICATOR_TYPES.includes(config.overlay.type)) err('overlay.type', 'Chart line must be SMA or HMA');
+  if (!isInt(config.overlay.period, 2, 1000)) err('overlay.period', 'Chart line period must be 2–1000');
   const r = Number(config.exits.targetR);
   if (!Number.isFinite(r) || r < 0.5 || r > 20) err('exits.targetR', 'Target must be 0.5–20 × risk');
   config.exits.targetR = Math.round(r * 100) / 100;

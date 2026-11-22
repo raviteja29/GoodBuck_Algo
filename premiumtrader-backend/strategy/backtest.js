@@ -13,7 +13,7 @@ import {
   buildWeeklyWindows, formatCandleTimestamp, getCandleSessionMinutes,
   normalizeCandle, parseCandleTime, toInputDate, addDays,
 } from './session.js';
-import { DEFAULT_CONFIG, toMinutes } from './config.js';
+import { DEFAULT_CONFIG, INDICATOR_LABEL, toMinutes } from './config.js';
 import { runCrossPullback } from './rules/crossPullback.js';
 
 // Windows are built from local calendar dates (buildWeeklyWindows), so key them
@@ -149,11 +149,67 @@ export function runBacktest({ candles, from, to, config = DEFAULT_CONFIG, setupK
  * other types have their own engine but share the summary and metrics.
  */
 export function runStrategy({ candles, from, to, config }) {
+  let result;
   if (config.type === 'hma-cross-pullback') {
     const { trades, setups } = runCrossPullback({ candles, from, to, config });
-    return { trades, summary: buildSummary(trades), metrics: buildMetrics(trades), skipped: [], setups };
+    result = { trades, summary: buildSummary(trades), metrics: buildMetrics(trades), skipped: [], setups };
+  } else {
+    result = runBacktest({ candles, from, to, config });
   }
-  return runBacktest({ candles, from, to, config });
+  if (config.overlay?.enabled) {
+    annotateWithOverlay(result.trades, candles, config.overlay);
+    result.overlaySummary = buildOverlaySummary(result.trades, config.overlay);
+  }
+  return result;
+}
+
+const overlayLabel = (o) => `${INDICATOR_LABEL[o.type]} ${o.period}`;
+
+/**
+ * Analysis only: record the overlay line (e.g. SMA 50) on each trade - its value
+ * at the last COMPLETED bar before the entry bar and before the exit bar (the
+ * same convention the entry line uses) - and where price was relative to it.
+ */
+export function annotateWithOverlay(trades, candles, overlay) {
+  const bars = candles.map(normalizeCandle).filter((c) => Number.isFinite(c.close))
+    .map((c) => ({ ...c, ts: parseCandleTime(c.time).getTime() }))
+    .sort((a, b) => a.ts - b.ts);
+  const series = computeTrendSeries(bars, overlay.type, overlay.period);
+  const indexAt = (ts) => { // first bar with ts >= target (binary search)
+    let lo = 0, hi = bars.length - 1, ans = bars.length - 1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (bars[mid].ts >= ts) { ans = mid; hi = mid - 1; } else lo = mid + 1; }
+    return ans;
+  };
+  const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  for (const t of trades) {
+    const atEntry = r2(series[indexAt(t.entryTs) - 1]);
+    const atExit = r2(series[indexAt(t.exitTs) - 1]);
+    t.overlay = {
+      label: overlayLabel(overlay),
+      atEntry,
+      atExit,
+      entryVsLine: atEntry == null ? null : r2(t.entryPrice - atEntry), // + = price above the line
+      exitVsLine: atExit == null ? null : r2(t.exitPrice - atExit),
+    };
+  }
+}
+
+/** Results grouped by side and whether the entry was above or below the overlay line. */
+export function buildOverlaySummary(trades, overlay) {
+  const label = overlayLabel(overlay);
+  const groups = new Map();
+  for (const t of trades) {
+    const v = t.overlay?.entryVsLine;
+    if (v == null) continue;
+    const where = v >= 0 ? 'above' : 'below';
+    const key = `${t.side}-${where}`;
+    if (!groups.has(key)) groups.set(key, { key, side: t.side, where, name: `${t.side === 'short' ? 'Short' : 'Long'} · entry ${where} ${label}`, trades: [] });
+    groups.get(key).trades.push(t);
+  }
+  return [...groups.values()].map(({ trades: ts, ...g }) => {
+    const m = buildMetrics(ts);
+    return { ...g, label, trades: m.trades, winRate: m.winRate, points: m.points, avgPoints: m.trades ? m.points / m.trades : 0 };
+  }).sort((a, b) => (a.side + a.where).localeCompare(b.side + b.where));
 }
 
 export function buildSummary(trades) {

@@ -430,6 +430,33 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
           </section>
           )}
 
+          {config.overlay && (
+          <section className="gb-form-group">
+            <h2>Analysis</h2>
+            <div className="gb-rows">
+              <SwitchRow
+                id="sb-overlay"
+                label="Moving average on the chart"
+                hint="Drawn on the trade chart and recorded at each entry and exit — doesn't change any trade"
+                checked={config.overlay.enabled}
+                onChange={(v) => update('overlay.enabled', v)}
+              />
+              {config.overlay.enabled && (
+                <Row label="Line" error={errors['overlay.type'] || errors['overlay.period']} htmlFor="sb-overlay-period">
+                  <div className="gb-trend-line">
+                    <div role="radiogroup" aria-label="Chart line indicator" className="gb-segmented">
+                      {['sma', 'hma'].map((type) => (
+                        <button key={type} type="button" role="radio" aria-checked={config.overlay.type === type} onClick={() => update('overlay.type', type)}>{type.toUpperCase()}</button>
+                      ))}
+                    </div>
+                    <input id="sb-overlay-period" type="number" min="2" max="1000" step="1" aria-label="Chart line period" value={config.overlay.period} onChange={(e) => update('overlay.period', e.target.value === '' ? '' : Number(e.target.value))} />
+                  </div>
+                </Row>
+              )}
+            </div>
+          </section>
+          )}
+
           <section className="gb-form-group">
             <h2>Position size</h2>
             <div className="gb-rows">
