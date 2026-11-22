@@ -52,7 +52,9 @@ export const DEFAULT_CROSS_CONFIG = Object.freeze({
   // overnight: exit only on stop / target / reversal. intraday: also flat at
   // session.exitTime, no entries until session.start the next day.
   holding: 'overnight',
-  session: { start: '09:15', exitTime: '15:15' },
+  // Trading hours: trades are placed/exited only in [start, end). The setup and
+  // touch points are read from the whole chart (GIFT NIFTY trades ~06:30-02:45).
+  session: { start: '09:15', end: '15:30', exitTime: '15:15' },
   risk: { lots: 1, lotSize: 1 },
   alerts: { touch: true },
 });
@@ -143,8 +145,10 @@ function normalizeCrossPullback(src) {
   config.exits.targetR = Math.round(r * 100) / 100;
   config.reentry = !!config.reentry;
   if (!HOLDING_MODES.includes(config.holding)) err('holding', 'Holding must be overnight or intraday');
-  if (checkTimes(config.session, ['start', 'exitTime'], err) && toMinutes(config.session.start) >= toMinutes(config.session.exitTime)) {
-    err('session.exitTime', 'Intraday exit must be after the start time');
+  if (checkTimes(config.session, ['start', 'end', 'exitTime'], err)) {
+    const [st, en, ex] = ['start', 'end', 'exitTime'].map((k) => toMinutes(config.session[k]));
+    if (st >= en) err('session.end', 'Trading hours must end after they start');
+    else if (ex <= st || ex > en) err('session.exitTime', 'Intraday close must be within trading hours');
   }
   checkRisk(config, err);
   config.alerts.touch = !!config.alerts.touch;

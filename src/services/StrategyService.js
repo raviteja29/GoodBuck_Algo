@@ -80,7 +80,8 @@ export function describeInWords(config, setupCatalogue = []) {
       `the target is ${config.exits.targetR}× the risk.`,
       config.reentry ? 'After a target, short again each time price returns to that first touch price, until the stop is breached or the next cross.' : 'One trade per cross.',
       'Longs are the mirror image, and an opposite entry closes the open trade and reverses.',
-      config.holding === 'intraday' ? `Everything is closed at ${config.session.exitTime}; no new entries until ${config.session.start}.` : 'Trades are held overnight until stop, target or reversal.',
+      `Touch points come from the whole chart (night session included), but trades are only placed between ${config.session.start} and ${config.session.end || '15:30'}; a touch outside those hours is traded when price returns to it.`,
+      config.holding === 'intraday' ? `Everything is closed at ${config.session.exitTime}.` : 'Trades are held overnight until stop, target or reversal.',
     ].join(' ');
   }
   const tf = timeframeLabel(config.timeframe);

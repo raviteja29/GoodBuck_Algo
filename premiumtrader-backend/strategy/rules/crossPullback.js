@@ -17,6 +17,16 @@
  *  6. Reversal: an open trade is closed when the opposite setup's entry fires.
  *  7. Intraday mode: flat at session.exitTime; no entries until session.start.
  *
+ * CHART HOURS vs TRADING HOURS. GIFT NIFTY trades ~06:30-02:45 IST, and the
+ * strategy reads that whole chart: crosses, the stop, the first touch (the
+ * touch point) and stop breaches all happen on every bar. Trades, however, are
+ * only placed and exited during trading hours [session.start, session.end):
+ *  - a first touch outside trading hours still fixes the touch point; the first
+ *    trade is then taken in trading hours when price returns to that point;
+ *  - a stop breach at any hour ends the setup (no more re-entries);
+ *  - an open trade can only be exited in trading hours: at the first bar of the
+ *    session it exits at the open if price is already past its stop or target.
+ *
  * Intrabar order on historical candles is unknown, so the backtest is
  * deliberately conservative:
  *  - a stop that is reachable in the same bar as a target is taken first;
@@ -117,22 +127,27 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
     pos = null;
   };
 
+  const endMin = toMinutes(config.session.end || '15:30');
+  const touched = (side, b, price) => (side === 'short' ? b.high >= price : b.low <= price);
+  const fillAt = (side, b, price) => (side === 'short' ? Math.max(b.open, price) : Math.min(b.open, price));
+  const beyond = (side, price, stop) => (side === 'short' ? price >= stop : price <= stop);
+
   for (let i = 0; i < bars.length; i++) {
     const b = bars[i];
     const mins = istMinutes(b.ts);
-    const entryWindow = !intraday || (mins >= startMin && mins < exitMin);
+    const tradingHours = mins >= startMin && mins < endMin;
+    const entryWindow = tradingHours && (!intraday || mins < exitMin);
     let exitedThisBar = false;
 
-    // 1. Manage the open trade (levels fixed since the last close).
-    if (pos) {
+    // 1. Manage the open trade - only possible during trading hours.
+    if (pos && tradingHours) {
       const short = pos.side === 'short';
-      if (intraday && !entryWindow) {
+      if (intraday && mins >= exitMin) {
         close(b.open, i, 'intraday exit');
         exitedThisBar = true;
-      } else if (short ? b.high >= pos.stop : b.low <= pos.stop) {
-        const gap = short ? b.open >= pos.stop : b.open <= pos.stop;
+      } else if (touched(pos.side, b, pos.stop)) {
         const sid = pos.setupId;
-        close(gap ? b.open : pos.stop, i, 'stop');
+        close(beyond(pos.side, b.open, pos.stop) ? b.open : pos.stop, i, 'stop');
         if (setup && setup.id === sid) setup.dead = true;
         exitedThisBar = true;
       } else if (i > pos.entryIndex && (short ? b.low <= pos.target : b.high >= pos.target)) {
@@ -140,35 +155,55 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
         close(gap ? b.open : pos.target, i, 'target');
         exitedThisBar = true;
       }
+    } else if (pos && intraday) {
+      // Intraday trades never stay open outside trading hours (safety net; normally closed at exitMin).
+      close(b.open, i, 'intraday exit');
+      exitedThisBar = true;
     }
 
-    // 2. Entries for the live setup: first touch of the fast line, then re-entries at the touch point.
-    if (setup && !setup.dead && entryWindow && !exitedThisBar && (!pos || pos.side !== setup.side)) {
-      const short = setup.side === 'short';
-      const first = setup.phase === 'first';
-      const trigger = first ? fast[i - 1] : setup.touch;
-      if ((first || config.reentry) && Number.isFinite(trigger) && (short ? b.high >= trigger : b.low <= trigger)) {
-        const fill = short ? Math.max(b.open, trigger) : Math.min(b.open, trigger);
-        if (short ? fill >= setup.stop : fill <= setup.stop) {
-          setup.dead = true; // price is already through the stop: the setup is broken
-        } else {
-          if (pos) close(fill, i, 'reversal');
-          if (first) {
+    // 2. The live setup, on the full chart.
+    if (setup && !setup.dead) {
+      const { side } = setup;
+      const canTrade = entryWindow && !exitedThisBar && (!pos || pos.side !== side);
+      const enter = (fill, kind) => {
+        if (pos) close(fill, i, 'reversal');
+        pos = { side, kind, entry: fill, entryTs: b.ts, entryIndex: i, stop: setup.stop, target: setup.target, touch: setup.touch, setupId: setup.id };
+        // Conservative: if this bar also reached the stop, assume it came after the entry.
+        if (touched(side, b, setup.stop)) {
+          close(setup.stop, i, 'stop');
+          setup.dead = true;
+        }
+      };
+
+      if (setup.phase === 'first') {
+        // First touch of the fast line (value at the last completed bar) - at any hour.
+        const line = fast[i - 1];
+        if (Number.isFinite(line) && touched(side, b, line)) {
+          const fill = fillAt(side, b, line);
+          if (beyond(side, fill, setup.stop)) {
+            setup.dead = true; // already through the stop: the setup is broken
+          } else {
             setup.touch = fill;
-            setup.target = short ? fill - R * (setup.stop - fill) : fill + R * (fill - setup.stop);
+            setup.touchTs = b.ts;
+            setup.target = side === 'short' ? fill - R * (setup.stop - fill) : fill + R * (fill - setup.stop);
             setup.phase = 'armed';
-          }
-          pos = {
-            side: setup.side, kind: first ? 'first' : 'reentry', entry: fill, entryTs: b.ts, entryIndex: i,
-            stop: setup.stop, target: setup.target, touch: setup.touch, setupId: setup.id,
-          };
-          // Conservative: if this bar also reached the stop, assume it came after the entry.
-          if (short ? b.high >= setup.stop : b.low <= setup.stop) {
-            close(setup.stop, i, 'stop');
-            setup.dead = true;
+            if (canTrade) enter(fill, 'first');
+            else setup.firstPending = true; // touched outside trading hours: trade it at the touch point later
           }
         }
+      } else if (canTrade && (setup.firstPending || config.reentry) && touched(side, b, setup.touch)) {
+        const fill = fillAt(side, b, setup.touch);
+        if (beyond(side, fill, setup.stop)) {
+          setup.dead = true;
+        } else {
+          const kind = setup.firstPending ? 'first' : 'reentry';
+          setup.firstPending = false;
+          enter(fill, kind);
+        }
       }
+
+      // A stop breach on the chart - at any hour - ends the setup.
+      if (setup && !setup.dead && touched(side, b, setup.stop)) setup.dead = true;
     }
 
     // 3. Bar close: detect a cross and start a new setup.
@@ -180,7 +215,7 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
         const sloped = bear ? fast[i] < fast[i - 1] : fast[i] > fast[i - 1];
         const windowStart = lastCross >= 0 ? lastCross + 1 : 1;
         setup = sloped
-          ? { id: ++seq, side, phase: 'first', stop: swingStop(side, bars, fast, slow, windowStart, i), touch: null, target: null, dead: false, crossTs: b.ts }
+          ? { id: ++seq, side, phase: 'first', stop: swingStop(side, bars, fast, slow, windowStart, i), touch: null, touchTs: null, target: null, dead: false, firstPending: false, crossTs: b.ts }
           : null;
         if (setup) setups.push(setup);
         lastCross = i;

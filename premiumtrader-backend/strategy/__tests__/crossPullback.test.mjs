@@ -131,7 +131,7 @@ test('config: defaults, validation, summary', () => {
   assert.deepEqual(c.errors, []);
   assert.deepEqual(c.config, JSON.parse(JSON.stringify(DEFAULT_CROSS_CONFIG)));
   assert.equal(describeConfig(c.config), 'GIFTNIFTY · 15m · HMA 50/130 cross · 2R · overnight');
-  const bad = normalizeConfig({ type: 'hma-cross-pullback', exits: { targetR: 0 }, holding: 'weekly', session: { start: '16:00', exitTime: '15:15' } });
+  const bad = normalizeConfig({ type: 'hma-cross-pullback', exits: { targetR: 0 }, holding: 'weekly', session: { start: '09:15', end: '15:30', exitTime: '16:00' } });
   const fields = bad.errors.map((e) => e.field);
   for (const f of ['exits.targetR', 'holding', 'session.exitTime']) assert.ok(fields.includes(f), f);
   assert.ok(normalizeConfig({ type: 'nope' }).errors.some((e) => e.field === 'type'));
@@ -155,4 +155,64 @@ test('runs end to end on generated candles with real HMAs', () => {
   }
   const keys = new Set(r.summary.map((s) => s.setupKey));
   assert.ok([...keys].every((k) => /^(short|long)-(first|reentry)$/.test(k)));
+});
+
+// ---------- chart hours vs trading hours (GIFT NIFTY trades ~06:30-02:45) ----------
+
+test('first touch outside trading hours fixes the touch point; the trade waits for trading hours and that price', () => {
+  // The user's 20 Nov example: the first touch happens overnight at 25,455; by 09:15
+  // the fast line is at 25,361, but the trade must still be at 25,455.
+  const rows = [
+    [25600, 25700, 25550, 25650, 25600, 25500], // 0  20:00 both rising
+    [25650, 25800, 25600, 25700, 25610, 25510], // 1  20:15 both rising - swing high 25,800
+    [25700, 25720, 25500, 25520, 25560, 25515], // 2  20:30 fast turns down
+    [25520, 25530, 25400, 25420, 25490, 25518], // 3  20:45 bear cross -> short setup, stop 25,800
+    [25420, 25450, 25380, 25400, 25455, 25519], // 4  21:00 trigger 25,490: no touch
+    [25400, 25470, 25390, 25440, 25440, 25519], // 5  21:15 trigger 25,455: TOUCH (outside hours) -> touch point 25,455
+  ];
+  // ...then overnight bars, then the next morning:
+  const t0 = Date.parse('2026-11-19T20:00:00+05:30');
+  const candles = rows.map(([o, h, l, c], i) => ({ time: t0 + i * 900000, open: o, high: h, low: l, close: c }));
+  const fastS = rows.map((r) => r[4]);
+  const slowS = rows.map((r) => r[5]);
+  const morning = Date.parse('2026-11-20T09:15:00+05:30');
+  const next = [
+    [25350, 25380, 25300, 25361, 25361, 25520], // 09:15 fast line now 25,361 - NOT a trade (price below 25,455)
+    [25361, 25420, 25340, 25400, 25365, 25520], // 09:30 still below 25,455
+    [25400, 25460, 25390, 25430, 25370, 25520], // 09:45 reaches 25,455 -> SHORT at 25,455
+  ];
+  next.forEach(([o, h, l, c, f, sl], k) => { candles.push({ time: morning + k * 900000, open: o, high: h, low: l, close: c }); fastS.push(f); slowS.push(sl); });
+
+  for (const holding of ['overnight', 'intraday']) {
+    const r = runCrossPullback({ candles, from: '2026-11-01', to: '2026-11-30', config: cfg({ holding }), series: { fast: fastS, slow: slowS } });
+    assert.equal(r.trades.length, 1, holding);
+    const t = r.trades[0];
+    assert.equal(t.setupKey, 'short-first');
+    assert.equal(t.entryPrice, 25455, `${holding}: entry at the overnight touch point, not the 09:15 line`);
+    assert.equal(t.touchPoint, 25455);
+    assert.equal(t.stop, 25800);
+    assert.equal(new Date(t.entryTs).toISOString(), '2026-11-20T04:15:00.000Z', 'entered at 09:45 IST');
+  }
+});
+
+test('stop breached outside trading hours ends the setup; open trades exit at the next session open', () => {
+  const rows = [...SHORT.slice(0, 8)]; // from 10:00 IST: bar 7 (11:45) shorts at 102, stop 130
+  const t0 = Date.parse('2026-03-02T10:00:00+05:30');
+  const candles = rows.map(([o, h, l, c], i) => ({ time: t0 + i * 900000, open: o, high: h, low: l, close: c }));
+  const fastS = rows.map((r) => r[4]);
+  const slowS = rows.map((r) => r[5]);
+  // Overnight bar at 22:00 breaches the stop (130) and comes back; next morning opens at 140.
+  candles.push({ time: Date.parse('2026-03-02T22:00:00+05:30'), open: 100, high: 135, low: 99, close: 110 }); fastS.push(99); slowS.push(104);
+  candles.push({ time: Date.parse('2026-03-03T09:15:00+05:30'), open: 140, high: 141, low: 100, close: 120 }); fastS.push(98); slowS.push(104);
+  const r = runCrossPullback({ candles, from: '2026-01-01', to: '2026-12-31', config: cfg(), series: { fast: fastS, slow: slowS } });
+  assert.deepEqual(r.trades.map(brief), [['short-first', 102, 140, 'stop']], 'no exit at night; exits at the 09:15 open past the stop');
+
+  // Flat setup: an overnight breach kills further re-entries.
+  const flat = [...SHORT.slice(0, 9)]; // short 102 -> target 46 at bar 8 (12:00)
+  const c2 = flat.map(([o, h, l, c], i) => ({ time: t0 + i * 900000, open: o, high: h, low: l, close: c }));
+  const f2 = flat.map((x) => x[4]); const s2 = flat.map((x) => x[5]);
+  c2.push({ time: Date.parse('2026-03-02T22:00:00+05:30'), open: 100, high: 131, low: 99, close: 100 }); f2.push(97); s2.push(104);
+  c2.push({ time: Date.parse('2026-03-03T09:15:00+05:30'), open: 95, high: 103, low: 94, close: 100 }); f2.push(96); s2.push(104);
+  const r2 = runCrossPullback({ candles: c2, from: '2026-01-01', to: '2026-12-31', config: cfg(), series: { fast: f2, slow: s2 } });
+  assert.deepEqual(r2.trades.map(brief), [['short-first', 102, 46, 'target']], 'no re-entry at 102 after the overnight breach');
 });
