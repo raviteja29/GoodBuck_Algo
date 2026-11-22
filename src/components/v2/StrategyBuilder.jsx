@@ -374,18 +374,22 @@ const StrategyBuilder = ({ strategyId, onBack, onSaved, onBacktest }) => {
                   ))}
                 </div>
               </Row>
+              <Row label="Trading hours from" hint="Trades are placed and exited only in trading hours" error={errors['session.start']} htmlFor="sb-cp-start">
+                <input id="sb-cp-start" type="time" value={config.session.start} onChange={(e) => update('session.start', e.target.value)} />
+              </Row>
+              <Row label="Trading hours until" error={errors['session.end']} htmlFor="sb-cp-end">
+                <input id="sb-cp-end" type="time" value={config.session.end} onChange={(e) => update('session.end', e.target.value)} />
+              </Row>
               {config.holding === 'intraday' && (
-                <>
-                  <Row label="Close open trades at" error={errors['session.exitTime']} htmlFor="sb-cp-exit">
-                    <input id="sb-cp-exit" type="time" value={config.session.exitTime} onChange={(e) => update('session.exitTime', e.target.value)} />
-                  </Row>
-                  <Row label="New entries from" hint="Each day; none between the close time and this" error={errors['session.start']} htmlFor="sb-cp-start">
-                    <input id="sb-cp-start" type="time" value={config.session.start} onChange={(e) => update('session.start', e.target.value)} />
-                  </Row>
-                </>
+                <Row label="Close open trades at" error={errors['session.exitTime']} htmlFor="sb-cp-exit">
+                  <input id="sb-cp-exit" type="time" value={config.session.exitTime} onChange={(e) => update('session.exitTime', e.target.value)} />
+                </Row>
               )}
             </div>
-            <p>{config.holding === 'overnight' ? 'Overnight: a trade stays open until its stop, target or a reversal.' : 'Intraday: same rules, but everything is closed at the end of the day.'}</p>
+            <p>
+              The setup, touch point and stop are read from the whole {config.instrument.symbol || ''} chart, including the night session; trades happen only in trading hours.
+              {' '}{config.holding === 'overnight' ? 'Overnight: a trade stays open until its stop, target or a reversal.' : 'Intraday: everything is closed at the close time each day.'}
+            </p>
           </section>
           )}
 
