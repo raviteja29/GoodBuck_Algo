@@ -78,11 +78,12 @@ export function describeInWords(config, setupCatalogue = []) {
       `On the ${tf} ${config.instrument.symbol || ''} chart: when ${f}, sloping down, crosses below ${sl}, wait for price to rise back to ${f} and go short the moment it touches.`,
       'The stop is the highest price while both lines were rising since the previous cross;',
       `the target is ${config.exits.targetR}× the risk.`,
+      config.exits.afterStop === 'red-candle' ? 'If the stop is breached the trade is held: it exits only if price passes the high of the first red candle after the breach, otherwise it runs to the target, and an opposite cross no longer reverses it.' : '',
       config.reentry ? 'After a target, short again each time price returns to that first touch price, until the stop is breached or the next cross.' : 'One trade per cross.',
       'Longs are the mirror image, and an opposite entry closes the open trade and reverses.',
       `Touch points come from the whole chart (night session included), but trades are only placed between ${config.session.start} and ${config.session.end || '15:30'}; a touch outside those hours is traded when price returns to it.`,
       config.holding === 'intraday' ? `Everything is closed at ${config.session.exitTime}.` : 'Trades are held overnight until stop, target or reversal.',
-    ].join(' ');
+    ].filter(Boolean).join(' ');
   }
   const tf = timeframeLabel(config.timeframe);
   const chosen = setupCatalogue.filter((s) => config.setups.includes(s.key));

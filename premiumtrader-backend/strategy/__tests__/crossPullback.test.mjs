@@ -343,3 +343,55 @@ test('touch point = the live HMA 50 at the moment price meets it (not the last c
   const differs = firsts.some((t) => { const i = candles.findIndex((c) => c.time === t.touchTs); return Math.abs(r.series.fast[i - 1] - t.touchPoint) > 0.5; });
   assert.ok(differs, 'live touch differs from the previous-bar HMA');
 });
+
+// ---------- Red-candle stop ----------
+const RED = { exits: { targetR: 2, afterStop: 'red-candle' } };
+const upToReentry = SHORT.slice(0, 11); // ... short re-entry at 102 on row 10 (stop 130, target 46)
+
+test('red-candle stop: breach does not exit; passing the first red candle high exits there and ends the setup', () => {
+  const rows = [
+    ...upToReentry,
+    [100, 131, 99, 120, 94, 104],  // 11 breaches 130 - green, keep holding
+    [120, 140, 118, 125, 93, 104], // 12 green
+    [125, 135, 115, 118, 93, 104], // 13 first red candle after the breach -> level 135
+    [118, 134, 110, 130, 93, 104], // 14 high 134 < 135 -> hold
+    [130, 136, 128, 133, 93, 104], // 15 passes 135 -> exit at 135
+    [100, 105, 95, 100, 93, 104],  // 16 touch point again - setup finished, no trade
+  ];
+  const r = run(rows, cfg(RED));
+  assert.deepEqual(r.trades.map(brief), [
+    ['short-first', 102, 46, 'target'],
+    ['short-reentry', 102, 135, 'red candle'],
+  ]);
+  assert.equal(r.trades[1].redCandleLevel, 135);
+  assert.equal(r.trades[1].points, -33);
+  // The exit-at-stop version of the same chart exits at 130.
+  assert.deepEqual(run(rows).trades.map(brief)[1], ['short-reentry', 102, 130, 'stop']);
+});
+
+test('red-candle stop: if the red candle high is never passed, the trade runs to its 2R target', () => {
+  const rows = [
+    ...upToReentry,
+    [100, 131, 99, 120, 94, 104], // 11 breach
+    [125, 128, 100, 105, 93, 104], // 12 red -> level 128
+    [105, 120, 40, 45, 92, 104],   // 13 low 40 <= 46 -> target
+    [90, 104, 88, 100, 91, 104],   // 14 back at the touch point - setup ended at the breach
+  ];
+  const r = run(rows, cfg(RED));
+  assert.deepEqual(r.trades.map(brief), [
+    ['short-first', 102, 46, 'target'],
+    ['short-reentry', 102, 46, 'target'],
+  ]);
+});
+
+test('red-candle stop: an opposite cross does not reverse a breached short', () => {
+  const rows = [
+    ...upToReentry,
+    [100, 131, 99, 120, 94, 104],     // 11 breach
+    [120, 125, 118, 124, 106, 104],   // 12 fast crosses ABOVE slow (rising) -> long setup
+    [124, 126, 100, 110, 104.5, 104], // 13 would touch the long line (106) - short is active, no long
+    [110, 115, 40, 45, 103, 104],     // 14 short target 46
+  ];
+  const r = run(rows, cfg(RED));
+  assert.deepEqual(r.trades.map(brief).slice(1), [['short-reentry', 102, 46, 'target']]);
+});
