@@ -199,6 +199,8 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
   const visible = showAll ? trades : trades.slice(0, 25);
   const selectedTrade = trades.find((t) => t.entryTs === selected) || trades[0] || null;
   const maLabel = result?.trades?.find((t) => t.overlay)?.overlay.label || null;
+  const maTouch = Boolean(result?.trades?.some((t) => t.overlay?.atTouch != null));
+  const tradeCols = 6 + (maLabel ? 1 : 0);
   const summary = useMemo(() => (result?.summary ? [...result.summary].sort((a, b) => b.points - a.points) : []), [result]);
 
   const subtitle = result
@@ -311,10 +313,10 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
               </div>
               {result.info.overlaySummary?.length > 0 && (
                 <>
-                  <h2 id="bymaline" className="gb-h2" style={{ marginTop: 16 }}>By {result.info.overlaySummary[0].label} at entry</h2>
+                  <h2 id="bymaline" className="gb-h2" style={{ marginTop: 16 }}>By {result.info.overlaySummary[0].label} at {result.info.overlaySummary[0].when || 'entry'}</h2>
                   <div className="gb-card gb-table-wrap">
                     <table className="gb-table" aria-labelledby="bymaline">
-                      <thead><tr><th>Entry was</th><th>Trades</th><th>Win %</th><th>Net</th></tr></thead>
+                      <thead><tr><th>{result.info.overlaySummary[0].when === 'first touch' ? 'First touch was' : 'Entry was'}</th><th>Trades</th><th>Win %</th><th>Net</th></tr></thead>
                       <tbody>
                         {result.info.overlaySummary.map((g) => (
                           <tr key={g.key}>
@@ -339,9 +341,9 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
               </div>
               <div className="gb-card gb-table-wrap">
                 <table className="gb-table">
-                  <thead><tr><th>Entry</th><th className="gb-l">Setup</th><th className="gb-hide-sm">In</th><th className="gb-hide-sm">Out</th><th className="gb-l">Exit</th>{maLabel && <th className="gb-hide-sm">{maLabel} in / out</th>}<th>Pts</th></tr></thead>
+                  <thead><tr><th>Entry</th><th className="gb-l">Setup</th><th className="gb-hide-sm">In</th><th className="gb-hide-sm">Out</th><th className="gb-l">Exit</th>{maLabel && <th className="gb-hide-sm">{maLabel} {maTouch ? 'touch / in / out' : 'in / out'}</th>}<th>Pts</th></tr></thead>
                   <tbody>
-                    {visible.length === 0 && <tr><td colSpan={maLabel ? 7 : 6} className="gb-muted">No trades in this period</td></tr>}
+                    {visible.length === 0 && <tr><td colSpan={tradeCols} className="gb-muted">No trades in this period</td></tr>}
                     {visible.map((t) => (
                       <tr
                         key={`${t.entryTs}-${t.setupKey}`}
@@ -359,9 +361,10 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
                           {exitLabel(t.exitReason)}{t.legs.length > 1 && <span className="gb-muted gb-legs"> · {t.legs.length} legs</span>}
                         </td>
                         {maLabel && (
-                          <td className="gb-hide-sm gb-ma-cell" title={t.overlay ? `Price ${vs(t.overlay.entryVsLine)} the line at entry, ${vs(t.overlay.exitVsLine)} at exit` : ''}>
+                          <td className="gb-hide-sm gb-ma-cell" title={t.overlay ? `${t.overlay.atTouch != null ? `First touch ${fmtDateTime(t.touchTs)}: price ${vs(t.overlay.touchVsLine)} the line. ` : ''}Price ${vs(t.overlay.entryVsLine)} the line at entry, ${vs(t.overlay.exitVsLine)} at exit` : ''}>
                             {t.overlay ? (
                               <>
+                                {maTouch && <span>{price(t.overlay.atTouch)} <small>{vsShort(t.overlay.touchVsLine)}</small></span>}
                                 <span>{price(t.overlay.atEntry)} <small>{vsShort(t.overlay.entryVsLine)}</small></span>
                                 <span className="gb-muted">{price(t.overlay.atExit)} <small>{vsShort(t.overlay.exitVsLine)}</small></span>
                               </>

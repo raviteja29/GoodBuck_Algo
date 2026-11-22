@@ -6,10 +6,13 @@
  *     below the slow line (e.g. HMA 130). Any cross replaces the previous setup.
  *  2. Stop: highest high while BOTH lines were rising since the previous cross;
  *     if there was no such bar, the highest high since the previous cross.
- *  3. First touch: when price rises to the fast line (its value at the last
- *     COMPLETED bar - fixed for the current bar, so live alerts and backtests
- *     agree), go short at that price. That price is the "touch point".
- *     If the fast line turns back up first, keep waiting; no touch = no trade.
+ *  3. First touch: when price rises to the fast line, go short at that price.
+ *     The line is its LIVE value - what the chart shows while the candle is
+ *     still forming (the current price standing in for the close). HMA/SMA are
+ *     linear in the current price, line(p) = a + b*p, so the exact meeting
+ *     price p = a / (1 - b) is known from the OHLC bar. That price is the
+ *     "touch point". If the fast line turns back up first, keep waiting; no
+ *     touch = no trade.
  *  4. Target: touch point - targetR x (stop - touch point).
  *  5. Re-entry: while flat after a target / intraday exit, short again whenever
  *     price touches the same touch point - until the stop is breached or the
@@ -37,7 +40,7 @@
  * the open on a gap). Exits past a stop/target on a gap fill at the open.
  */
 
-import { computeTrendSeries } from '../indicators.js';
+import { computeTrendSeries, liveLineAt, liveMeetingPrice } from '../indicators.js';
 import { normalizeCandle, parseCandleTime, formatCandleTimestamp } from '../session.js';
 
 const IST_MS = 330 * 60000;
@@ -76,7 +79,8 @@ function swingStop(side, bars, fast, slow, from, to) {
  * @param {string} opts.from     YYYY-MM-DD (IST) - only trades entered from here are reported
  * @param {string} opts.to       YYYY-MM-DD (IST)
  * @param {object} opts.config   normalized hma-cross-pullback config
- * @param {object} [opts.series]  { fast, slow } precomputed lines (tests); computed from config otherwise
+ * @param {object} [opts.series]  { fast, slow, liveFast? } precomputed lines (tests); computed from config otherwise.
+ *                                liveFast(i) -> {a, b}; without it an injected series uses a flat line at fast[i-1].
  * @returns {{trades:Array, setups:Array, series:{fast:Array, slow:Array}, bars:Array}}
  */
 export function runCrossPullback({ candles, from, to, config, series = null }) {
@@ -89,6 +93,11 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
   const { fastType = 'hma', fastPeriod, slowType = 'hma', slowPeriod } = config.trend;
   const fast = series?.fast ?? computeTrendSeries(bars, fastType, fastPeriod);
   const slow = series?.slow ?? computeTrendSeries(bars, slowType, slowPeriod);
+  const closes = bars.map((b) => b.close);
+  const liveFast = series?.liveFast
+    ?? (series
+      ? (i) => (Number.isFinite(fast[i - 1]) ? { a: fast[i - 1], b: 0 } : null)
+      : (i) => liveLineAt(closes, fastType, fastPeriod, i));
   const R = config.exits.targetR;
   const intraday = config.holding === 'intraday';
   const startMin = toMinutes(config.session.start);
@@ -96,7 +105,7 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
   const fromMs = Date.parse(`${from}T00:00:00+05:30`);
   const toMs = Date.parse(`${to}T23:59:59.999+05:30`);
 
-  let setup = null; // { id, side, phase: 'first'|'armed', stop, touch, target, dead, crossTs }
+  let setup = null; // { id, side, phase: 'first'|'armed', stop, touch, touchTs, touchMarket, target, dead, crossTs }
   let pos = null;   // { side, kind, entry, entryTs, entryIndex, stop, target, touch, setupId }
   let lastCross = -1;
   let seq = 0;
@@ -118,6 +127,8 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
       entryPrice: round2(pos.entry),
       exitPrice: round2(price),
       touchPoint: round2(pos.touch),
+      touchTs: pos.touchTs,
+      touchMarket: round2(pos.touchMarket),
       stop: round2(pos.stop),
       target: round2(pos.target),
       exitReason: reason,
@@ -170,7 +181,7 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
       const canTrade = entryWindow && !exitedThisBar && (!pos || pos.side !== side);
       const enter = (fill, kind) => {
         if (pos) close(fill, i, 'reversal');
-        pos = { side, kind, entry: fill, entryTs: b.ts, entryIndex: i, stop: setup.stop, target: setup.target, touch: setup.touch, setupId: setup.id };
+        pos = { side, kind, entry: fill, entryTs: b.ts, entryIndex: i, stop: setup.stop, target: setup.target, touch: setup.touch, touchTs: setup.touchTs, touchMarket: setup.touchMarket, setupId: setup.id };
         // Conservative: if this bar also reached the stop, assume it came after the entry.
         if (touched(side, b, setup.stop)) {
           close(setup.stop, i, 'stop');
@@ -179,15 +190,21 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
       };
 
       if (setup.phase === 'first') {
-        // First touch of the fast line (value at the last completed bar) - at any hour.
-        const line = fast[i - 1];
-        if (Number.isFinite(line) && touched(side, b, line)) {
-          // The touch point is the fast line's value (e.g. 25,455), even if this bar gapped past it.
+        // First touch of the LIVE fast line - at any hour.
+        const live = liveFast(i);
+        const meet = live && liveMeetingPrice(live);
+        // Opened already at/past the line (a gap): the touch is at the open, and the
+        // touch point is the line's live value at that moment. Otherwise price met
+        // the line at `meet` if the bar reached it.
+        const gapped = live && (side === 'short' ? b.open >= meet : b.open <= meet);
+        if (live && (gapped || touched(side, b, meet))) {
+          const line = gapped ? live.a + live.b * b.open : meet;
           if (beyond(side, line, setup.stop)) {
             setup.dead = true; // line already beyond the stop: the setup is broken
           } else {
             setup.touch = line;
             setup.touchTs = b.ts;
+            setup.touchMarket = gapped ? b.open : meet; // the price at the moment of the touch
             setup.target = side === 'short' ? line - R * (setup.stop - line) : line + R * (line - setup.stop);
             setup.phase = 'armed';
             if (canTrade && tradesAt(b, line)) enter(line, 'first');
@@ -213,7 +230,7 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
         const sloped = bear ? fast[i] < fast[i - 1] : fast[i] > fast[i - 1];
         const windowStart = lastCross >= 0 ? lastCross + 1 : 1;
         setup = sloped
-          ? { id: ++seq, side, phase: 'first', stop: swingStop(side, bars, fast, slow, windowStart, i), touch: null, touchTs: null, target: null, dead: false, firstPending: false, crossTs: b.ts }
+          ? { id: ++seq, side, phase: 'first', stop: swingStop(side, bars, fast, slow, windowStart, i), touch: null, touchTs: null, touchMarket: null, target: null, dead: false, firstPending: false, crossTs: b.ts }
           : null;
         if (setup) setups.push(setup);
         lastCross = i;

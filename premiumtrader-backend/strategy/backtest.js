@@ -6,7 +6,7 @@
  * Nothing here knows about Kite or HTTP - hand it candles, get trades back.
  */
 
-import { computeTrendSeries, getHmaState } from './indicators.js';
+import { computeTrendSeries, getHmaState, liveLineAt } from './indicators.js';
 import { STRATEGY_SETUPS, getSetup } from './rules/levelTouch.js';
 import { createTradeMachine } from './engine.js';
 import {
@@ -166,44 +166,60 @@ export function runStrategy({ candles, from, to, config }) {
 const overlayLabel = (o) => `${INDICATOR_LABEL[o.type]} ${o.period}`;
 
 /**
- * Analysis only: record the overlay line (e.g. SMA 50) on each trade - its value
- * at the last COMPLETED bar before the entry bar and before the exit bar (the
- * same convention the entry line uses) - and where price was relative to it.
+ * Analysis only: record the overlay line (e.g. SMA 50) on each trade - its LIVE
+ * value (what the chart showed at that moment, current price standing in for the
+ * forming candle's close) at the first touch, at entry and at exit - and where
+ * price was relative to it. Never feeds back into trading.
  */
 export function annotateWithOverlay(trades, candles, overlay) {
   const bars = candles.map(normalizeCandle).filter((c) => Number.isFinite(c.close))
     .map((c) => ({ ...c, ts: parseCandleTime(c.time).getTime() }))
     .sort((a, b) => a.ts - b.ts);
-  const series = computeTrendSeries(bars, overlay.type, overlay.period);
+  const closes = bars.map((b) => b.close);
   const indexAt = (ts) => { // first bar with ts >= target (binary search)
     let lo = 0, hi = bars.length - 1, ans = bars.length - 1;
     while (lo <= hi) { const mid = (lo + hi) >> 1; if (bars[mid].ts >= ts) { ans = mid; hi = mid - 1; } else lo = mid + 1; }
     return ans;
   };
   const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  const liveAt = (ts, price) => {
+    if (ts == null || !Number.isFinite(price)) return null;
+    const live = liveLineAt(closes, overlay.type, overlay.period, indexAt(ts));
+    return live ? r2(live.a + live.b * price) : null;
+  };
+  const vs = (price, line) => (line == null || !Number.isFinite(price) ? null : r2(price - line)); // + = price above the line
   for (const t of trades) {
-    const atEntry = r2(series[indexAt(t.entryTs) - 1]);
-    const atExit = r2(series[indexAt(t.exitTs) - 1]);
+    const touchPrice = t.touchMarket ?? t.touchPoint;
+    const atTouch = liveAt(t.touchTs, touchPrice);
+    const atEntry = liveAt(t.entryTs, t.entryPrice);
+    const atExit = liveAt(t.exitTs, t.exitPrice);
     t.overlay = {
       label: overlayLabel(overlay),
+      atTouch,
+      touchVsLine: vs(touchPrice, atTouch),
       atEntry,
+      entryVsLine: vs(t.entryPrice, atEntry),
       atExit,
-      entryVsLine: atEntry == null ? null : r2(t.entryPrice - atEntry), // + = price above the line
-      exitVsLine: atExit == null ? null : r2(t.exitPrice - atExit),
+      exitVsLine: vs(t.exitPrice, atExit),
     };
   }
 }
 
-/** Results grouped by side and whether the entry was above or below the overlay line. */
+/**
+ * Results grouped by side and whether price was above or below the overlay line
+ * at the FIRST TOUCH (falls back to the entry for strategies without a touch).
+ */
 export function buildOverlaySummary(trades, overlay) {
   const label = overlayLabel(overlay);
   const groups = new Map();
   for (const t of trades) {
-    const v = t.overlay?.entryVsLine;
+    const atTouch = t.overlay?.touchVsLine != null;
+    const v = atTouch ? t.overlay.touchVsLine : t.overlay?.entryVsLine;
     if (v == null) continue;
     const where = v >= 0 ? 'above' : 'below';
     const key = `${t.side}-${where}`;
-    if (!groups.has(key)) groups.set(key, { key, side: t.side, where, name: `${t.side === 'short' ? 'Short' : 'Long'} · entry ${where} ${label}`, trades: [] });
+    const when = atTouch ? 'first touch' : 'entry';
+    if (!groups.has(key)) groups.set(key, { key, side: t.side, where, when, name: `${t.side === 'short' ? 'Short' : 'Long'} · ${when} ${where} ${label}`, trades: [] });
     groups.get(key).trades.push(t);
   }
   return [...groups.values()].map(({ trades: ts, ...g }) => {

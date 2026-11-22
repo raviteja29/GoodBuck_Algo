@@ -260,14 +260,8 @@ test('20 Nov case: night-session touch fixes 25455; morning open at 25361 does n
 // ---------- MA overlay (analysis only) ----------
 import { annotateWithOverlay, buildOverlaySummary } from '../backtest.js';
 
-test('MA overlay is recorded at entry and exit (last completed bar) and never changes trades', () => {
-  const candles = [];
-  const t0 = Date.parse('2026-01-05T09:15:00+05:30');
-  for (let i = 0; i < 6000; i++) {
-    const p = 24000 + 400 * Math.sin(i / 120) + 80 * Math.sin(i / 17);
-    const q = 24000 + 400 * Math.sin((i + 1) / 120) + 80 * Math.sin((i + 1) / 17);
-    candles.push({ time: t0 + i * 900000, open: p, high: Math.max(p, q) + 10, low: Math.min(p, q) - 10, close: q });
-  }
+test('MA overlay is recorded live at first touch, entry and exit, and never changes trades', () => {
+  const candles = waveCandles();
   const args = { candles, from: '2026-02-01', to: '2026-03-31' };
   const withMa = runStrategy({ ...args, config: cfg() });
   const without = runStrategy({ ...args, config: cfg({ overlay: { enabled: false } }) });
@@ -275,16 +269,65 @@ test('MA overlay is recorded at entry and exit (last completed bar) and never ch
   assert.deepEqual(core(withMa), core(without), 'trades identical with or without the MA');
   assert.ok(withMa.trades.length > 0 && withMa.trades.every((t) => t.overlay.label === 'SMA 50'));
 
-  // Spot-check one trade against a hand-computed SMA 50 of the 50 closes before the entry bar.
+  // Live SMA 50 = (49 completed closes + the current price) / 50.
+  const live = (ts, price) => {
+    const i = candles.findIndex((c) => c.time >= ts);
+    return Math.round(((candles.slice(i - 49, i).reduce((s, c) => s + c.close, 0) + price) / 50) * 100) / 100;
+  };
   const t = withMa.trades[0];
-  const i = candles.findIndex((c) => c.time >= t.entryTs);
-  const sma = candles.slice(i - 50, i).reduce((s, c) => s + c.close, 0) / 50;
-  assert.equal(t.overlay.atEntry, Math.round(sma * 100) / 100);
-  assert.equal(t.overlay.entryVsLine, Math.round((t.entryPrice - t.overlay.atEntry) * 100) / 100);
+  assert.equal(t.overlay.atEntry, live(t.entryTs, t.entryPrice));
+  assert.equal(t.overlay.atExit, live(t.exitTs, t.exitPrice));
+  assert.equal(t.overlay.atTouch, live(t.touchTs, t.touchMarket));
+  assert.equal(t.overlay.touchVsLine, Math.round((t.touchMarket - t.overlay.atTouch) * 100) / 100);
 
   const groups = withMa.overlaySummary;
   assert.equal(groups.reduce((n, g) => n + g.trades, 0), withMa.trades.length, 'every trade lands in one group');
-  assert.ok(groups.every((g) => /^(Long|Short) · entry (above|below) SMA 50$/.test(g.name)));
+  assert.ok(groups.every((g) => /^(Long|Short) · first touch (above|below) SMA 50$/.test(g.name)));
   assert.equal(without.overlaySummary, undefined);
   assert.ok(typeof annotateWithOverlay === 'function' && typeof buildOverlaySummary === 'function');
+});
+
+// ---------- Live HMA touch (what TradingView shows while the candle forms) ----------
+import { computeHMASeries, computeSMASeries, liveLineAt, liveMeetingPrice } from '../indicators.js';
+
+function waveCandles(n = 6000) {
+  const candles = [];
+  const t0 = Date.parse('2026-01-05T09:15:00+05:30');
+  for (let i = 0; i < n; i++) {
+    const p = 24000 + 400 * Math.sin(i / 120) + 80 * Math.sin(i / 17);
+    const q = 24000 + 400 * Math.sin((i + 1) / 120) + 80 * Math.sin((i + 1) / 17);
+    candles.push({ time: t0 + i * 900000, open: p, high: Math.max(p, q) + 10, low: Math.min(p, q) - 10, close: q });
+  }
+  return candles;
+}
+
+test('live line is exact: line(close) reproduces the series value at every bar', () => {
+  const candles = waveCandles(400);
+  const closes = candles.map((c) => c.close);
+  for (const [type, series] of [['hma', computeHMASeries(candles, 50)], ['sma', computeSMASeries(candles, 50)]]) {
+    for (let i = 0; i < closes.length; i++) {
+      const live = liveLineAt(closes, type, 50, i);
+      if (series[i] == null) { assert.equal(live, null); continue; }
+      assert.ok(Math.abs(live.a + live.b * closes[i] - series[i]) < 1e-6, `${type} bar ${i}`);
+    }
+  }
+});
+
+test('touch point = the live HMA 50 at the moment price meets it (not the last completed value)', () => {
+  const candles = waveCandles();
+  const r = runCrossPullback({ candles, from: '2026-02-01', to: '2026-03-31', config: cfg() });
+  assert.ok(r.trades.length > 0);
+  const closes = candles.map((c) => c.close);
+  const firsts = r.trades.filter((t) => t.setupKey.endsWith('first'));
+  for (const t of firsts) {
+    const i = candles.findIndex((c) => c.time === t.touchTs);
+    const live = liveLineAt(closes, 'hma', 50, i);
+    // Had the candle closed at the touch point, HMA 50 would equal the touch point.
+    assert.ok(Math.abs(live.a + live.b * t.touchMarket - t.touchPoint) < 0.01, `touch ${t.touchTime}`);
+    const meet = liveMeetingPrice(live);
+    if (t.touchMarket === t.touchPoint) assert.ok(Math.abs(meet - t.touchPoint) < 0.01);
+  }
+  // On a moving line the live value differs from the last completed bar's value.
+  const differs = firsts.some((t) => { const i = candles.findIndex((c) => c.time === t.touchTs); return Math.abs(r.series.fast[i - 1] - t.touchPoint) > 0.5; });
+  assert.ok(differs, 'live touch differs from the previous-bar HMA');
 });
