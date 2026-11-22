@@ -282,7 +282,19 @@ test('MA overlay is recorded live at first touch, entry and exit, and never chan
 
   const groups = withMa.overlaySummary;
   assert.equal(groups.reduce((n, g) => n + g.trades, 0), withMa.trades.length, 'every trade lands in one group');
-  assert.ok(groups.every((g) => /^(Long|Short) · first touch (above|below) SMA 50$/.test(g.name)));
+  assert.ok(groups.every((g) => /^(Long|Short) · SMA 50 (above both|between the lines|below both)$/.test(g.name)), groups.map((g) => g.name).join());
+
+  // SMA 50 against live HMA 50 & HMA 130 at entry.
+  const closes = candles.map((c) => c.close);
+  for (const tr of withMa.trades) {
+    const i = candles.findIndex((c) => c.time >= tr.entryTs);
+    const at = (type, n) => { const l = liveLineAt(closes, type, n, i); return Math.round((l.a + l.b * tr.entryPrice) * 100) / 100; };
+    const [ma, f, sl] = [at('sma', 50), at('hma', 50), at('hma', 130)];
+    assert.equal(tr.overlay.fastAtEntry, f);
+    assert.equal(tr.overlay.slowAtEntry, sl);
+    const want = ma > Math.max(f, sl) ? 'above-both' : ma < Math.min(f, sl) ? 'below-both' : 'between';
+    assert.equal(tr.overlay.entryPosition, want);
+  }
   assert.equal(without.overlaySummary, undefined);
   assert.ok(typeof annotateWithOverlay === 'function' && typeof buildOverlaySummary === 'function');
 });

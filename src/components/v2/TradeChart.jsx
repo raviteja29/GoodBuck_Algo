@@ -5,6 +5,7 @@ const IST = 'Asia/Kolkata';
 const fmtTime = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
 const fmtDay = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: '2-digit', month: 'short' }).format(new Date(ms));
 const vsText = (d) => `${Math.abs(d).toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${d >= 0 ? 'above' : 'below'}`;
+const POSITION_TEXT = { 'above-both': 'above both lines', between: 'between the lines', 'below-both': 'below both lines' };
 const px = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—');
 
 // Colours: candles up/down; fast line yellow and slow line white, like the user's own charts.
@@ -81,6 +82,7 @@ export default function TradeChart({ backtestId, trade }) {
       {sel?.overlay && (
         <div className="gb-tc-ma">
           {sel.overlay.atTouch != null && <span><b>{sel.overlay.label}</b> at first touch ({fmtTime(sel.touchTs)}) <b>{px(sel.overlay.atTouch)}</b>{sel.overlay.touchVsLine != null && <> · price {vsText(sel.overlay.touchVsLine)}</>}</span>}
+          {sel.overlay.entryPosition && <span><b>{sel.overlay.label}</b> at entry <b>{px(sel.overlay.atEntry)}</b> · {data.labels.fast} {px(sel.overlay.fastAtEntry)} · {data.labels.slow} {px(sel.overlay.slowAtEntry)} → <b>{POSITION_TEXT[sel.overlay.entryPosition]}</b></span>}
           <span>{sel.overlay.atTouch == null && <b>{sel.overlay.label} </b>}at entry <b>{px(sel.overlay.atEntry)}</b>{sel.overlay.entryVsLine != null && <> · price {vsText(sel.overlay.entryVsLine)}</>}</span>
           <span>at exit ({sel.exitReason}) <b>{px(sel.overlay.atExit)}</b>{sel.overlay.exitVsLine != null && <> · price {vsText(sel.overlay.exitVsLine)}</>}</span>
         </div>

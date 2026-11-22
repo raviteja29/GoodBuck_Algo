@@ -172,11 +172,11 @@ const isoIST = (ms) => new Date(ms + 330 * 60000).toISOString().replace('T', ' '
 export function tradesCsv(backtest) {
   const ma = backtest.trades.find((t) => t.overlay)?.overlay.label.toLowerCase().replace(' ', '') || 'ma';
   const head = ['entry_time_ist', 'exit_time_ist', 'setup', 'side', 'entry_price', 'exit_price', 'exit_reason', 'points', 'stop', 'target', 'touch_point', 'first_touch_time_ist',
-    `${ma}_at_first_touch`, `touch_minus_${ma}`, `${ma}_at_entry`, `entry_minus_${ma}`, `${ma}_at_exit`, `exit_minus_${ma}`, 'week_base_start', 'expiry_date', 'legs'];
+    `${ma}_at_first_touch`, `touch_minus_${ma}`, `${ma}_at_entry`, 'fast_line_at_entry', 'slow_line_at_entry', `${ma}_vs_lines_at_entry`, `entry_minus_${ma}`, `${ma}_at_exit`, `exit_minus_${ma}`, 'week_base_start', 'expiry_date', 'legs'];
   const lines = backtest.trades.map((t) => [
     isoIST(t.entryTs), isoIST(t.exitTs), t.setupName, t.side, t.entryPrice, t.exitPrice, t.exitReason,
     Math.round(t.points * 100) / 100, t.stop ?? '', t.target ?? '', t.touchPoint ?? '', t.touchTs != null ? isoIST(t.touchTs) : '',
-    t.overlay?.atTouch ?? '', t.overlay?.touchVsLine ?? '', t.overlay?.atEntry ?? '', t.overlay?.entryVsLine ?? '', t.overlay?.atExit ?? '', t.overlay?.exitVsLine ?? '', t.baseStart ?? '', t.expiryDate ?? '', t.legs?.length ?? 0,
+    t.overlay?.atTouch ?? '', t.overlay?.touchVsLine ?? '', t.overlay?.atEntry ?? '', t.overlay?.fastAtEntry ?? '', t.overlay?.slowAtEntry ?? '', t.overlay?.entryPosition ?? '', t.overlay?.entryVsLine ?? '', t.overlay?.atExit ?? '', t.overlay?.exitVsLine ?? '', t.baseStart ?? '', t.expiryDate ?? '', t.legs?.length ?? 0,
   ].map(csvCell).join(','));
   return [head.join(','), ...lines].join('\n') + '\n';
 }
