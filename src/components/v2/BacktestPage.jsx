@@ -16,8 +16,7 @@ const signed = (v, digits = 0) => {
 };
 // Fixed 2 decimals so prices line up in columns.
 const price = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—');
-const vs = (d) => (d == null ? '—' : `${Math.abs(d).toLocaleString('en-IN', { maximumFractionDigits: 1 })} ${d >= 0 ? 'above' : 'below'}`);
-const vsShort = (d) => (d == null ? '—' : `${d >= 0 ? '+' : '−'}${Math.abs(d).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`);
+const POSITION_LABEL = { 'above-both': 'Above both', between: 'Between', 'below-both': 'Below both' };
 const pct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—');
 const tone = (v) => (v > 0 ? 'gb-pos' : v < 0 ? 'gb-neg' : '');
 
@@ -199,7 +198,8 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
   const visible = showAll ? trades : trades.slice(0, 25);
   const selectedTrade = trades.find((t) => t.entryTs === selected) || trades[0] || null;
   const maLabel = result?.trades?.find((t) => t.overlay)?.overlay.label || null;
-  const maTouch = Boolean(result?.trades?.some((t) => t.overlay?.atTouch != null));
+  const maPos = Boolean(result?.trades?.some((t) => t.overlay?.entryPosition));
+  const lineNames = result?.info?.overlaySummary?.[0]?.lines || 'the trend lines';
   const tradeCols = 6 + (maLabel ? 1 : 0);
   const summary = useMemo(() => (result?.summary ? [...result.summary].sort((a, b) => b.points - a.points) : []), [result]);
 
@@ -313,14 +313,14 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
               </div>
               {result.info.overlaySummary?.length > 0 && (
                 <>
-                  <h2 id="bymaline" className="gb-h2" style={{ marginTop: 16 }}>By {result.info.overlaySummary[0].label} at {result.info.overlaySummary[0].when || 'entry'}</h2>
+                  <h2 id="bymaline" className="gb-h2" style={{ marginTop: 16 }}>By {result.info.overlaySummary[0].label} at entry{result.info.overlaySummary[0].lines ? ` vs ${result.info.overlaySummary[0].lines}` : ''}</h2>
                   <div className="gb-card gb-table-wrap">
                     <table className="gb-table" aria-labelledby="bymaline">
-                      <thead><tr><th>{result.info.overlaySummary[0].when === 'first touch' ? 'First touch was' : 'Entry was'}</th><th>Trades</th><th>Win %</th><th>Net</th></tr></thead>
+                      <thead><tr><th>At entry</th><th>Trades</th><th>Win %</th><th>Net</th></tr></thead>
                       <tbody>
                         {result.info.overlaySummary.map((g) => (
                           <tr key={g.key}>
-                            <td>{g.side === 'short' ? 'Short' : 'Long'} · {g.where} line</td>
+                            <td>{g.name}</td>
                             <td>{g.trades}</td>
                             <td>{(g.winRate * 100).toFixed(1)}</td>
                             <td className={tone(g.points)}>{signed(g.points)}</td>
@@ -341,7 +341,7 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
               </div>
               <div className="gb-card gb-table-wrap">
                 <table className="gb-table">
-                  <thead><tr><th>Entry</th><th className="gb-l">Setup</th><th className="gb-hide-sm">In</th><th className="gb-hide-sm">Out</th><th className="gb-l">Exit</th>{maLabel && <th className="gb-hide-sm">{maLabel} {maTouch ? 'touch / in / out' : 'in / out'}</th>}<th>Pts</th></tr></thead>
+                  <thead><tr><th>Entry</th><th className="gb-l">Setup</th><th className="gb-hide-sm">In</th><th className="gb-hide-sm">Out</th><th className="gb-l">Exit</th>{maLabel && <th className="gb-hide-sm">{maLabel} at entry</th>}<th>Pts</th></tr></thead>
                   <tbody>
                     {visible.length === 0 && <tr><td colSpan={tradeCols} className="gb-muted">No trades in this period</td></tr>}
                     {visible.map((t) => (
@@ -361,12 +361,11 @@ const BacktestPage = ({ initialStrategyId, autoRun = false, onAutoRunStarted, on
                           {exitLabel(t.exitReason)}{t.legs.length > 1 && <span className="gb-muted gb-legs"> · {t.legs.length} legs</span>}
                         </td>
                         {maLabel && (
-                          <td className="gb-hide-sm gb-ma-cell" title={t.overlay ? `${t.overlay.atTouch != null ? `First touch ${fmtDateTime(t.touchTs)}: price ${vs(t.overlay.touchVsLine)} the line. ` : ''}Price ${vs(t.overlay.entryVsLine)} the line at entry, ${vs(t.overlay.exitVsLine)} at exit` : ''}>
+                          <td className="gb-hide-sm gb-ma-cell" title={t.overlay?.entryPosition ? `At entry: ${maLabel} ${price(t.overlay.atEntry)}, ${lineNames.split(' & ')[0]} ${price(t.overlay.fastAtEntry)}, slow line ${price(t.overlay.slowAtEntry)}` : ''}>
                             {t.overlay ? (
                               <>
-                                {maTouch && <span>{price(t.overlay.atTouch)} <small>{vsShort(t.overlay.touchVsLine)}</small></span>}
-                                <span>{price(t.overlay.atEntry)} <small>{vsShort(t.overlay.entryVsLine)}</small></span>
-                                <span className="gb-muted">{price(t.overlay.atExit)} <small>{vsShort(t.overlay.exitVsLine)}</small></span>
+                                {maPos && <span>{POSITION_LABEL[t.overlay.entryPosition] || '—'}</span>}
+                                <span className="gb-muted">{price(t.overlay.atEntry)}</span>
                               </>
                             ) : '—'}
                           </td>

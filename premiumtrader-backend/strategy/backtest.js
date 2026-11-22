@@ -157,8 +157,8 @@ export function runStrategy({ candles, from, to, config }) {
     result = runBacktest({ candles, from, to, config });
   }
   if (config.overlay?.enabled) {
-    annotateWithOverlay(result.trades, candles, config.overlay);
-    result.overlaySummary = buildOverlaySummary(result.trades, config.overlay);
+    annotateWithOverlay(result.trades, candles, config.overlay, config.trend);
+    result.overlaySummary = buildOverlaySummary(result.trades, config.overlay, config.trend);
   }
   return result;
 }
@@ -171,7 +171,7 @@ const overlayLabel = (o) => `${INDICATOR_LABEL[o.type]} ${o.period}`;
  * forming candle's close) at the first touch, at entry and at exit - and where
  * price was relative to it. Never feeds back into trading.
  */
-export function annotateWithOverlay(trades, candles, overlay) {
+export function annotateWithOverlay(trades, candles, overlay, trend = null) {
   const bars = candles.map(normalizeCandle).filter((c) => Number.isFinite(c.close))
     .map((c) => ({ ...c, ts: parseCandleTime(c.time).getTime() }))
     .sort((a, b) => a.ts - b.ts);
@@ -182,10 +182,18 @@ export function annotateWithOverlay(trades, candles, overlay) {
     return ans;
   };
   const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
-  const liveAt = (ts, price) => {
+  const lineAt = (type, period, ts, price) => {
     if (ts == null || !Number.isFinite(price)) return null;
-    const live = liveLineAt(closes, overlay.type, overlay.period, indexAt(ts));
+    const live = liveLineAt(closes, type, period, indexAt(ts));
     return live ? r2(live.a + live.b * price) : null;
+  };
+  const liveAt = (ts, price) => lineAt(overlay.type, overlay.period, ts, price);
+  // Where the overlay sat against the two trend lines at that moment.
+  const position = (ma, a, b) => {
+    if (ma == null || a == null || b == null) return null;
+    if (ma > Math.max(a, b)) return 'above-both';
+    if (ma < Math.min(a, b)) return 'below-both';
+    return 'between';
   };
   const vs = (price, line) => (line == null || !Number.isFinite(price) ? null : r2(price - line)); // + = price above the line
   for (const t of trades) {
@@ -193,6 +201,8 @@ export function annotateWithOverlay(trades, candles, overlay) {
     const atTouch = liveAt(t.touchTs, touchPrice);
     const atEntry = liveAt(t.entryTs, t.entryPrice);
     const atExit = liveAt(t.exitTs, t.exitPrice);
+    const fastAtEntry = trend ? lineAt(trend.fastType || 'hma', trend.fastPeriod, t.entryTs, t.entryPrice) : null;
+    const slowAtEntry = trend ? lineAt(trend.slowType || 'hma', trend.slowPeriod, t.entryTs, t.entryPrice) : null;
     t.overlay = {
       label: overlayLabel(overlay),
       atTouch,
@@ -201,31 +211,45 @@ export function annotateWithOverlay(trades, candles, overlay) {
       entryVsLine: vs(t.entryPrice, atEntry),
       atExit,
       exitVsLine: vs(t.exitPrice, atExit),
+      fastAtEntry,
+      slowAtEntry,
+      entryPosition: position(atEntry, fastAtEntry, slowAtEntry), // MA vs the two trend lines at entry
     };
   }
 }
 
+const POSITION_TEXT = { 'above-both': 'above both', between: 'between', 'below-both': 'below both' };
+const POSITION_ORDER = { 'above-both': 0, between: 1, 'below-both': 2 };
+
 /**
- * Results grouped by side and whether price was above or below the overlay line
- * at the FIRST TOUCH (falls back to the entry for strategies without a touch).
+ * Results grouped by side and where the overlay line (e.g. SMA 50) sat against
+ * the two trend lines (e.g. HMA 50 & HMA 130) at entry: above both, between, or
+ * below both. Falls back to price above/below the line when there are no trend lines.
  */
-export function buildOverlaySummary(trades, overlay) {
+export function buildOverlaySummary(trades, overlay, trend = null) {
   const label = overlayLabel(overlay);
+  const lines = trend ? `${INDICATOR_LABEL[trend.fastType || 'hma']} ${trend.fastPeriod} & ${trend.slowPeriod}` : null;
   const groups = new Map();
   for (const t of trades) {
-    const atTouch = t.overlay?.touchVsLine != null;
-    const v = atTouch ? t.overlay.touchVsLine : t.overlay?.entryVsLine;
-    if (v == null) continue;
-    const where = v >= 0 ? 'above' : 'below';
-    const key = `${t.side}-${where}`;
-    const when = atTouch ? 'first touch' : 'entry';
-    if (!groups.has(key)) groups.set(key, { key, side: t.side, where, when, name: `${t.side === 'short' ? 'Short' : 'Long'} · ${when} ${where} ${label}`, trades: [] });
+    const pos = t.overlay?.entryPosition;
+    let key, where, name;
+    if (pos) {
+      key = `${t.side}-${pos}`; where = pos;
+      name = `${t.side === 'short' ? 'Short' : 'Long'} · ${label} ${POSITION_TEXT[pos]}${pos === 'between' ? ' the lines' : ''}`;
+    } else {
+      const v = t.overlay?.entryVsLine;
+      if (v == null) continue;
+      where = v >= 0 ? 'price-above' : 'price-below';
+      key = `${t.side}-${where}`;
+      name = `${t.side === 'short' ? 'Short' : 'Long'} · entry ${v >= 0 ? 'above' : 'below'} ${label}`;
+    }
+    if (!groups.has(key)) groups.set(key, { key, side: t.side, where, name, trades: [] });
     groups.get(key).trades.push(t);
   }
   return [...groups.values()].map(({ trades: ts, ...g }) => {
     const m = buildMetrics(ts);
-    return { ...g, label, trades: m.trades, winRate: m.winRate, points: m.points, avgPoints: m.trades ? m.points / m.trades : 0 };
-  }).sort((a, b) => (a.side + a.where).localeCompare(b.side + b.where));
+    return { ...g, label, lines, by: 'position', trades: m.trades, winRate: m.winRate, points: m.points, avgPoints: m.trades ? m.points / m.trades : 0 };
+  }).sort((x, y) => (x.side === y.side ? (POSITION_ORDER[x.where] ?? 9) - (POSITION_ORDER[y.where] ?? 9) : (x.side === 'short' ? -1 : 1)));
 }
 
 export function buildSummary(trades) {
