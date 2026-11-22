@@ -4,8 +4,9 @@
  * SHORT (LONG is the mirror image):
  *  1. Setup: at a bar close the fast line (e.g. HMA 50), sloping down, crosses
  *     below the slow line (e.g. HMA 130). Any cross replaces the previous setup.
- *  2. Stop: highest high while BOTH lines were rising since the previous cross;
- *     if there was no such bar, the highest high since the previous cross.
+ *  2. Stop: highest high of the previous stretch - every bar since the
+ *     previous (opposite) cross, i.e. the whole time the fast line was above
+ *     the slow one, whether or not the lines were rising.
  *  3. First touch: when price rises to the fast line, go short at that price.
  *     The line is its LIVE value - what the chart shows while the candle is
  *     still forming (the current price standing in for the close). HMA/SMA are
@@ -66,21 +67,15 @@ export const CROSS_SETUP_NAMES = {
   'long-reentry': 'Long · re-entry',
 };
 
-/** Highest high (short) / lowest low (long) for the stop, per the rules above. */
-function swingStop(side, bars, fast, slow, from, to) {
+/** Highest high (short) / lowest low (long) of the previous stretch: bars from..to. */
+function swingStop(side, bars, from, to) {
   const short = side === 'short';
-  let trend = null;
-  let any = null;
-  for (let j = Math.max(from, 1); j <= to; j++) {
+  let best = null;
+  for (let j = Math.max(from, 0); j <= to; j++) {
     const v = short ? bars[j].high : bars[j].low;
-    any = any == null ? v : short ? Math.max(any, v) : Math.min(any, v);
-    const ok = [fast[j], fast[j - 1], slow[j], slow[j - 1]].every(Number.isFinite);
-    const both = ok && (short
-      ? fast[j] > fast[j - 1] && slow[j] > slow[j - 1]
-      : fast[j] < fast[j - 1] && slow[j] < slow[j - 1]);
-    if (both) trend = trend == null ? v : short ? Math.max(trend, v) : Math.min(trend, v);
+    best = best == null ? v : short ? Math.max(best, v) : Math.min(best, v);
   }
-  return trend ?? any;
+  return best;
 }
 
 /**
@@ -280,9 +275,9 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
       if (bear || bull) {
         const side = bear ? 'short' : 'long';
         const sloped = bear ? fast[i] < fast[i - 1] : fast[i] > fast[i - 1];
-        const windowStart = lastCross >= 0 ? lastCross + 1 : 1;
+        const windowStart = Math.max(lastCross, 0); // whole stretch from the previous cross candle (or the start of data)
         setup = sloped
-          ? { id: ++seq, side, phase: 'first', stop: swingStop(side, bars, fast, slow, windowStart, i), touch: null, touchTs: null, touchMarket: null, target: null, dead: false, firstPending: false, crossTs: b.ts }
+          ? { id: ++seq, side, phase: 'first', stop: swingStop(side, bars, windowStart, i), touch: null, touchTs: null, touchMarket: null, target: null, dead: false, firstPending: false, crossTs: b.ts }
           : null;
         if (setup) setups.push(setup);
         lastCross = i;

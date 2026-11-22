@@ -22,10 +22,10 @@ const brief = (t) => [t.setupKey, t.entryPrice, t.exitPrice, t.exitReason];
 //            open  high  low  close  fast  slow
 const SHORT = [
   [100, 110, 95, 105, 110, 100],   // 0
-  [105, 120, 100, 110, 111, 101],  // 1 both rising
-  [110, 130, 105, 115, 112, 102],  // 2 both rising - swing high 130
-  [115, 125, 108, 112, 113, 103],  // 3 both rising
-  [112, 135, 100, 104, 112, 103.5],// 4 fast turns down (not both rising): 135 must NOT be the stop
+  [105, 120, 100, 110, 111, 101],  // 1
+  [110, 130, 105, 115, 112, 102],  // 2 highest high of the stretch: 130 = stop
+  [115, 125, 108, 112, 113, 103],  // 3
+  [112, 125, 100, 104, 112, 103.5],// 4 fast turns down
   [104, 115, 98, 100, 102, 103.8], // 5 fast (falling) crosses below slow -> short setup, stop 130
   [98, 101, 95, 97, 102, 104],     // 6 trigger = fast[5] = 102; high 101 -> no touch (fast flat at 102)
   [99, 103, 97, 100, 100, 104],    // 7 trigger = fast[6] = 102; touches -> SHORT at 102; risk 28, target 46
@@ -42,7 +42,7 @@ test('short: first touch, 2R target, re-entry at the touch point, stop ends the 
     ['short-first', 102, 46, 'target'],
     ['short-reentry', 102, 130, 'stop'],
   ]);
-  assert.equal(r.trades[0].stop, 130, 'stop = highest high while both lines rose (not the 135 after the fast line turned)');
+  assert.equal(r.trades[0].stop, 130, 'stop = highest high of the previous stretch');
   assert.equal(r.trades[0].target, 46);
   assert.equal(r.trades[0].points, 56);
   assert.equal(r.trades[1].points, -28);
@@ -394,4 +394,22 @@ test('red-candle stop: an opposite cross does not reverse a breached short', () 
   ];
   const r = run(rows, cfg(RED));
   assert.deepEqual(r.trades.map(brief).slice(1), [['short-reentry', 102, 46, 'target']]);
+});
+
+test('stop = highest high of the WHOLE previous stretch, even where the lines were not rising (19 Nov)', () => {
+  // Like 19 Nov: the swing high comes right after the bullish cross, while the slow
+  // line is still falling; later highs are lower. The stop must be that first high.
+  const rows = [
+    [100, 101, 95, 99, 99, 100],     // 0 fast below slow
+    [99, 140, 98, 120, 101, 100.5],  // 1 bullish cross; tall candle - high 140 (slow falling? doesn't matter)
+    [120, 125, 110, 115, 103, 100.4],// 2 slow still falling
+    [115, 122, 108, 112, 104, 100.6],// 3 both rising - lower high 122
+    [112, 118, 100, 104, 102, 100.8],// 4 fast turns down
+    [104, 110, 98, 100, 100, 100.9], // 5 bearish cross (fast falling) -> short setup, stop 140
+    [99, 101, 97, 100, 99, 101],     // 6 touches fast[5] = 100 -> short at 100
+  ];
+  const short = run(rows).trades.find((t) => t.side === 'short');
+  assert.equal(short.entryPrice, 100);
+  assert.equal(short.stop, 140);
+  assert.equal(short.target, 20); // 100 - 2 x 40
 });

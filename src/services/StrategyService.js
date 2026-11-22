@@ -76,7 +76,7 @@ export function describeInWords(config, setupCatalogue = []) {
     const sl = lineName(config.trend.slowType, config.trend.slowPeriod);
     return [
       `On the ${tf} ${config.instrument.symbol || ''} chart: when ${f}, sloping down, crosses below ${sl}, wait for price to rise back to ${f} and go short the moment it touches.`,
-      'The stop is the highest price while both lines were rising since the previous cross;',
+      'The stop is the highest price of the previous stretch (since the previous cross);',
       `the target is ${config.exits.targetR}× the risk.`,
       config.exits.afterStop === 'red-candle' ? 'If the stop is breached the trade is held: it exits only if price passes the high of the first red candle after the breach, otherwise it runs to the target, and an opposite cross no longer reverses it.' : '',
       config.reentry ? 'After a target, short again each time price returns to that first touch price, until the stop is breached or the next cross.' : 'One trade per cross.',
