@@ -46,6 +46,7 @@ export const BacktestService = {
   list: (strategyId, limit = 20) => bt('GET', `?strategyId=${encodeURIComponent(strategyId)}&limit=${limit}`),
   get: (id) => bt('GET', `/${encodeURIComponent(id)}`),
   remove: (id) => bt('DELETE', `/${encodeURIComponent(id)}`),
+  chart: (id, at) => bt('GET', `/${encodeURIComponent(id)}/chart${at ? `?at=${at}` : ''}`),
   /** Download the trades CSV (needs the auth header, so fetch + blob rather than a plain link). */
   downloadCsv: async (id) => {
     const res = await fetch(`/api/backtests/${encodeURIComponent(id)}/trades.csv`, { headers: authHeaders() });
@@ -69,6 +70,19 @@ const SIDE_TEXT = { long: 'long', short: 'short' };
 /** The config in plain words — shown beside the builder so the rules are never ambiguous. */
 export function describeInWords(config, setupCatalogue = []) {
   if (!config) return '';
+  if (config.type === 'hma-cross-pullback') {
+    const tf = timeframeLabel(config.timeframe);
+    const f = lineName(config.trend.fastType, config.trend.fastPeriod);
+    const sl = lineName(config.trend.slowType, config.trend.slowPeriod);
+    return [
+      `On the ${tf} ${config.instrument.symbol || ''} chart: when ${f}, sloping down, crosses below ${sl}, wait for price to rise back to ${f} and go short the moment it touches.`,
+      'The stop is the highest price while both lines were rising since the previous cross;',
+      `the target is ${config.exits.targetR}× the risk.`,
+      config.reentry ? 'After a target, short again each time price returns to that first touch price, until the stop is breached or the next cross.' : 'One trade per cross.',
+      'Longs are the mirror image, and an opposite entry closes the open trade and reverses.',
+      config.holding === 'intraday' ? `Everything is closed at ${config.session.exitTime}; no new entries until ${config.session.start}.` : 'Trades are held overnight until stop, target or reversal.',
+    ].join(' ');
+  }
   const tf = timeframeLabel(config.timeframe);
   const chosen = setupCatalogue.filter((s) => config.setups.includes(s.key));
   const longs = chosen.filter((s) => s.side === 'long').map((s) => s.name.split(' ')[0]);

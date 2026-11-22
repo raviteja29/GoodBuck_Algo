@@ -1,0 +1,158 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { runCrossPullback } from '../rules/crossPullback.js';
+import { normalizeConfig, describeConfig, DEFAULT_CROSS_CONFIG } from '../config.js';
+import { runStrategy } from '../backtest.js';
+
+const cfg = (over = {}) => normalizeConfig({ ...JSON.parse(JSON.stringify(DEFAULT_CROSS_CONFIG)), ...over }).config;
+
+// Build bars 15 minutes apart from an IST start time; rows are [open, high, low, close, fast, slow].
+function scenario(rows, start = '2026-03-02T10:00:00+05:30') {
+  const t0 = Date.parse(start);
+  const candles = rows.map(([o, h, l, c], i) => ({ time: t0 + i * 900000, open: o, high: h, low: l, close: c }));
+  return { candles, series: { fast: rows.map((r) => r[4]), slow: rows.map((r) => r[5]) } };
+}
+const run = (rows, config = cfg(), start) => {
+  const { candles, series } = scenario(rows, start);
+  return runCrossPullback({ candles, from: '2026-01-01', to: '2026-12-31', config, series });
+};
+const brief = (t) => [t.setupKey, t.entryPrice, t.exitPrice, t.exitReason];
+
+// Short scenario used by several tests.
+//            open  high  low  close  fast  slow
+const SHORT = [
+  [100, 110, 95, 105, 110, 100],   // 0
+  [105, 120, 100, 110, 111, 101],  // 1 both rising
+  [110, 130, 105, 115, 112, 102],  // 2 both rising - swing high 130
+  [115, 125, 108, 112, 113, 103],  // 3 both rising
+  [112, 135, 100, 104, 112, 103.5],// 4 fast turns down (not both rising): 135 must NOT be the stop
+  [104, 115, 98, 100, 102, 103.8], // 5 fast (falling) crosses below slow -> short setup, stop 130
+  [98, 101, 95, 97, 102, 104],     // 6 trigger = fast[5] = 102; high 101 -> no touch (fast flat at 102)
+  [99, 103, 97, 100, 100, 104],    // 7 trigger = fast[6] = 102; touches -> SHORT at 102; risk 28, target 46
+  [80, 60, 45, 50, 98, 104],       // 8 low 45 <= 46 -> target
+  [50, 101, 49, 90, 96, 104],      // 9 high 101 < 102 -> no re-entry
+  [90, 104, 88, 100, 95, 104],     // 10 touches touch point 102 -> SHORT re-entry
+  [100, 131, 99, 120, 94, 104],    // 11 high 131 >= 130 -> stop, setup dead
+  [100, 105, 95, 100, 93, 104],    // 12 touch point again but setup is dead -> nothing
+];
+
+test('short: first touch, 2R target, re-entry at the touch point, stop ends the setup', () => {
+  const r = run(SHORT);
+  assert.deepEqual(r.trades.map(brief), [
+    ['short-first', 102, 46, 'target'],
+    ['short-reentry', 102, 130, 'stop'],
+  ]);
+  assert.equal(r.trades[0].stop, 130, 'stop = highest high while both lines rose (not the 135 after the fast line turned)');
+  assert.equal(r.trades[0].target, 46);
+  assert.equal(r.trades[0].points, 56);
+  assert.equal(r.trades[1].points, -28);
+});
+
+test('re-entries can be switched off', () => {
+  const r = run(SHORT, cfg({ reentry: false }));
+  assert.deepEqual(r.trades.map(brief), [['short-first', 102, 46, 'target']]);
+});
+
+test('target multiple is configurable', () => {
+  const r = run(SHORT, cfg({ exits: { targetR: 1 } }));
+  assert.equal(r.trades[0].target, 74); // 102 - 1 x 28
+  assert.equal(r.trades[0].exitReason, 'target');
+});
+
+test('fallback stop = highest high since the previous cross when the lines never both rose', () => {
+  const rows = [
+    [100, 110, 95, 105, 110, 100],
+    [105, 140, 100, 110, 109, 101], // fast falling, slow rising: never both rising
+    [110, 120, 105, 115, 108, 102],
+    [104, 115, 98, 100, 101, 103],  // cross (fast falling)
+    [99, 102, 97, 100, 100, 104],   // touches 101
+  ];
+  const r = run(rows);
+  assert.equal(r.trades[0].stop, 140);
+});
+
+test('cross without the fast line sloping the right way starts no setup', () => {
+  const rows = [
+    [100, 110, 95, 105, 110, 100],
+    [105, 112, 100, 110, 111, 112], // fast RISING but slow jumps above it -> bearish cross, wrong slope
+    [99, 115, 97, 100, 112, 113],   // would touch fast[1]=111
+  ];
+  assert.equal(run(rows).trades.length, 0);
+});
+
+test('setup waits if the fast line turns back before the touch', () => {
+  const rows = [
+    ...SHORT.slice(0, 6),
+    [98, 99, 95, 97, 99, 104],   // trigger 102, no touch; fast falling
+    [97, 99, 95, 98, 100, 104],  // fast turns UP (still below slow); trigger 99 -> high 99 touches!
+  ];
+  const r = run(rows);
+  assert.equal(r.trades.length, 1);
+  assert.equal(r.trades[0].entryPrice, 99, 'enters at the fast line value of the last completed bar');
+  assert.equal(r.trades[0].exitReason, 'end of test');
+});
+
+test('opposite entry closes the open trade and reverses', () => {
+  const rows = [
+    ...SHORT.slice(0, 8),             // short open at 102, stop 130, target 46
+    [99, 101, 90, 95, 99, 100],       // 8 nothing
+    [95, 100, 92, 99, 101, 100.5],    // 9 fast (rising) crosses above slow -> long setup
+    [99, 100, 94, 97, 102, 101],      // 10 trigger = fast[9] = 101: low 94 <= 101 -> LONG at 99 (gap: open below line)
+  ];
+  const r = run(rows);
+  assert.deepEqual(r.trades.map(brief), [
+    ['short-first', 102, 99, 'reversal'],
+    ['long-first', 99, 97, 'end of test'],
+  ]);
+});
+
+test('conservative intrabar handling: entry bar that also hits the stop is a stop-out; no target in the entry bar', () => {
+  const stopSameBar = [...SHORT.slice(0, 7), [99, 131, 40, 100, 100, 104]]; // touches 102, reaches 130 and 46 in one bar
+  assert.deepEqual(run(stopSameBar).trades.map(brief), [['short-first', 102, 130, 'stop']]);
+  const targetSameBar = [...SHORT.slice(0, 7), [99, 103, 40, 100, 100, 104], [44, 50, 40, 45, 99, 104]];
+  assert.deepEqual(run(targetSameBar).trades.map(brief), [['short-first', 102, 44, 'target']], 'target waits for the next bar; a gap through it fills at the open');
+});
+
+test('intraday mode: flat at 15:15, no entries until 09:15', () => {
+  // Same short scenario, but starting so that bar 7 (the entry) is at 15:00 and bar 8 at 15:15.
+  const rows = SHORT.slice(0, 9).map((r, i) => (i === 8 ? [100, 101, 99, 100, 98, 104] : r));
+  const intraday = run(rows, cfg({ holding: 'intraday' }), '2026-03-02T13:15:00+05:30');
+  assert.deepEqual(intraday.trades.map(brief), [['short-first', 102, 100, 'intraday exit']]);
+  const overnight = run(rows, cfg({ holding: 'overnight' }), '2026-03-02T13:15:00+05:30');
+  assert.equal(overnight.trades[0].exitReason, 'end of test');
+
+  // A touch after 15:15 is ignored in intraday mode.
+  const late = run(SHORT.slice(0, 8), cfg({ holding: 'intraday' }), '2026-03-02T13:30:00+05:30');
+  assert.equal(late.trades.length, 0);
+});
+
+test('config: defaults, validation, summary', () => {
+  const c = normalizeConfig({ type: 'hma-cross-pullback' });
+  assert.deepEqual(c.errors, []);
+  assert.deepEqual(c.config, JSON.parse(JSON.stringify(DEFAULT_CROSS_CONFIG)));
+  assert.equal(describeConfig(c.config), 'GIFTNIFTY · 15m · HMA 50/130 cross · 2R · overnight');
+  const bad = normalizeConfig({ type: 'hma-cross-pullback', exits: { targetR: 0 }, holding: 'weekly', session: { start: '16:00', exitTime: '15:15' } });
+  const fields = bad.errors.map((e) => e.field);
+  for (const f of ['exits.targetR', 'holding', 'session.exitTime']) assert.ok(fields.includes(f), f);
+  assert.ok(normalizeConfig({ type: 'nope' }).errors.some((e) => e.field === 'type'));
+});
+
+test('runs end to end on generated candles with real HMAs', () => {
+  const candles = [];
+  const t0 = Date.parse('2026-01-05T09:15:00+05:30');
+  for (let i = 0; i < 6000; i++) {
+    const ts = t0 + i * 900000;
+    const p = 24000 + 400 * Math.sin(i / 120) + 80 * Math.sin(i / 17);
+    const q = 24000 + 400 * Math.sin((i + 1) / 120) + 80 * Math.sin((i + 1) / 17);
+    candles.push({ time: ts, open: p, high: Math.max(p, q) + 10, low: Math.min(p, q) - 10, close: q });
+  }
+  const r = runStrategy({ candles, from: '2026-02-01', to: '2026-03-31', config: cfg() });
+  assert.ok(r.trades.length > 3, `trades: ${r.trades.length}`);
+  assert.ok(r.setups.length > 1);
+  for (const t of r.trades) {
+    assert.ok(t.side === 'short' ? t.stop > t.entryPrice || t.exitReason !== 'target' : true);
+    assert.ok(Number.isFinite(t.points));
+  }
+  const keys = new Set(r.summary.map((s) => s.setupKey));
+  assert.ok([...keys].every((k) => /^(short|long)-(first|reentry)$/.test(k)));
+});

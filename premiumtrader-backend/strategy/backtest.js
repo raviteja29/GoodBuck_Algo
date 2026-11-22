@@ -14,6 +14,7 @@ import {
   normalizeCandle, parseCandleTime, toInputDate, addDays,
 } from './session.js';
 import { DEFAULT_CONFIG, toMinutes } from './config.js';
+import { runCrossPullback } from './rules/crossPullback.js';
 
 // Windows are built from local calendar dates (buildWeeklyWindows), so key them
 // with toInputDate - the same convention the browser backtest used. Converting
@@ -143,7 +144,19 @@ export function runBacktest({ candles, from, to, config = DEFAULT_CONFIG, setupK
   return { trades, summary: buildSummary(trades), metrics: buildMetrics(trades), skipped };
 }
 
-function buildSummary(trades) {
+/**
+ * Run any strategy type. Level-touch goes through runBacktest (unchanged);
+ * other types have their own engine but share the summary and metrics.
+ */
+export function runStrategy({ candles, from, to, config }) {
+  if (config.type === 'hma-cross-pullback') {
+    const { trades, setups } = runCrossPullback({ candles, from, to, config });
+    return { trades, summary: buildSummary(trades), metrics: buildMetrics(trades), skipped: [], setups };
+  }
+  return runBacktest({ candles, from, to, config });
+}
+
+export function buildSummary(trades) {
   const by = new Map();
   for (const t of trades) {
     if (!by.has(t.setupKey)) {
@@ -163,7 +176,7 @@ function buildSummary(trades) {
   }));
 }
 
-function buildMetrics(trades) {
+export function buildMetrics(trades) {
   if (!trades.length) return { trades: 0, points: 0, winRate: 0, avgWin: 0, avgLoss: 0, profitFactor: null, maxDrawdown: 0 };
 
   const wins = trades.filter((t) => t.points > 0);

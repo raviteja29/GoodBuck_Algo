@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "start": "node --disable-warning=ExperimentalWarning premiumtrader-backend/server.js",
     "postinstall": "cd premiumtrader-backend && npm install",
-    "test": "node --disable-warning=ExperimentalWarning --test 'premiumtrader-backend/db/__tests__/*.test.mjs' 'premiumtrader-backend/strategy/__tests__/config.test.mjs' && node premiumtrader-backend/strategy/__tests__/equivalence.test.mjs && node premiumtrader-backend/strategy/__tests__/trade-equivalence.test.mjs"
+    "test": "node --disable-warning=ExperimentalWarning --test 'premiumtrader-backend/db/__tests__/*.test.mjs' 'premiumtrader-backend/strategy/__tests__/config.test.mjs' 'premiumtrader-backend/strategy/__tests__/crossPullback.test.mjs' && node premiumtrader-backend/strategy/__tests__/equivalence.test.mjs && node premiumtrader-backend/strategy/__tests__/trade-equivalence.test.mjs"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",

@@ -2,8 +2,9 @@
 
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { normalizeConfig, describeConfig, INDICATOR_TYPES, DEFAULT_CONFIG, SETUP_CATALOGUE, TIMEFRAMES } from './strategy/config.js';
+import { normalizeConfig, describeConfig, INDICATOR_TYPES, DEFAULT_CONFIG, DEFAULT_CROSS_CONFIG, DEFAULTS_BY_TYPE, STRATEGY_TYPES, HOLDING_MODES, SETUP_CATALOGUE, TIMEFRAMES } from './strategy/config.js';
 import { loadKiteSession, saveKiteSession } from './kiteSession.js';
+import { getMeta, setMeta } from './db/index.js';
 
 const STATUSES = ['draft', 'active', 'paused'];
 export const SEED_NAME = 'Weekly Levels · GIFT NIFTY';
@@ -104,6 +105,18 @@ export function seedDefaultStrategy(db) {
   return createStrategy(db, { name: SEED_NAME, config: DEFAULT_CONFIG, status: 'draft' });
 }
 
+/** Saves the HMA 50/130 Cross Pullback strategy in both holding modes, once. */
+export function seedCrossPullbackStrategies(db) {
+  if (getMeta(db, 'seeded_cross_pullback')) return [];
+  const made = ['overnight', 'intraday'].map((holding) => createStrategy(db, {
+    name: `HMA 50/130 Cross Pullback · ${holding === 'overnight' ? 'Overnight' : 'Intraday'}`,
+    config: { ...DEFAULT_CROSS_CONFIG, holding },
+    status: 'draft',
+  }));
+  setMeta(db, 'seeded_cross_pullback', true);
+  return made;
+}
+
 /**
  * Only the logged-in Kite user may use these routes. The browser's token must
  * match the session the server holds; a different token (a fresh login, or one
@@ -145,7 +158,16 @@ export function strategiesRouter(db, { verifyToken } = {}) {
 
   // Everything the builder needs to render its form.
   r.get('/meta', handle((req, res) => {
-    res.json({ defaults: DEFAULT_CONFIG, setups: SETUP_CATALOGUE, timeframes: TIMEFRAMES, indicators: INDICATOR_TYPES, statuses: STATUSES });
+    res.json({
+      defaults: DEFAULT_CONFIG,
+      defaultsByType: DEFAULTS_BY_TYPE,
+      types: STRATEGY_TYPES,
+      holdingModes: HOLDING_MODES,
+      setups: SETUP_CATALOGUE,
+      timeframes: TIMEFRAMES,
+      indicators: INDICATOR_TYPES,
+      statuses: STATUSES,
+    });
   }));
 
   r.get('/', handle((req, res) => res.json(listStrategies(db))));

@@ -3,9 +3,10 @@
 
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { runBacktest } from './strategy/backtest.js';
+import { runStrategy } from './strategy/backtest.js';
 import { buildWeeklyWindows, addDays, toInputDate } from './strategy/session.js';
-import { trendWarmup } from './strategy/indicators.js';
+import { trendWarmup, computeTrendSeries } from './strategy/indicators.js';
+import { describeTrend, INDICATOR_LABEL } from './strategy/config.js';
 import { ensureCandles, getCandles, todayIST } from './candles.js';
 import { getStrategy, requireSession } from './strategies.js';
 
@@ -56,11 +57,12 @@ export async function runStrategyBacktest(db, fetchHistorical, { strategyId, fro
   const strategy = getStrategy(db, strategyId);
   if (!strategy) throw new BacktestError('Strategy not found', 404);
   validateRange(from, to, now);
-  const windows = buildWeeklyWindows(from, to);
-  if (!windows.length) throw new BacktestError('Pick a range with at least one full Wednesday-to-Tuesday base week plus its trading week (14 days)');
+  const { config } = strategy;
+  const weekly = config.type === 'level-touch';
+  const windows = weekly ? buildWeeklyWindows(from, to) : null;
+  if (weekly && !windows.length) throw new BacktestError('Pick a range with at least one full Wednesday-to-Tuesday base week plus its trading week (14 days)');
   if (running.has(strategyId)) throw new BacktestError('A backtest for this strategy is already running', 409);
 
-  const { config } = strategy;
   const id = randomUUID();
   const started = Date.now();
   db.prepare("INSERT INTO backtests (id, strategy_id, params, status, created_at) VALUES (?, ?, ?, 'running', ?)")
@@ -68,8 +70,11 @@ export async function runStrategyBacktest(db, fetchHistorical, { strategyId, fro
 
   running.add(strategyId);
   try {
-    const loadFrom = toInputDate(addDays(windows[0].baseStart, -warmupDays(config)));
-    const loadTo = toInputDate(windows[windows.length - 1].expiryDate);
+    // Cross Pullback also needs the previous cross (for the stop), so it loads extra history.
+    const loadFrom = weekly
+      ? toInputDate(addDays(windows[0].baseStart, -warmupDays(config)))
+      : toInputDate(addDays(new Date(`${from}T00:00:00`), -(warmupDays(config) + 45)));
+    const loadTo = weekly ? toInputDate(windows[windows.length - 1].expiryDate) : to;
     const source = { token: config.instrument.token, interval: config.timeframe, from: loadFrom, to: loadTo };
 
     const fetchStarted = Date.now();
@@ -80,11 +85,13 @@ export async function runStrategyBacktest(db, fetchHistorical, { strategyId, fro
     }
 
     const computeStarted = Date.now();
-    const result = runBacktest({ candles, from, to, config });
+    const result = runStrategy({ candles, from, to, config });
     const finished = Date.now();
 
     const info = {
-      windows: windows.length,
+      type: config.type,
+      windows: windows ? windows.length : null,
+      setups: result.setups ? result.setups.length : null,
       skipped: result.skipped,
       candles: candles.length,
       loadedFrom: loadFrom,
@@ -162,12 +169,41 @@ const csvCell = (v) => {
 const isoIST = (ms) => new Date(ms + 330 * 60000).toISOString().replace('T', ' ').slice(0, 16);
 
 export function tradesCsv(backtest) {
-  const head = ['entry_time_ist', 'exit_time_ist', 'week_base_start', 'expiry_date', 'setup', 'side', 'entry_price', 'exit_price', 'exit_reason', 'points', 'legs'];
+  const head = ['entry_time_ist', 'exit_time_ist', 'setup', 'side', 'entry_price', 'exit_price', 'exit_reason', 'points', 'stop', 'target', 'touch_point', 'week_base_start', 'expiry_date', 'legs'];
   const lines = backtest.trades.map((t) => [
-    isoIST(t.entryTs), isoIST(t.exitTs), t.baseStart, t.expiryDate, t.setupName, t.side,
-    t.entryPrice, t.exitPrice, t.exitReason, Math.round(t.points * 100) / 100, t.legs.length,
+    isoIST(t.entryTs), isoIST(t.exitTs), t.setupName, t.side, t.entryPrice, t.exitPrice, t.exitReason,
+    Math.round(t.points * 100) / 100, t.stop ?? '', t.target ?? '', t.touchPoint ?? '', t.baseStart ?? '', t.expiryDate ?? '', t.legs?.length ?? 0,
   ].map(csvCell).join(','));
   return [head.join(','), ...lines].join('\n') + '\n';
+}
+
+/**
+ * Bars around `at` (epoch ms) from the candle cache, with the fast/slow lines
+ * computed over the backtest's full loaded range (so values match the run).
+ */
+export function chartWindow(db, backtest, { at = null, before = 120, after = 80 } = {}) {
+  const { config, info } = backtest;
+  const candles = getCandles(db, { token: config.instrument.token, interval: config.timeframe, from: info.loadedFrom, to: info.loadedTo });
+  if (!candles.length) return { bars: [], fast: [], slow: [], trades: [], labels: {} };
+  const { fastType = 'hma', fastPeriod, slowType = 'hma', slowPeriod } = config.trend;
+  const fast = computeTrendSeries(candles, fastType, fastPeriod);
+  const slow = computeTrendSeries(candles, slowType, slowPeriod);
+  const target = at ?? backtest.trades.at(-1)?.entryTs ?? candles.at(-1).time;
+  let idx = candles.findIndex((c) => c.time >= target);
+  if (idx < 0) idx = candles.length - 1;
+  const lo = Math.max(0, idx - Math.min(before, 400));
+  const hi = Math.min(candles.length, idx + Math.min(after, 400) + 1);
+  const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  const t0 = candles[lo].time, t1 = candles[hi - 1].time;
+  return {
+    bars: candles.slice(lo, hi).map((c) => ({ t: c.time, o: c.open, h: c.high, l: c.low, c: c.close })),
+    fast: fast.slice(lo, hi).map(r2),
+    slow: slow.slice(lo, hi).map(r2),
+    labels: { fast: `${INDICATOR_LABEL[fastType]} ${fastPeriod}`, slow: `${INDICATOR_LABEL[slowType]} ${slowPeriod}`, trend: describeTrend(config.trend) },
+    trades: backtest.trades
+      .filter((t) => t.exitTs >= t0 && t.entryTs <= t1)
+      .map((t) => ({ entryTs: t.entryTs, exitTs: t.exitTs, side: t.side, entryPrice: t.entryPrice, exitPrice: t.exitPrice, exitReason: t.exitReason, stop: t.stop ?? null, target: t.target ?? null, touchPoint: t.touchPoint ?? null, setupName: t.setupName, points: t.points })),
+  };
 }
 
 export function backtestsRouter(db, { verifyToken, kiteFor }) {
@@ -199,6 +235,13 @@ export function backtestsRouter(db, { verifyToken, kiteFor }) {
   r.get('/:id', (req, res) => {
     const b = getBacktest(db, req.params.id, { withTrades: true });
     return b ? res.json(b) : res.status(404).json({ error: 'Backtest not found' });
+  });
+
+  // Candles around a moment (default: the latest trade) with both trend lines and the trades in view.
+  r.get('/:id/chart', (req, res) => {
+    const b = getBacktest(db, req.params.id, { withTrades: true });
+    if (!b) return res.status(404).json({ error: 'Backtest not found' });
+    res.json(chartWindow(db, b, { at: Number(req.query.at) || null, before: Number(req.query.before) || 120, after: Number(req.query.after) || 80 }));
   });
 
   r.get('/:id/trades.csv', (req, res) => {
