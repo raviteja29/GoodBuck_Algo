@@ -25,9 +25,9 @@ export function weekStart(day) {
 /** Levels grouped into Wednesday → Tuesday weeks, newest first, with what's saved for each. */
 export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE } = {}) {
   const rows = db.prepare('SELECT * FROM option_levels ORDER BY day DESC, touch_ts DESC').all();
-  const saved = db.prepare(`SELECT oc.instrument_token AS token, oc.strike, oc.type, COUNT(c.ts) AS bars
-    FROM option_contracts oc JOIN candles c ON c.instrument_token = oc.instrument_token AND c.interval = ? AND c.ts BETWEEN ? AND ?
-    WHERE oc.underlying = ? AND oc.expiry = ? GROUP BY oc.instrument_token`);
+  const findContract = db.prepare('SELECT instrument_token AS token, tradingsymbol AS symbol FROM option_contracts WHERE underlying = ? AND expiry = ? AND strike = ? AND type = ?');
+  const coverage = db.prepare(`SELECT interval, COUNT(*) AS bars, MIN(ts) AS first, MAX(ts) AS last FROM candles
+    WHERE instrument_token = ? AND interval IN ('5minute', '15minute') GROUP BY interval`);
   const byWeek = new Map();
   for (const r of rows) {
     const key = weekStart(r.day);
@@ -35,16 +35,22 @@ export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE } = {}) {
       if (byWeek.size >= weeks) break;
       byWeek.set(key, []);
     }
-    const low = r.ce_strike - cfg.strikesEachSide * cfg.strikeStep;
-    const high = r.pe_strike + cfg.strikesEachSide * cfg.strikeStep;
-    const contracts = r.expiry ? saved.all(cfg.interval, dayStart(r.day), dayEnd(r.day), cfg.underlying, r.expiry) : [];
-    const inBand = contracts.filter((c) => c.strike >= low && c.strike <= high);
+    const strikes = [...new Set([r.strike_below, r.strike_above])];
+    const contracts = strikes.flatMap((strike) => ['CE', 'PE'].map((type) => {
+      const c = r.expiry ? findContract.get(cfg.underlying, r.expiry, strike, type) : null;
+      const cov = c ? coverage.all(c.token) : [];
+      const best = cov.find((x) => x.interval === '15minute') || cov[0] || null;
+      return {
+        strike, type, token: c?.token ?? null, symbol: c?.symbol ?? null,
+        bars: best?.bars ?? 0, interval: best?.interval ?? null, from: best?.first ?? null, to: best?.last ?? null,
+      };
+    }));
     byWeek.get(key).push({
       day: r.day, side: r.side, level: r.level, touchTs: r.touch_ts, crossTs: r.cross_ts, untilTs: r.until_ts, expiry: r.expiry,
-      ceStrike: r.ce_strike, peStrike: r.pe_strike, bandLow: low, bandHigh: high,
-      bandSaved: inBand.length, bandTotal: ((high - low) / cfg.strikeStep + 1) * 2,
-      // Every contract with candles that day (the band, plus any wider data saved earlier)
-      contracts: contracts.sort((a, b) => a.strike - b.strike || a.type.localeCompare(b.type)).map(({ token, strike, type, bars }) => ({ token, strike, type, bars })),
+      strikeBelow: r.strike_below, strikeAbove: r.strike_above,
+      saved: contracts.filter((c) => c.bars > 0).length,
+      historyFrom: contracts.reduce((m, c) => (c.from && (!m || c.from < m) ? c.from : m), null),
+      contracts,
     });
   }
   return [...byWeek.entries()].map(([start, levels]) => ({
@@ -84,17 +90,19 @@ export function resample(bars, minutes) {
 
 const INTERVALS = { 5: '5minute', 15: '15minute', 30: '30minute', 60: '60minute' };
 
-/** Candles + indicators for a saved option contract or GIFT NIFTY. */
-export function chartData(db, { token, minutes = 5, cfg = OPTIONS_ARCHIVE }) {
+/** Candles + indicators for a saved option contract (15m when saved, else 5m) or GIFT NIFTY. */
+export function chartData(db, { token, minutes = 15 }) {
   const isGift = token === GIFT.token;
   const contract = isGift ? null : db.prepare('SELECT * FROM option_contracts WHERE instrument_token = ?').get(token);
   if (!isGift && !contract) return null;
-  const sourceInterval = isGift ? GIFT_INTERVAL : cfg.interval;
-  const sourceMinutes = isGift ? 15 : 5;
-  const raw = db.prepare('SELECT ts, open, high, low, close, volume, oi FROM candles WHERE instrument_token = ? AND interval = ? ORDER BY ts')
-    .all(token, sourceInterval);
+  const load = (interval) => db.prepare('SELECT ts, open, high, low, close, volume, oi FROM candles WHERE instrument_token = ? AND interval = ? ORDER BY ts').all(token, interval);
+  let sourceMinutes = 15;
+  let raw = load(isGift ? GIFT_INTERVAL : '15minute');
+  if (!isGift && !raw.length) { raw = load('5minute'); sourceMinutes = 5; }
+  if (!raw.length) return null;
   // GIFT NIFTY can be long; keep the last ~120 days.
-  const bars = resample(isGift ? raw.filter((b) => b.ts >= Date.now() - 120 * 86400000) : raw, Math.max(minutes, sourceMinutes));
+  const tf = Math.max(minutes, sourceMinutes);
+  const bars = resample(isGift ? raw.filter((b) => b.ts >= Date.now() - 120 * 86400000) : raw, tf);
   const hma50 = computeHMASeries(bars, 50);
   const hma130 = computeHMASeries(bars, 130);
   const sma50 = computeSMASeries(bars, 50);
@@ -102,7 +110,8 @@ export function chartData(db, { token, minutes = 5, cfg = OPTIONS_ARCHIVE }) {
     instrument: isGift
       ? { token, symbol: 'GIFT NIFTY', kind: 'index' }
       : { token, symbol: contract.tradingsymbol, kind: 'option', strike: contract.strike, type: contract.type, expiry: contract.expiry, lotSize: contract.lot_size },
-    minutes: Math.max(minutes, sourceMinutes),
+    minutes: tf,
+    sourceMinutes,
     bars: bars.map((b, i) => ({ t: b.ts, o: b.open, h: b.high, l: b.low, c: b.close, v: b.volume ?? 0, oi: b.oi ?? null, hma50: hma50[i] ?? null, hma130: hma130[i] ?? null, sma50: sma50[i] ?? null })),
   };
 }
@@ -117,7 +126,7 @@ export function optionsRouter(db, { verifyToken }) {
 
   r.get('/chart', (req, res) => {
     const token = Number(req.query.token);
-    const minutes = Number(req.query.minutes) || 5;
+    const minutes = Number(req.query.minutes) || 15;
     if (!Number.isFinite(token)) return res.status(400).json({ error: 'token is required' });
     if (!INTERVALS[minutes]) return res.status(400).json({ error: 'minutes must be 5, 15, 30 or 60' });
     const data = chartData(db, { token, minutes });

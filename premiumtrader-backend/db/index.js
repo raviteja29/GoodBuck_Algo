@@ -162,6 +162,14 @@ const MIGRATIONS = [
   `
   DELETE FROM option_levels WHERE expiry IS NOT NULL AND julianday(expiry) - julianday(day) > 6;
   `,
+
+  // 6 — a level now saves CE and PE at the strike below and the strike above it.
+  `
+  ALTER TABLE option_levels RENAME COLUMN ce_strike TO strike_below;
+  ALTER TABLE option_levels RENAME COLUMN pe_strike TO strike_above;
+  ALTER TABLE option_levels DROP COLUMN ce_token;
+  ALTER TABLE option_levels DROP COLUMN pe_token;
+  `,
 ];
 
 export function openDb(file = process.env.DB_PATH || DEFAULT_DB_PATH) {
