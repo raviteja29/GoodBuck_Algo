@@ -1,5 +1,5 @@
-// Options archive: saves the NIFTY option strikes the Cross Pullback levels
-// would trade, while the contracts are still live (Kite stops serving a
+// Options archive: saves the NIFTY option strikes around the Cross Pullback
+// levels, while the contracts are still live (Kite stops serving a
 // contract's data once it has expired).
 //
 // A level is a setup's first-touch price (GIFT NIFTY, 15m, HMA 50 vs HMA 130).
@@ -7,6 +7,7 @@
 // For each trading session the level is valid in (or, if it ends before one
 // opens, the next session after it was set):
 //   CE = level rounded down to 50, PE = level rounded up to 50 (equal on a strike),
+//   saved: CE and PE for every strike from 5 below the CE to 5 above the PE,
 //   expiry = the first NIFTY expiry on or after that session's day (within its
 //   Wednesday → Tuesday week; if that one has expired, nothing can be saved).
 // Those contracts' 5-minute candles (with OI) are saved for that day.
@@ -22,6 +23,7 @@ import { DEFAULT_CROSS_CONFIG, normalizeConfig } from './strategy/config.js';
 export const OPTIONS_ARCHIVE = {
   underlying: 'NIFTY',
   strikeStep: 50,
+  strikesEachSide: 5,           // saved below the CE strike and above the PE strike, CE and PE each
   interval: '5minute',
   lookbackDays: 10,
   historyDays: 120,              // GIFT NIFTY history for the HMA 130 warm-up
@@ -94,7 +96,12 @@ export function pickContracts(rows, options, cfg = OPTIONS_ARCHIVE) {
     const next = expiries.find((e) => e >= r.day);
     const expiry = next && (Date.parse(next) - Date.parse(r.day)) / 86400000 <= 6 ? next : null;
     const { ce, pe } = strikesForLevel(r.level, cfg.strikeStep);
-    return { ...r, expiry, ceStrike: ce, peStrike: pe, ceContract: expiry && find(expiry, ce, 'CE'), peContract: expiry && find(expiry, pe, 'PE') };
+    const low = ce - cfg.strikesEachSide * cfg.strikeStep;
+    const high = pe + cfg.strikesEachSide * cfg.strikeStep;
+    const band = [];
+    for (let k = low; k <= high; k += cfg.strikeStep) for (const type of ['CE', 'PE']) band.push({ strike: k, type, contract: expiry ? find(expiry, k, type) : null });
+    return { ...r, expiry, ceStrike: ce, peStrike: pe, bandLow: low, bandHigh: high, band,
+      ceContract: expiry && find(expiry, ce, 'CE'), peContract: expiry && find(expiry, pe, 'PE') };
   });
 }
 
@@ -135,7 +142,8 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
   const missing = [];
   for (const r of rows) {
     saveLevel.run(r.crossTs, r.day, r.side, r.level, r.touchTs, r.until, r.expiry, r.ceStrike, r.peStrike, r.ceContract?.token ?? null, r.peContract?.token ?? null, Date.now());
-    for (const [c, strike, type] of [[r.ceContract, r.ceStrike, 'CE'], [r.peContract, r.peStrike, 'PE']]) {
+    if (!r.expiry) { missing.push(`${r.day} ${r.level.toFixed(1)} (week's expiry no longer listed)`); continue; }
+    for (const { contract: c, strike, type } of r.band) {
       if (!c) { missing.push(`${r.day} ${strike} ${type}`); continue; }
       const w = wanted.get(c.token) || { contract: c, days: new Set() };
       w.days.add(r.day);

@@ -49,6 +49,17 @@ test('expiry is the first one on or after the trading day (Tue 17 level traded W
   assert.equal(r.peContract.type, 'PE');
 });
 
+test('saves CE and PE for every strike from 5 below the CE to 5 above the PE', () => {
+  const options = niftyOptions(instrumentList());
+  const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-18' }], options);
+  assert.equal(r.bandLow, 25100);
+  assert.equal(r.bandHigh, 25650);
+  assert.equal(r.band.length, 24);
+  assert.ok(r.band.every((b) => b.contract && b.contract.expiry === '2026-11-23'));
+  const [onStrike] = pickContracts([{ crossTs: 1, side: 'long', level: 25350, touchTs: 1, until: null, day: '2026-11-18' }], options);
+  assert.deepEqual([onStrike.bandLow, onStrike.bandHigh, onStrike.band.length], [25100, 25600, 22]);
+});
+
 test('a day whose weekly expiry has already gone is not mapped to the next week', () => {
   const options = niftyOptions(instrumentList(['2026-11-23', '2026-12-01']));
   const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-16' }], options);
@@ -67,7 +78,7 @@ test('due only after 15:40 IST and once a day', () => {
   assert.equal(archiveDue(db, IST(2026, 11, 23, 22, 30)), true);
 });
 
-test('run saves only the level strikes and records each level', async () => {
+test('run saves only the strikes around each level and records each level', async () => {
   const db = openDb(':memory:');
   // GIFT NIFTY: a slow wave so HMA 50 and HMA 130 cross; options: one candle per day
   const start = IST(2026, 7, 1, 6, 30);
@@ -96,7 +107,9 @@ test('run saves only the level strikes and records each level', async () => {
     assert.ok(l.expiry >= l.day);
     assert.ok(l.ce_symbol.endsWith(`${l.ce_strike}CE`) && l.pe_symbol.endsWith(`${l.pe_strike}PE`));
   }
-  const strikes = new Set(levels.flatMap((l) => [`${l.ce_strike}CE`, `${l.pe_strike}PE`]));
-  assert.ok(archiveStatus(db).contracts <= strikes.size * 2, 'only level strikes are saved');
+  const allowed = new Set();
+  for (const l of levels) for (let k = l.ce_strike - 250; k <= l.pe_strike + 250; k += 50) allowed.add(k);
+  const saved = db.prepare('SELECT strike FROM option_contracts').all().map((x) => x.strike);
+  assert.ok(saved.length > 0 && saved.every((k) => allowed.has(k)), 'only strikes within 5 of each level are saved');
   assert.equal(archiveDue(db, now + 60000), false);
 });
