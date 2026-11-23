@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../index.js';
-import { strikesForLevel, niftyOptions, sessionDays, levelDays, pickContracts, archiveDue, runOptionsArchive, archiveStatus, listLevels } from '../../optionsArchive.js';
+import { strikesForLevel, niftyOptions, sessionDays, levelDays, pickContracts, archiveDue, runOptionsArchive } from '../../optionsArchive.js';
 
 const IST = (y, m, d, hh, mm) => Date.UTC(y, m - 1, d, hh, mm) - 330 * 60000;
 
@@ -17,10 +17,10 @@ function instrumentList(expiries = ['2026-11-17', '2026-11-23', '2026-12-01']) {
   return out;
 }
 
-test('CE rounds the level down, PE rounds it up; same strike when exactly on one', () => {
-  assert.deepEqual(strikesForLevel(25357.6), { ce: 25350, pe: 25400 });
-  assert.deepEqual(strikesForLevel(25219.9), { ce: 25200, pe: 25250 });
-  assert.deepEqual(strikesForLevel(25350), { ce: 25350, pe: 25350 });
+test('strikes are the one just below and just above the level; only one when exactly on it', () => {
+  assert.deepEqual(strikesForLevel(25161.5), { below: 25150, above: 25200 });
+  assert.deepEqual(strikesForLevel(25357.6), { below: 25350, above: 25400 });
+  assert.deepEqual(strikesForLevel(25150), { below: 25150, above: 25150 });
 });
 
 test('a level applies to every session until the next cross, even if set on an earlier day', () => {
@@ -39,32 +39,21 @@ test('a level applies to every session until the next cross, even if set on an e
   assert.deepEqual(rows, ['25357.6@2026-11-18', '25219.9@2026-11-19', '25529.5@2026-11-20']);
 });
 
-test('expiry is the first one on or after the trading day (Tue 17 level traded Wed 18 → 23 Nov)', () => {
+test('expiry is the week (Tue 17 level traded Wed 18 → 23 Nov); CE and PE at both strikes', () => {
   const options = niftyOptions(instrumentList());
-  const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-18' }], options);
+  const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25161.5, touchTs: 1, until: null, day: '2026-11-18' }], options);
   assert.equal(r.expiry, '2026-11-23');
-  assert.equal(r.ceContract.strike, 25350);
-  assert.equal(r.ceContract.type, 'CE');
-  assert.equal(r.peContract.strike, 25400);
-  assert.equal(r.peContract.type, 'PE');
-});
-
-test('saves CE and PE for every strike from 5 below the CE to 5 above the PE', () => {
-  const options = niftyOptions(instrumentList());
-  const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-18' }], options);
-  assert.equal(r.bandLow, 25100);
-  assert.equal(r.bandHigh, 25650);
-  assert.equal(r.band.length, 24);
-  assert.ok(r.band.every((b) => b.contract && b.contract.expiry === '2026-11-23'));
-  const [onStrike] = pickContracts([{ crossTs: 1, side: 'long', level: 25350, touchTs: 1, until: null, day: '2026-11-18' }], options);
-  assert.deepEqual([onStrike.bandLow, onStrike.bandHigh, onStrike.band.length], [25100, 25600, 22]);
+  assert.deepEqual(r.contracts.map((c) => `${c.strike}${c.type}`), ['25150CE', '25150PE', '25200CE', '25200PE']);
+  assert.ok(r.contracts.every((c) => c.contract && c.contract.expiry === '2026-11-23' && c.contract.strike === c.strike && c.contract.type === c.type));
+  const [on] = pickContracts([{ crossTs: 1, side: 'long', level: 25150, touchTs: 1, until: null, day: '2026-11-18' }], options);
+  assert.deepEqual(on.contracts.map((c) => `${c.strike}${c.type}`), ['25150CE', '25150PE']);
 });
 
 test('a day whose weekly expiry has already gone is not mapped to the next week', () => {
   const options = niftyOptions(instrumentList(['2026-11-23', '2026-12-01']));
   const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-16' }], options);
   assert.equal(r.expiry, null);
-  assert.equal(r.ceContract, null);
+  assert.ok(r.contracts.every((c) => c.contract === null));
 });
 
 test('sessions are days with candles inside 09:15–15:30', () => {
@@ -78,9 +67,9 @@ test('due only after 15:40 IST and once a day', () => {
   assert.equal(archiveDue(db, IST(2026, 11, 23, 22, 30)), true);
 });
 
-test('run saves only the strikes around each level and records each level', async () => {
+test('run saves the full 15m history of the 4 level contracts, then keeps them up to date', async () => {
   const db = openDb(':memory:');
-  // GIFT NIFTY: a slow wave so HMA 50 and HMA 130 cross; options: one candle per day
+  // GIFT NIFTY: a slow wave so HMA 50 and HMA 130 cross
   const start = IST(2026, 7, 1, 6, 30);
   const gift = [];
   for (let t = start, i = 0; t < IST(2026, 11, 23, 23, 45); t += 15 * 60000, i++) {
@@ -90,26 +79,37 @@ test('run saves only the strikes around each level and records each level', asyn
     gift.push({ date: new Date(t), open: p, high: p + 15, low: p - 15, close: p + 3, volume: 0 });
   }
   const optionCalls = [];
+  // Options were "listed" on 1 Oct: one 15m candle per weekday from then on.
   const fetchHistorical = async (token, interval, from, to) => {
-    if (token === 291849) return gift.filter((c) => { const d = new Date(+c.date + 330 * 60000).toISOString().slice(0, 10); return d >= from.slice(0, 10) && d <= to.slice(0, 10); });
-    optionCalls.push(token);
-    return [{ date: new Date(`${from.slice(0, 10)}T09:15:00+05:30`), open: 100, high: 110, low: 90, close: 105, volume: 1, oi: 5 }];
+    const f = from.slice(0, 10), t = to.slice(0, 10);
+    if (token === 291849) return gift.filter((c) => { const d = new Date(+c.date + 330 * 60000).toISOString().slice(0, 10); return d >= f && d <= t; });
+    optionCalls.push({ token, interval, from: f, to: t });
+    const out = [];
+    for (let d = Date.parse(`${f < '2026-10-01' ? '2026-10-01' : f}T09:15:00+05:30`); d <= Date.parse(`${t}T09:15:00+05:30`); d += 86400000) {
+      if ([0, 6].includes(new Date(d).getUTCDay())) continue;
+      out.push({ date: new Date(d), open: 100, high: 110, low: 90, close: 105, volume: 1, oi: 5 });
+    }
+    return out;
   };
   const instruments = instrumentList(['2026-11-17', '2026-11-23', '2026-12-01']);
   const now = IST(2026, 11, 23, 22, 30);
   const r = await runOptionsArchive(db, fetchHistorical, instruments, { now });
   assert.equal(r.failed, 0);
-  const levels = listLevels(db, { limit: 500 });
-  assert.ok(levels.length > 0, 'expected levels in the last 10 days');
-  for (const l of levels) {
-    assert.equal(l.ce_strike, Math.floor(l.level / 50) * 50);
-    assert.equal(l.pe_strike, Math.ceil(l.level / 50) * 50);
-    assert.ok(l.expiry >= l.day);
-    assert.ok(l.ce_symbol.endsWith(`${l.ce_strike}CE`) && l.pe_symbol.endsWith(`${l.pe_strike}PE`));
-  }
-  const allowed = new Set();
-  for (const l of levels) for (let k = l.ce_strike - 250; k <= l.pe_strike + 250; k += 50) allowed.add(k);
-  const saved = db.prepare('SELECT strike FROM option_contracts').all().map((x) => x.strike);
-  assert.ok(saved.length > 0 && saved.every((k) => allowed.has(k)), 'only strikes within 5 of each level are saved');
+  assert.ok(optionCalls.length > 0 && optionCalls.every((c) => c.interval === '15minute'));
+  const levels = db.prepare('SELECT * FROM option_levels').all();
+  assert.ok(levels.length > 0);
+  const allowed = new Set(levels.filter((l) => l.expiry).flatMap((l) => [`${l.expiry}:${l.strike_below}`, `${l.expiry}:${l.strike_above}`]));
+  const saved = db.prepare('SELECT expiry, strike, type FROM option_contracts').all();
+  assert.ok(saved.length > 0 && saved.every((c) => allowed.has(`${c.expiry}:${c.strike}`)), 'only the strikes below/above each level');
+  // Full history from listing (1 Oct)
+  const first = db.prepare("SELECT MIN(ts) t FROM candles WHERE interval = '15minute' AND instrument_token IN (SELECT instrument_token FROM option_contracts)").get().t;
+  assert.equal(new Date(first + 330 * 60000).toISOString().slice(0, 10), '2026-10-01');
   assert.equal(archiveDue(db, now + 60000), false);
+  // Next day: live level contracts are fetched again for the new day only
+  optionCalls.length = 0;
+  const next = IST(2026, 11, 24, 22, 30);
+  await runOptionsArchive(db, fetchHistorical, instruments.filter((i) => isoOk(i, '2026-11-24')), { now: next });
+  assert.ok(optionCalls.every((c) => c.from >= '2026-11-23'), 'only the missing days are fetched');
 });
+
+const isoOk = (i, day) => i.expiry.toISOString().slice(0, 10) >= day;

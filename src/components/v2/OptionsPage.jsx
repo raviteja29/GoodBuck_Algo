@@ -6,6 +6,7 @@ const IST = 'Asia/Kolkata';
 const fmtDay = (day) => new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(`${day}T00:00:00Z`));
 const fmtWhen = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
 const fmtPrice = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—');
+const fmtDate = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: '2-digit', month: 'short' }).format(new Date(ms));
 const fmtStrike = (v) => Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 const SIDE = { short: 'Short', long: 'Long' };
 const levelKey = (l) => `${l.crossTs}:${l.day}`;
@@ -38,7 +39,7 @@ export default function OptionsPage() {
       <header className="gb-page-head">
         <div>
           <h1 className="gb-title">Options</h1>
-          <p className="gb-subtitle">NIFTY strikes saved around each Cross Pullback level · 5-minute candles with OI</p>
+          <p className="gb-subtitle">CE and PE at the strikes either side of each Cross Pullback level · 15-minute candles with OI, full contract history</p>
         </div>
         {health?.lastRun && (
           <p className="gb-muted">Last saved {fmtDay(health.lastRun.day)} · {health.contracts} contracts · {health.candles.toLocaleString('en-IN')} candles</p>
@@ -69,16 +70,16 @@ export default function OptionsPage() {
                   <th>Level</th>
                   <th className="gb-l">Side</th>
                   <th className="gb-l gb-hide-sm">Set at</th>
-                  <th>CE</th>
-                  <th>PE</th>
-                  <th className="gb-hide-sm">Strikes saved</th>
-                  <th>Data</th>
+                  <th>Strikes</th>
+                  <th>Saved</th>
+                  <th className="gb-hide-sm">History from</th>
                 </tr>
               </thead>
               <tbody>
                 {w.levels.map((l) => {
                   const k = levelKey(l);
-                  const complete = l.bandSaved === l.bandTotal;
+                  const total = l.contracts.length;
+                  const complete = l.saved === total;
                   return (
                     <tr key={k} className="gb-opt-row" aria-selected={selected === k} tabIndex={0}
                       onClick={() => setSelected(k)}
@@ -87,13 +88,12 @@ export default function OptionsPage() {
                       <td>{fmtPrice(l.level)}</td>
                       <td className="gb-l"><span className={l.side === 'short' ? 'gb-neg' : 'gb-pos'}>{SIDE[l.side]}</span></td>
                       <td className="gb-l gb-hide-sm">{fmtWhen(l.touchTs)}</td>
-                      <td>{fmtStrike(l.ceStrike)}</td>
-                      <td>{fmtStrike(l.peStrike)}</td>
-                      <td className="gb-hide-sm">{fmtStrike(l.bandLow)} → {fmtStrike(l.bandHigh)}</td>
+                      <td>{l.strikeBelow === l.strikeAbove ? fmtStrike(l.strikeBelow) : `${fmtStrike(l.strikeBelow)} / ${fmtStrike(l.strikeAbove)}`}</td>
                       <td>
                         {!l.expiry ? <span className="gb-muted">Expired before saving</span>
-                          : <span className={complete ? 'gb-pos' : 'gb-opt-partial'}>{complete ? '✓ ' : ''}{l.bandSaved} / {l.bandTotal}</span>}
+                          : <span className={complete ? 'gb-pos' : 'gb-opt-partial'}>{complete ? '✓ ' : ''}{l.saved} / {total}</span>}
                       </td>
+                      <td className="gb-hide-sm">{l.historyFrom ? fmtDate(l.historyFrom) : '—'}</td>
                     </tr>
                   );
                 })}
@@ -109,13 +109,13 @@ export default function OptionsPage() {
 function LevelChart({ level, giftToken, onClose }) {
   const strikes = useMemo(() => [...new Set(level.contracts.map((c) => c.strike))].sort((a, b) => a - b), [level]);
   const [type, setType] = useState(level.side === 'short' ? 'PE' : 'CE');
-  const [strike, setStrike] = useState(level.side === 'short' ? level.peStrike : level.ceStrike);
+  const [strike, setStrike] = useState(level.side === 'short' ? level.strikeAbove : level.strikeBelow);
   const [instrument, setInstrument] = useState('option'); // 'option' | 'gift'
-  const [minutes, setMinutes] = useState(5);
+  const [minutes, setMinutes] = useState(15);
   const [chart, setChart] = useState(null);
   const [error, setError] = useState(null);
 
-  const contract = level.contracts.find((c) => c.strike === strike && c.type === type) || null;
+  const contract = level.contracts.find((c) => c.strike === strike && c.type === type && c.token && c.bars > 0) || null;
   const token = instrument === 'gift' ? giftToken : contract?.token;
   const tf = instrument === 'gift' ? Math.max(15, minutes) : minutes;
 
@@ -157,7 +157,7 @@ function LevelChart({ level, giftToken, onClose }) {
         <div>
           <h2 className="gb-h2">{SIDE[level.side]} level {fmtPrice(level.level)} · {fmtDay(level.day)}</h2>
           <p className="gb-muted">
-            First touch {fmtWhen(level.touchTs)}{touchInSession ? '' : ' (outside market hours)'} · CE {fmtStrike(level.ceStrike)} / PE {fmtStrike(level.peStrike)}
+            First touch {fmtWhen(level.touchTs)}{touchInSession ? '' : ' (outside market hours)'} · strikes {level.strikeBelow === level.strikeAbove ? fmtStrike(level.strikeBelow) : `${fmtStrike(level.strikeBelow)} / ${fmtStrike(level.strikeAbove)}`}
             {level.expiry ? ` · expiry ${fmtDay(level.expiry)}` : ''}
           </p>
         </div>
@@ -180,7 +180,7 @@ function LevelChart({ level, giftToken, onClose }) {
               <select id="gb-opt-strike" className="gb-opt-select" value={strike} onChange={(e) => setStrike(Number(e.target.value))}>
                 {strikes.map((s) => (
                   <option key={s} value={s}>
-                    {fmtStrike(s)}{s === level.ceStrike ? ' · CE strike' : ''}{s === level.peStrike && s !== level.ceStrike ? ' · PE strike' : ''}
+                    {fmtStrike(s)}{s === level.strikeBelow && s !== level.strikeAbove ? ' · below level' : ''}{s === level.strikeAbove && s !== level.strikeBelow ? ' · above level' : ''}
                   </option>
                 ))}
               </select>
@@ -196,7 +196,7 @@ function LevelChart({ level, giftToken, onClose }) {
         <CandleChart
           bars={chart.bars}
           minutes={chart.minutes}
-          minMinutes={instrument === 'gift' ? 15 : 5}
+          minMinutes={chart.sourceMinutes || 15}
           onMinutes={setMinutes}
           markers={markers}
           lines={lines}

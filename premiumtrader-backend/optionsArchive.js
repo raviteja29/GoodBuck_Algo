@@ -1,18 +1,18 @@
-// Options archive: saves the NIFTY option strikes around the Cross Pullback
-// levels, while the contracts are still live (Kite stops serving a
-// contract's data once it has expired).
+// Options archive: saves the NIFTY option contracts at each Cross Pullback
+// level, while they're still live (Kite stops serving a contract's data once
+// it has expired).
 //
 // A level is a setup's first-touch price (GIFT NIFTY, 15m, HMA 50 vs HMA 130).
 // It stays valid until the next cross, so it can be set on any earlier day.
 // For each trading session the level is valid in (or, if it ends before one
 // opens, the next session after it was set):
-//   CE = level rounded down to 50, PE = level rounded up to 50 (equal on a strike),
-//   saved: CE and PE for every strike from 5 below the CE to 5 above the PE,
-//   expiry = the first NIFTY expiry on or after that session's day (within its
-//   Wednesday → Tuesday week; if that one has expired, nothing can be saved).
-// Those contracts' 5-minute candles (with OI) are saved for that day.
-// Each run looks back LOOKBACK_DAYS, so a missed day is filled in on the next
-// run while the contracts are live.
+//   strikes = the strike just below and just above the level (only that one
+//             strike when the level is exactly on it), CE and PE of each,
+//   expiry  = the first NIFTY expiry on or after that session's day (within its
+//             Wednesday → Tuesday week; if that one has expired, nothing can be saved).
+// Each contract's 15-minute candles (with OI) are saved for its whole life:
+// everything Kite has from listing, then each new day until it expires.
+// Each run looks back LOOKBACK_DAYS for levels, so a missed day is filled in.
 
 import { ensureCandles, getCandles, todayIST } from './candles.js';
 import { getMeta, setMeta } from './db/index.js';
@@ -23,8 +23,8 @@ import { DEFAULT_CROSS_CONFIG, normalizeConfig } from './strategy/config.js';
 export const OPTIONS_ARCHIVE = {
   underlying: 'NIFTY',
   strikeStep: 50,
-  strikesEachSide: 5,           // saved below the CE strike and above the PE strike, CE and PE each
-  interval: '5minute',
+  interval: '15minute',
+  fullHistoryDays: 180,          // how far back to ask Kite for a contract (it returns from listing)
   lookbackDays: 10,
   historyDays: 120,              // GIFT NIFTY history for the HMA 130 warm-up
   sessionStartMin: 9 * 60 + 15,  // 09:15 IST
@@ -32,16 +32,16 @@ export const OPTIONS_ARCHIVE = {
   runAfterMinIST: 15 * 60 + 40,  // 15:40 IST, after the close
 };
 
-const LAST_RUN_KEY = 'options_archive_levels_last_run'; // renamed when the rule changed to level strikes
+const LAST_RUN_KEY = 'options_archive_last_run_v3'; // renamed whenever the saving rule changes, so the new rule runs at once
 const IST_OFFSET_MS = 330 * 60000;
 const isoDay = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
 const istDay = (ms) => new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10);
 const istMin = (ms) => { const d = new Date(ms + IST_OFFSET_MS); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
 const at = (day, min) => Date.parse(`${day}T00:00:00+05:30`) + min * 60000;
 
-/** CE = round down to the strike step, PE = round up (same strike when exactly on one). */
+/** The strike just below and just above the level (the same strike when it's exactly on one). */
 export function strikesForLevel(level, step = OPTIONS_ARCHIVE.strikeStep) {
-  return { ce: Math.floor(level / step) * step, pe: Math.ceil(level / step) * step };
+  return { below: Math.floor(level / step) * step, above: Math.ceil(level / step) * step };
 }
 
 /** NIFTY options from Kite's instrument list, as { token, symbol, expiry, strike, type, lotSize }. */
@@ -86,7 +86,7 @@ export function levelDays(setups, sessions, cfg = OPTIONS_ARCHIVE) {
   return out;
 }
 
-/** Attach expiry and CE/PE contracts to each level-day. */
+/** Attach the expiry and the contracts (CE and PE at the strikes below and above) to each level-day. */
 export function pickContracts(rows, options, cfg = OPTIONS_ARCHIVE) {
   const expiries = [...new Set(options.map((o) => o.expiry))].sort();
   const find = (expiry, strike, type) => options.find((o) => o.expiry === expiry && o.strike === strike && o.type === type) || null;
@@ -95,13 +95,9 @@ export function pickContracts(rows, options, cfg = OPTIONS_ARCHIVE) {
     // A later one means that week's expiry has already gone from Kite's list.
     const next = expiries.find((e) => e >= r.day);
     const expiry = next && (Date.parse(next) - Date.parse(r.day)) / 86400000 <= 6 ? next : null;
-    const { ce, pe } = strikesForLevel(r.level, cfg.strikeStep);
-    const low = ce - cfg.strikesEachSide * cfg.strikeStep;
-    const high = pe + cfg.strikesEachSide * cfg.strikeStep;
-    const band = [];
-    for (let k = low; k <= high; k += cfg.strikeStep) for (const type of ['CE', 'PE']) band.push({ strike: k, type, contract: expiry ? find(expiry, k, type) : null });
-    return { ...r, expiry, ceStrike: ce, peStrike: pe, bandLow: low, bandHigh: high, band,
-      ceContract: expiry && find(expiry, ce, 'CE'), peContract: expiry && find(expiry, pe, 'PE') };
+    const { below, above } = strikesForLevel(r.level, cfg.strikeStep);
+    const contracts = [...new Set([below, above])].flatMap((strike) => ['CE', 'PE'].map((type) => ({ strike, type, contract: expiry ? find(expiry, strike, type) : null })));
+    return { ...r, expiry, strikeBelow: below, strikeAbove: above, contracts };
   });
 }
 
@@ -132,35 +128,38 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
 
   const saveContract = db.prepare(`INSERT INTO option_contracts (instrument_token, tradingsymbol, underlying, expiry, strike, type, lot_size, first_saved_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(instrument_token) DO NOTHING`);
-  const saveLevel = db.prepare(`INSERT INTO option_levels (cross_ts, day, side, level, touch_ts, until_ts, expiry, ce_strike, pe_strike, ce_token, pe_token, saved_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  const saveLevel = db.prepare(`INSERT INTO option_levels (cross_ts, day, side, level, touch_ts, until_ts, expiry, strike_below, strike_above, saved_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(cross_ts, day) DO UPDATE SET until_ts = excluded.until_ts, expiry = COALESCE(excluded.expiry, option_levels.expiry),
-      ce_token = COALESCE(excluded.ce_token, option_levels.ce_token), pe_token = COALESCE(excluded.pe_token, option_levels.pe_token)`);
+      strike_below = excluded.strike_below, strike_above = excluded.strike_above`);
 
-  // contract token -> days to save
+  // Contracts to bring up to date: this run's level contracts, plus every
+  // earlier level contract that hasn't expired yet (they get each new day).
   const wanted = new Map();
   const missing = [];
   for (const r of rows) {
-    saveLevel.run(r.crossTs, r.day, r.side, r.level, r.touchTs, r.until, r.expiry, r.ceStrike, r.peStrike, r.ceContract?.token ?? null, r.peContract?.token ?? null, Date.now());
+    saveLevel.run(r.crossTs, r.day, r.side, r.level, r.touchTs, r.until, r.expiry, r.strikeBelow, r.strikeAbove, Date.now());
     if (!r.expiry) { missing.push(`${r.day} ${r.level.toFixed(1)} (week's expiry no longer listed)`); continue; }
-    for (const { contract: c, strike, type } of r.band) {
-      if (!c) { missing.push(`${r.day} ${strike} ${type}`); continue; }
-      const w = wanted.get(c.token) || { contract: c, days: new Set() };
-      w.days.add(r.day);
-      wanted.set(c.token, w);
+    for (const { contract: c, strike, type } of r.contracts) {
+      if (!c) missing.push(`${r.day} ${strike} ${type}`);
+      else wanted.set(c.token, c);
     }
   }
+  const live = new Map(options.map((o) => [o.token, o]));
+  const earlier = db.prepare(`SELECT DISTINCT oc.instrument_token AS token FROM option_contracts oc
+    JOIN candle_days d ON d.instrument_token = oc.instrument_token AND d.interval = ?
+    WHERE oc.underlying = ? AND oc.expiry >= ?`).all(cfg.interval, cfg.underlying, today);
+  for (const { token } of earlier) if (live.has(token) && !wanted.has(token)) wanted.set(token, live.get(token));
 
   let requests = 0, failed = 0;
-  for (const { contract: c, days } of wanted.values()) {
+  for (const c of wanted.values()) {
     saveContract.run(c.token, c.symbol, cfg.underlying, c.expiry, c.strike, c.type, c.lotSize, Date.now());
-    for (const day of [...days].sort()) {
-      try {
-        requests += (await ensureCandles(db, fetchHistorical, { token: c.token, interval: cfg.interval, from: day, to: day, now })).requests;
-      } catch (e) {
-        failed += 1;
-        log(`[OPTIONS] ${c.symbol} ${day}: ${e.message}`);
-      }
+    try {
+      // Whole life: Kite returns candles from the day the contract was listed.
+      requests += (await ensureCandles(db, fetchHistorical, { token: c.token, interval: cfg.interval, from: back(cfg.fullHistoryDays), to: today, now })).requests;
+    } catch (e) {
+      failed += 1;
+      log(`[OPTIONS] ${c.symbol}: ${e.message}`);
     }
   }
   if (missing.length) log(`[OPTIONS] Not in Kite's list (expired or no such strike): ${missing.join(', ')}`);
@@ -175,23 +174,13 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
   return summary;
 }
 
-/** For /api/health and the levels list: what has been saved. */
+/** For /api/health: what has been saved. */
 export function archiveStatus(db, cfg = OPTIONS_ARCHIVE) {
   const contracts = db.prepare('SELECT COUNT(*) n FROM option_contracts').get().n;
-  const candles = db.prepare('SELECT COUNT(*) n FROM candles WHERE interval = ? AND instrument_token IN (SELECT instrument_token FROM option_contracts)').get(cfg.interval).n;
+  const candles = db.prepare('SELECT COUNT(*) n FROM candles WHERE instrument_token IN (SELECT instrument_token FROM option_contracts)').get().n;
   const last = getMeta(db, LAST_RUN_KEY);
   return {
-    contracts, candles,
+    contracts, candles, interval: cfg.interval,
     lastRun: last && { day: last.day, levels: last.levels, contracts: last.contracts, missing: last.missing, tookSec: last.tookSec },
   };
-}
-
-/** Saved levels with their strikes, newest first. */
-export function listLevels(db, { limit = 50 } = {}) {
-  return db.prepare(`SELECT l.day, l.side, l.level, l.touch_ts, l.cross_ts, l.until_ts, l.expiry,
-      l.ce_strike, l.pe_strike, ce.tradingsymbol AS ce_symbol, pe.tradingsymbol AS pe_symbol
-    FROM option_levels l
-    LEFT JOIN option_contracts ce ON ce.instrument_token = l.ce_token
-    LEFT JOIN option_contracts pe ON pe.instrument_token = l.pe_token
-    ORDER BY l.day DESC, l.touch_ts DESC LIMIT ?`).all(limit);
 }
