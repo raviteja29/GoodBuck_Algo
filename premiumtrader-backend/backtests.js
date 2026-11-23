@@ -196,8 +196,8 @@ export function chartWindow(db, backtest, { at = null, before = 120, after = 80 
   const target = at ?? backtest.trades.at(-1)?.entryTs ?? candles.at(-1).time;
   let idx = candles.findIndex((c) => c.time >= target);
   if (idx < 0) idx = candles.length - 1;
-  const lo = Math.max(0, idx - Math.min(before, 400));
-  const hi = Math.min(candles.length, idx + Math.min(after, 400) + 1);
+  const lo = Math.max(0, idx - Math.min(before, 3000));
+  const hi = Math.min(candles.length, idx + Math.min(after, 3000) + 1);
   const r2 = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
   const t0 = candles[lo].time, t1 = candles[hi - 1].time;
   return {
