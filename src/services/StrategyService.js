@@ -46,7 +46,13 @@ export const BacktestService = {
   list: (strategyId, limit = 20) => bt('GET', `?strategyId=${encodeURIComponent(strategyId)}&limit=${limit}`),
   get: (id) => bt('GET', `/${encodeURIComponent(id)}`),
   remove: (id) => bt('DELETE', `/${encodeURIComponent(id)}`),
-  chart: (id, at) => bt('GET', `/${encodeURIComponent(id)}/chart${at ? `?at=${at}` : ''}`),
+  chart: (id, at, { before, after } = {}) => {
+    const q = new URLSearchParams();
+    if (at) q.set('at', at);
+    if (before) q.set('before', before);
+    if (after) q.set('after', after);
+    return bt('GET', `/${encodeURIComponent(id)}/chart${q.size ? `?${q}` : ''}`);
+  },
   /** Download the trades CSV (needs the auth header, so fetch + blob rather than a plain link). */
   downloadCsv: async (id) => {
     const res = await fetch(`/api/backtests/${encodeURIComponent(id)}/trades.csv`, { headers: authHeaders() });

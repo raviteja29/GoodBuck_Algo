@@ -12,7 +12,7 @@ const C = {
   up: '#30D158', down: '#FF453A', hma50: '#FFD60A', hma130: '#E5E5EA', sma50: '#FF9F0A', oi: '#64D2FF',
   grid: 'rgba(56, 56, 58, 0.6)', text: '#A1A1A6', bg: '#1C1C1E',
 };
-const INDICATORS = [
+const DEFAULT_INDICATORS = [
   { key: 'hma50', label: 'HMA 50', color: C.hma50 },
   { key: 'hma130', label: 'HMA 130', color: C.hma130 },
   { key: 'sma50', label: 'SMA 50', color: C.sma50 },
@@ -33,7 +33,8 @@ const savePrefs = (p) => { try { localStorage.setItem('gb_chart_prefs', JSON.str
  * an OHLC legend. Indicators come with the data (computed on the server).
  *
  * props:
- *   bars        [{ t, o, h, l, c, v, oi, hma50, hma130, sma50 }]
+ *   bars        [{ t, o, h, l, c, v, oi, ...one value per indicator key }]
+ *   indicators  [{ key, label, color, dashed }] lines drawn from bars[key] (fixed for the chart's life)
  *   minutes     current timeframe; onMinutes(m) to change it (null hides the picker)
  *   minMinutes  smallest timeframe the data supports
  *   markers     [{ t, text, color, position: 'aboveBar'|'belowBar', shape }]
@@ -42,12 +43,16 @@ const savePrefs = (p) => { try { localStorage.setItem('gb_chart_prefs', JSON.str
  *   title       text for the legend
  *   showOi      whether the instrument has open interest
  *   showVolume  whether the instrument has volume (GIFT NIFTY's index feed has none)
+ *   header      optional content shown between the toolbar and the chart
+ *   focusLabel  label of the button that returns to `focus`
  */
-export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, markers = [], lines = [], focus, title, showOi = false, showVolume = true, height = 480 }) {
+export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, indicators = DEFAULT_INDICATORS, markers = [], lines = [], focus, title, showOi = false, showVolume = true, height = 480, header = null, focusLabel = 'Level day' }) {
   const box = useRef(null);
   const wrap = useRef(null);
   const api = useRef(null);
-  const [prefs, setPrefs] = useState(() => ({ hma50: true, hma130: true, sma50: true, volume: true, oi: false, log: false, ...(loadPrefs() || {}) }));
+  const INDICATORS = useRef(indicators).current;
+  const [prefs, setPrefs] = useState(() => ({ volume: true, oi: false, log: false, ...(loadPrefs() || {}) }));
+  const on = (key) => prefs[key] !== false; // indicators are on unless turned off
   const [hover, setHover] = useState(null);
   const [full, setFull] = useState(false);
 
@@ -73,7 +78,7 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
       upColor: C.up, downColor: C.down, borderUpColor: C.up, borderDownColor: C.down, wickUpColor: C.up, wickDownColor: C.down,
     });
     const ind = Object.fromEntries(INDICATORS.map((i) => [i.key, chart.addSeries(LineSeries, {
-      color: i.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      color: i.color, lineWidth: 2, lineStyle: i.dashed ? LineStyle.Dashed : LineStyle.Solid, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     })]));
     const volume = chart.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
     chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
@@ -81,7 +86,7 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
     chart.subscribeCrosshairMove((p) => setHover(p?.time ? p.time : null));
     api.current = { chart, candles, ind, volume, markerApi, oi: null, priceLines: [] };
     return () => { chart.remove(); api.current = null; };
-  }, []);
+  }, [INDICATORS]);
 
   // Data
   useEffect(() => {
@@ -93,7 +98,7 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
     }
     a.volume.setData(bars.map((b) => ({ time: toTime(b.t), value: b.v || 0, color: b.c >= b.o ? 'rgba(48, 209, 88, 0.35)' : 'rgba(255, 69, 58, 0.35)' })));
     if (a.oi) a.oi.setData(bars.filter((b) => Number.isFinite(b.oi)).map((b) => ({ time: toTime(b.t), value: b.oi })));
-  }, [bars]);
+  }, [bars, INDICATORS]);
 
   // Markers and horizontal lines
   useEffect(() => {
@@ -103,7 +108,7 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
     const times = bars.map((b) => b.t);
     const snap = (t) => { let k = 0; while (k + 1 < times.length && times[k + 1] <= t) k += 1; return toTime(times[k]); };
     a.markerApi.setMarkers(markers.filter((m) => m.t >= times[0]).map((m) => ({
-      time: snap(m.t), position: m.position || 'aboveBar', color: m.color || C.oi, shape: m.shape || 'arrowDown', text: m.text || '',
+      time: snap(m.t), position: m.position || 'aboveBar', color: m.color || C.oi, shape: m.shape || 'arrowDown', text: m.text || '', size: m.size || 1,
     })).sort((x, y) => x.time - y.time));
     a.priceLines.forEach((pl) => a.candles.removePriceLine(pl));
     a.priceLines = lines.filter((l) => Number.isFinite(l.price)).map((l) => a.candles.createPriceLine({
@@ -115,7 +120,7 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
   useEffect(() => {
     const a = api.current;
     if (!a) return;
-    for (const i of INDICATORS) a.ind[i.key].applyOptions({ visible: !!prefs[i.key] });
+    for (const i of INDICATORS) a.ind[i.key].applyOptions({ visible: prefs[i.key] !== false });
     a.volume.applyOptions({ visible: showVolume && !!prefs.volume });
     a.chart.priceScale('right').applyOptions({ mode: prefs.log ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal });
     const wantOi = showOi && prefs.oi;
@@ -127,7 +132,7 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
       a.chart.removeSeries(a.oi);
       a.oi = null;
     }
-  }, [prefs, showOi, showVolume, bars]);
+  }, [prefs, showOi, showVolume, bars, INDICATORS]);
 
   // First view: the focus window (e.g. the level's day), else the last ~150 bars.
   const focusKey = `${focus?.from}-${focus?.to}-${minutes}-${bars?.length ? bars[0].t : ''}`;
@@ -175,7 +180,7 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
         )}
         <div className="gb-cc-toggles">
           {INDICATORS.map((i) => (
-            <button key={i.key} type="button" className="gb-cc-chip" aria-pressed={!!prefs[i.key]} onClick={() => toggle(i.key)}>
+            <button key={i.key} type="button" className="gb-cc-chip" aria-pressed={on(i.key)} onClick={() => setPrefs((p) => ({ ...p, [i.key]: !on(i.key) }))}>
               <span className="gb-cc-swatch" style={{ background: i.color }} />{i.label}
             </button>
           ))}
@@ -184,11 +189,12 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
           <button type="button" className="gb-cc-chip" aria-pressed={!!prefs.log} onClick={() => toggle('log')}>Log</button>
         </div>
         <div className="gb-cc-actions">
-          {focus && <button type="button" className="gb-btn gb-btn-secondary gb-cc-small" onClick={goFocus}>Level day</button>}
+          {focus && <button type="button" className="gb-btn gb-btn-secondary gb-cc-small" onClick={goFocus}>{focusLabel}</button>}
           <button type="button" className="gb-btn gb-btn-secondary gb-cc-small" onClick={fit}>Fit all</button>
           <button type="button" className="gb-btn gb-btn-secondary gb-cc-small" onClick={toggleFull}>{full ? 'Exit full screen' : 'Full screen'}</button>
         </div>
       </div>
+      {header}
       <div className="gb-cc-plot" style={{ height: full ? undefined : height }}>
         <div ref={box} className="gb-cc-canvas" />
         {b && (
@@ -199,7 +205,7 @@ export default function CandleChart({ bars, minutes, onMinutes, minMinutes = 5, 
               {chg != null && <span style={{ color: chg >= 0 ? C.up : C.down }}> {chg >= 0 ? '+' : ''}{fmt(chg)}</span>}
             </div>
             <div>
-              {INDICATORS.filter((i) => prefs[i.key]).map((i) => (
+              {INDICATORS.filter((i) => on(i.key)).map((i) => (
                 <span key={i.key} style={{ color: i.color }}>{i.label} {fmt(b[i.key])} </span>
               ))}
               {showVolume && prefs.volume && <span>Vol {fmt(b.v, 0)} </span>}
