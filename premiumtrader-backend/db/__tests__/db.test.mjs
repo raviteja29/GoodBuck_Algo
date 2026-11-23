@@ -7,9 +7,9 @@ const IST = (y, m, d, hh, mm) => Date.UTC(y, m - 1, d, hh, mm) - 330 * 60000;
 
 test('migrations create all tables and are idempotent', () => {
   const db = openDb(':memory:');
-  assert.equal(schemaVersion(db), 2);
+  assert.equal(schemaVersion(db), 3);
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r => r.name);
-  for (const t of ['meta', 'strategies', 'backtests', 'backtest_trades', 'candles', 'candle_days', 'signals', 'trade_snapshots']) {
+  for (const t of ['meta', 'strategies', 'backtests', 'backtest_trades', 'candles', 'candle_days', 'signals', 'trade_snapshots', 'option_contracts']) {
     assert.ok(tables.includes(t), `missing table ${t}`);
   }
 });

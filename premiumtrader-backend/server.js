@@ -17,6 +17,7 @@ import { openDb, schemaVersion, DEFAULT_DB_PATH } from './db/index.js';
 import { saveKiteSession, loadKiteSession, clearKiteSession, publicSessionInfo } from './kiteSession.js';
 import { strategiesRouter, seedDefaultStrategy, seedCrossPullbackStrategies, seedRedCandleStrategy } from './strategies.js';
 import { backtestsRouter } from './backtests.js';
+import { runOptionsArchive, archiveDue, archiveStatus } from './optionsArchive.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -1081,6 +1082,7 @@ app.get('/api/health', (req, res) => {
     db: { schema: schemaVersion(db) },
     kite: publicSessionInfo(session),
     ticker: { initialized: !!ticker, connected: !!(ticker && ticker.connected), subscribed: subscribedTokens.size },
+    optionsArchive: { running: optionsArchiveRunning, ...archiveStatus(db) },
   });
 });
 
@@ -1437,6 +1439,29 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+// Options archive: after the close each day (while logged in), save NIFTY
+// option candles before the contracts expire. Checked every 10 minutes.
+let optionsArchiveRunning = false;
+async function maybeArchiveOptions(reason) {
+  if (optionsArchiveRunning || !archiveDue(db)) return;
+  const session = loadKiteSession(db);
+  if (!session) return;
+  optionsArchiveRunning = true;
+  try {
+    const kc = kiteFor(session.access_token);
+    const fetchHistorical = (token, interval, f, t) => kc.getHistoricalData(token, interval, f, t, false, true);
+    const instruments = await loadInstruments(false, 'options-archive');
+    console.log(`[OPTIONS] Archive run started (${reason})`);
+    const r = await runOptionsArchive(db, fetchHistorical, instruments, { log: (m) => console.warn(m) });
+    console.log(`[OPTIONS] Saved ${r.contracts} contracts (expiries ${r.expiries.join(', ')}) for ${r.tradingDays.length} days in ${r.tookSec}s, ${r.requests} requests, ${r.failed} failed`);
+  } catch (e) {
+    console.error('[OPTIONS] Archive run failed:', e.message);
+  } finally {
+    optionsArchiveRunning = false;
+  }
+}
+setInterval(() => maybeArchiveOptions('schedule'), 10 * 60 * 1000).unref();
+
 // Start the server
 server.listen(port, '0.0.0.0', () => {
   console.log(`Backend server running on port ${port}`);
@@ -1452,4 +1477,5 @@ server.listen(port, '0.0.0.0', () => {
   console.log(`WebSocket server running on port ${port}`);
   // Warm instrument cache in background (non-blocking)
   loadInstruments(false, 'warm-start').catch(e => console.warn('[INSTRUMENTS] Warm load failed:', e.message));
+  setTimeout(() => maybeArchiveOptions('startup'), 30 * 1000);
 });

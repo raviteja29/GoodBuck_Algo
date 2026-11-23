@@ -123,6 +123,21 @@ const MIGRATIONS = [
   ALTER TABLE backtests ADD COLUMN summary TEXT;   -- JSON per-setup rows
   ALTER TABLE backtests ADD COLUMN info TEXT;      -- JSON: candles used, skipped weeks, timings
   `,
+
+  // 3 — option contracts whose candles are archived (candles live in `candles`).
+  `
+  CREATE TABLE option_contracts (
+    instrument_token  INTEGER PRIMARY KEY,
+    tradingsymbol     TEXT NOT NULL,
+    underlying        TEXT NOT NULL,
+    expiry            TEXT NOT NULL,        -- YYYY-MM-DD
+    strike            REAL NOT NULL,
+    type              TEXT NOT NULL CHECK (type IN ('CE','PE')),
+    lot_size          INTEGER,
+    first_saved_at    INTEGER NOT NULL
+  );
+  CREATE INDEX option_contracts_expiry ON option_contracts(underlying, expiry, strike);
+  `,
 ];
 
 export function openDb(file = process.env.DB_PATH || DEFAULT_DB_PATH) {
