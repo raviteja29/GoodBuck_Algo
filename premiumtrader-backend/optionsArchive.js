@@ -7,7 +7,8 @@
 // For each trading session the level is valid in (or, if it ends before one
 // opens, the next session after it was set):
 //   CE = level rounded down to 50, PE = level rounded up to 50 (equal on a strike),
-//   expiry = the first NIFTY expiry on or after that session's day.
+//   expiry = the first NIFTY expiry on or after that session's day (within its
+//   Wednesday → Tuesday week; if that one has expired, nothing can be saved).
 // Those contracts' 5-minute candles (with OI) are saved for that day.
 // Each run looks back LOOKBACK_DAYS, so a missed day is filled in on the next
 // run while the contracts are live.
@@ -88,7 +89,10 @@ export function pickContracts(rows, options, cfg = OPTIONS_ARCHIVE) {
   const expiries = [...new Set(options.map((o) => o.expiry))].sort();
   const find = (expiry, strike, type) => options.find((o) => o.expiry === expiry && o.strike === strike && o.type === type) || null;
   return rows.map((r) => {
-    const expiry = expiries.find((e) => e >= r.day) || null;
+    // A week runs Wednesday → Tuesday, so the day's expiry is at most 6 days away.
+    // A later one means that week's expiry has already gone from Kite's list.
+    const next = expiries.find((e) => e >= r.day);
+    const expiry = next && (Date.parse(next) - Date.parse(r.day)) / 86400000 <= 6 ? next : null;
     const { ce, pe } = strikesForLevel(r.level, cfg.strikeStep);
     return { ...r, expiry, ceStrike: ce, peStrike: pe, ceContract: expiry && find(expiry, ce, 'CE'), peContract: expiry && find(expiry, pe, 'PE') };
   });
@@ -123,7 +127,7 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
     VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(instrument_token) DO NOTHING`);
   const saveLevel = db.prepare(`INSERT INTO option_levels (cross_ts, day, side, level, touch_ts, until_ts, expiry, ce_strike, pe_strike, ce_token, pe_token, saved_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(cross_ts, day) DO UPDATE SET until_ts = excluded.until_ts, expiry = excluded.expiry,
+    ON CONFLICT(cross_ts, day) DO UPDATE SET until_ts = excluded.until_ts, expiry = COALESCE(excluded.expiry, option_levels.expiry),
       ce_token = COALESCE(excluded.ce_token, option_levels.ce_token), pe_token = COALESCE(excluded.pe_token, option_levels.pe_token)`);
 
   // contract token -> days to save

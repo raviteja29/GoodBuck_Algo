@@ -49,6 +49,13 @@ test('expiry is the first one on or after the trading day (Tue 17 level traded W
   assert.equal(r.peContract.type, 'PE');
 });
 
+test('a day whose weekly expiry has already gone is not mapped to the next week', () => {
+  const options = niftyOptions(instrumentList(['2026-11-23', '2026-12-01']));
+  const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-16' }], options);
+  assert.equal(r.expiry, null);
+  assert.equal(r.ceContract, null);
+});
+
 test('sessions are days with candles inside 09:15–15:30', () => {
   const bars = [IST(2026, 11, 21, 1, 0), IST(2026, 11, 20, 9, 15), IST(2026, 11, 20, 20, 0)].map((ts) => ({ ts }));
   assert.deepEqual(sessionDays(bars), ['2026-11-20']);
