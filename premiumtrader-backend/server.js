@@ -1439,8 +1439,8 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// Options archive: after the close each day (while logged in), save NIFTY
-// option candles before the contracts expire. Checked every 10 minutes.
+// Options archive: after the close each day (while logged in), save the NIFTY
+// CE/PE strikes at each Cross Pullback level before the contracts expire. Checked every 10 minutes.
 let optionsArchiveRunning = false;
 async function maybeArchiveOptions(reason) {
   if (optionsArchiveRunning || !archiveDue(db)) return;
@@ -1453,7 +1453,7 @@ async function maybeArchiveOptions(reason) {
     const instruments = await loadInstruments(false, 'options-archive');
     console.log(`[OPTIONS] Archive run started (${reason})`);
     const r = await runOptionsArchive(db, fetchHistorical, instruments, { log: (m) => console.warn(m) });
-    console.log(`[OPTIONS] Saved ${r.contracts} contracts (expiries ${r.expiries.join(', ')}) for ${r.tradingDays.length} days in ${r.tookSec}s, ${r.requests} requests, ${r.failed} failed`);
+    console.log(`[OPTIONS] Saved ${r.contracts} level-strike contracts for ${r.levels} levels since ${r.since} in ${r.tookSec}s (${r.requests} requests, ${r.failed} failed, ${r.missing} not available)`);
   } catch (e) {
     console.error('[OPTIONS] Archive run failed:', e.message);
   } finally {
