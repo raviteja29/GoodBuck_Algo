@@ -138,6 +138,25 @@ const MIGRATIONS = [
   );
   CREATE INDEX option_contracts_expiry ON option_contracts(underlying, expiry, strike);
   `,
+
+  // 4 — Cross Pullback levels and the CE/PE strikes saved for each trading day.
+  `
+  CREATE TABLE option_levels (
+    cross_ts   INTEGER NOT NULL,             -- the cross that started the setup
+    day        TEXT NOT NULL,                -- trading day the level applies to (IST)
+    side       TEXT NOT NULL,
+    level      REAL NOT NULL,                -- first-touch price (GIFT NIFTY)
+    touch_ts   INTEGER NOT NULL,
+    until_ts   INTEGER,                      -- next cross; NULL while still valid
+    expiry     TEXT,
+    ce_strike  REAL NOT NULL,
+    pe_strike  REAL NOT NULL,
+    ce_token   INTEGER,
+    pe_token   INTEGER,
+    saved_at   INTEGER NOT NULL,
+    PRIMARY KEY (cross_ts, day)
+  ) WITHOUT ROWID;
+  `,
 ];
 
 export function openDb(file = process.env.DB_PATH || DEFAULT_DB_PATH) {

@@ -1,15 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../index.js';
-import { niftyOptions, contractsForDay, archiveDue, runOptionsArchive, archiveStatus, OPTIONS_ARCHIVE } from '../../optionsArchive.js';
+import { strikesForLevel, niftyOptions, sessionDays, levelDays, pickContracts, archiveDue, runOptionsArchive, archiveStatus, listLevels } from '../../optionsArchive.js';
 
 const IST = (y, m, d, hh, mm) => Date.UTC(y, m - 1, d, hh, mm) - 330 * 60000;
 
-function instrumentList() {
-  const out = [{ exchange: 'NSE', name: 'NIFTY 50', instrument_type: 'EQ', instrument_token: 256265 }];
+function instrumentList(expiries = ['2026-11-17', '2026-11-23', '2026-12-01']) {
+  const out = [];
   let tok = 1000;
-  for (const expiry of ['2026-11-23', '2026-12-01', '2026-12-08']) {
-    for (let k = 24000; k <= 26500; k += 50) {
+  for (const expiry of expiries) {
+    for (let k = 20000; k <= 30000; k += 50) {
       for (const t of ['CE', 'PE']) out.push({ exchange: 'NFO', name: 'NIFTY', instrument_type: t, instrument_token: tok++, tradingsymbol: `NIFTY${expiry}${k}${t}`, expiry: new Date(expiry), strike: k, lot_size: 75 });
     }
   }
@@ -17,21 +17,41 @@ function instrumentList() {
   return out;
 }
 
-test('picks NIFTY options only, with ISO expiries', () => {
-  const o = niftyOptions(instrumentList());
-  assert.equal(o.length, 3 * 51 * 2);
-  assert.equal(o[0].expiry, '2026-11-23');
+test('CE rounds the level down, PE rounds it up; same strike when exactly on one', () => {
+  assert.deepEqual(strikesForLevel(25357.6), { ce: 25350, pe: 25400 });
+  assert.deepEqual(strikesForLevel(25219.9), { ce: 25200, pe: 25250 });
+  assert.deepEqual(strikesForLevel(25350), { ce: 25350, pe: 25350 });
 });
 
-test('strikes span the day range ±15 strikes, nearest two expiries', () => {
-  const o = niftyOptions(instrumentList());
-  const c = contractsForDay(o, '2026-11-23', 25210, 25330);
-  const strikes = [...new Set(c.map((x) => x.strike))].sort((a, b) => a - b);
-  assert.equal(strikes[0], 24450);
-  assert.equal(strikes.at(-1), 26100);
-  assert.deepEqual([...new Set(c.map((x) => x.expiry))].sort(), ['2026-11-23', '2026-12-01']);
-  // After an expiry passes, the next two are used
-  assert.deepEqual([...new Set(contractsForDay(o, '2026-11-24', 25210, 25330).map((x) => x.expiry))].sort(), ['2026-12-01', '2026-12-08']);
+test('a level applies to every session until the next cross, even if set on an earlier day', () => {
+  const sessions = ['2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20'];
+  const setups = [
+    // set Tue 17 20:00, valid until Wed 18 15:30 → Wed only
+    { crossTs: IST(2026, 11, 17, 17, 15), side: 'short', touch: 25357.6, touchTs: IST(2026, 11, 17, 20, 0) },
+    // set Wed 18 16:00, ends Thu 09:00 before the session → next session (Thu)
+    { crossTs: IST(2026, 11, 18, 15, 30), side: 'long', touch: 25219.9, touchTs: IST(2026, 11, 18, 16, 0) },
+    // never touched → no level
+    { crossTs: IST(2026, 11, 19, 9, 0), side: 'short', touch: null, touchTs: null },
+    // still valid at the end → every later session
+    { crossTs: IST(2026, 11, 19, 10, 15), side: 'long', touch: 25529.5, touchTs: IST(2026, 11, 19, 16, 0) },
+  ];
+  const rows = levelDays(setups, sessions).map((r) => `${r.level}@${r.day}`);
+  assert.deepEqual(rows, ['25357.6@2026-11-18', '25219.9@2026-11-19', '25529.5@2026-11-20']);
+});
+
+test('expiry is the first one on or after the trading day (Tue 17 level traded Wed 18 → 23 Nov)', () => {
+  const options = niftyOptions(instrumentList());
+  const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-18' }], options);
+  assert.equal(r.expiry, '2026-11-23');
+  assert.equal(r.ceContract.strike, 25350);
+  assert.equal(r.ceContract.type, 'CE');
+  assert.equal(r.peContract.strike, 25400);
+  assert.equal(r.peContract.type, 'PE');
+});
+
+test('sessions are days with candles inside 09:15–15:30', () => {
+  const bars = [IST(2026, 11, 21, 1, 0), IST(2026, 11, 20, 9, 15), IST(2026, 11, 20, 20, 0)].map((ts) => ({ ts }));
+  assert.deepEqual(sessionDays(bars), ['2026-11-20']);
 });
 
 test('due only after 15:40 IST and once a day', () => {
@@ -40,23 +60,36 @@ test('due only after 15:40 IST and once a day', () => {
   assert.equal(archiveDue(db, IST(2026, 11, 23, 22, 30)), true);
 });
 
-test('run saves index + contracts for trading days and records the run', async () => {
+test('run saves only the level strikes and records each level', async () => {
   const db = openDb(':memory:');
-  const calls = [];
-  // Only Monday 23 Nov trades (Sunday 22 is empty)
+  // GIFT NIFTY: a slow wave so HMA 50 and HMA 130 cross; options: one candle per day
+  const start = IST(2026, 7, 1, 6, 30);
+  const gift = [];
+  for (let t = start, i = 0; t < IST(2026, 11, 23, 23, 45); t += 15 * 60000, i++) {
+    const m = new Date(t + 330 * 60000); const min = m.getUTCHours() * 60 + m.getUTCMinutes();
+    if (m.getUTCDay() === 0 || m.getUTCDay() === 6 || min < 6 * 60 + 30) continue;
+    const p = 25000 + 400 * Math.sin(i / 120) + 30 * Math.sin(i / 7);
+    gift.push({ date: new Date(t), open: p, high: p + 15, low: p - 15, close: p + 3, volume: 0 });
+  }
+  const optionCalls = [];
   const fetchHistorical = async (token, interval, from, to) => {
-    calls.push(token);
-    if (to.slice(0, 10) < '2026-11-23') return [];
-    const base = token === 256265 ? 25270 : 100;
-    return [{ date: new Date('2026-11-23T09:15:00+05:30'), open: base, high: base + 60, low: base - 60, close: base, volume: 1, oi: 5 }];
+    if (token === 291849) return gift.filter((c) => { const d = new Date(+c.date + 330 * 60000).toISOString().slice(0, 10); return d >= from.slice(0, 10) && d <= to.slice(0, 10); });
+    optionCalls.push(token);
+    return [{ date: new Date(`${from.slice(0, 10)}T09:15:00+05:30`), open: 100, high: 110, low: 90, close: 105, volume: 1, oi: 5 }];
   };
+  const instruments = instrumentList(['2026-11-17', '2026-11-23', '2026-12-01']);
   const now = IST(2026, 11, 23, 22, 30);
-  const r = await runOptionsArchive(db, fetchHistorical, instrumentList(), { now, cfg: { ...OPTIONS_ARCHIVE, lookbackDays: 2 } });
-  assert.deepEqual(r.tradingDays, ['2026-11-23']);
+  const r = await runOptionsArchive(db, fetchHistorical, instruments, { now });
   assert.equal(r.failed, 0);
-  assert.ok(r.contracts > 0 && r.contracts === calls.length - 1);
-  const s = archiveStatus(db);
-  assert.equal(s.contracts, r.contracts);
-  assert.equal(s.candles, r.contracts);
+  const levels = listLevels(db, { limit: 500 });
+  assert.ok(levels.length > 0, 'expected levels in the last 10 days');
+  for (const l of levels) {
+    assert.equal(l.ce_strike, Math.floor(l.level / 50) * 50);
+    assert.equal(l.pe_strike, Math.ceil(l.level / 50) * 50);
+    assert.ok(l.expiry >= l.day);
+    assert.ok(l.ce_symbol.endsWith(`${l.ce_strike}CE`) && l.pe_symbol.endsWith(`${l.pe_strike}PE`));
+  }
+  const strikes = new Set(levels.flatMap((l) => [`${l.ce_strike}CE`, `${l.pe_strike}PE`]));
+  assert.ok(archiveStatus(db).contracts <= strikes.size * 2, 'only level strikes are saved');
   assert.equal(archiveDue(db, now + 60000), false);
 });
