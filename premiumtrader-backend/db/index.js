@@ -157,6 +157,11 @@ const MIGRATIONS = [
     PRIMARY KEY (cross_ts, day)
   ) WITHOUT ROWID;
   `,
+
+  // 5 — drop level rows mapped to a later week's expiry (that week's had expired).
+  `
+  DELETE FROM option_levels WHERE expiry IS NOT NULL AND julianday(expiry) - julianday(day) > 6;
+  `,
 ];
 
 export function openDb(file = process.env.DB_PATH || DEFAULT_DB_PATH) {
