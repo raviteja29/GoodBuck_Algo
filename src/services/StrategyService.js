@@ -100,3 +100,14 @@ export function describeInWords(config, setupCatalogue = []) {
 }
 
 export default StrategyService;
+
+const op = (path) => request('GET', path, undefined, '/api/options');
+
+export const OptionsService = {
+  levels: (weeks = 8) => op(`/levels?weeks=${weeks}`),
+  chart: (token, minutes) => op(`/chart?token=${encodeURIComponent(token)}&minutes=${minutes}`),
+  health: async () => {
+    const res = await fetch('/api/health');
+    return res.ok ? res.json() : null;
+  },
+};

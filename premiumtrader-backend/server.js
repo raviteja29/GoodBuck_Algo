@@ -18,6 +18,7 @@ import { saveKiteSession, loadKiteSession, clearKiteSession, publicSessionInfo }
 import { strategiesRouter, seedDefaultStrategy, seedCrossPullbackStrategies, seedRedCandleStrategy } from './strategies.js';
 import { backtestsRouter } from './backtests.js';
 import { runOptionsArchive, archiveDue, archiveStatus } from './optionsArchive.js';
+import { optionsRouter } from './options.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -163,6 +164,7 @@ const kiteFor = (token) => {
 // Saved strategies (Phase 1) and server-side backtests (Phase 2)
 app.use('/api/strategies', strategiesRouter(db, { verifyToken }));
 app.use('/api/backtests', backtestsRouter(db, { verifyToken, kiteFor }));
+app.use('/api/options', optionsRouter(db, { verifyToken }));
 
 // 3) Define routes after json parser
 app.post('/api/generate_session', async (req, res) => {

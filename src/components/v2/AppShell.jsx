@@ -8,6 +8,9 @@ const Icon = {
   backtests: (
     <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0A84FF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M7 15l4-4 3 3 5-6" /></svg>
   ),
+  options: (
+    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0A84FF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 4v16" /><path d="M17 4v16" /><rect x="4" y="8" width="6" height="8" rx="1" /><rect x="14" y="6" width="6" height="9" rx="1" /></svg>
+  ),
   live: (
     <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4" /></svg>
   ),
@@ -23,6 +26,7 @@ const Icon = {
 const NAV = [
   { id: 'strategies', label: 'Strategies' },
   { id: 'backtests', label: 'Backtests' },
+  { id: 'options', label: 'Options' },
   { id: 'live', label: 'Live', soon: 'Phase 3' },
   { id: 'performance', label: 'Performance' },
   { id: 'alerts', label: 'Alerts', soon: 'Phase 5' },
