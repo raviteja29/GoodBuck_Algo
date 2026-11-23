@@ -82,7 +82,7 @@ const app = express();
 
 // SQLite store (strategies, backtests, candles, signals, snapshots, Kite session)
 const db = openDb();
-console.log(`[DB] Ready (schema v${schemaVersion(db)})`);
+console.log(`[DB] Ready (schema v${schemaVersion(db)}) at ${process.env.DB_PATH || DEFAULT_DB_PATH}${process.env.DB_PATH ? '' : ' - not persistent on Render; set DB_PATH to a disk path'}`);
 const seeded = seedDefaultStrategy(db);
 if (seeded) console.log(`[STRATEGIES] Saved the default strategy "${seeded.name}"`);
 for (const s of seedCrossPullbackStrategies(db)) console.log(`[STRATEGIES] Saved "${s.name}"`);
