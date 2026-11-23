@@ -3,12 +3,13 @@ import AppShell from '../v2/AppShell';
 import StrategiesPage from '../v2/StrategiesPage';
 import StrategyBuilder from '../v2/StrategyBuilder';
 import BacktestPage from '../v2/BacktestPage';
+import OptionsPage from '../v2/OptionsPage';
 import StrategyHub from '../StrategyHub';
 import TradingService from '../../services/TradingService';
 import '../../styles/v2.css';
 
 // The section lives in the URL hash so refresh and the browser back button work:
-// #strategies, #strategies/new, #strategies/<id>, #backtests, #backtests/<strategyId>, #performance
+// #strategies, #strategies/new, #strategies/<id>, #backtests, #backtests/<strategyId>, #options, #performance
 const parseHash = () => {
   const [section = 'strategies', id = null, action = null] = window.location.hash.replace(/^#\/?/, '').split('/');
   return { section: section || 'strategies', id, action };
@@ -53,6 +54,8 @@ const Dashboard = ({ onLogout }) => {
         onEditStrategy={(id) => go('strategies', id)}
       />
     );
+  } else if (route.section === 'options') {
+    page = <OptionsPage />;
   } else if (route.section === 'performance') {
     page = (
       <div className="gb-legacy">
@@ -70,7 +73,7 @@ const Dashboard = ({ onLogout }) => {
     );
   }
 
-  const section = ['backtests', 'performance'].includes(route.section) ? route.section : 'strategies';
+  const section = ['backtests', 'options', 'performance'].includes(route.section) ? route.section : 'strategies';
 
   return (
     <AppShell section={section} onNavigate={(s) => go(s)} onLogout={onLogout}>
