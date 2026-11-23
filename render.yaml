@@ -2,6 +2,7 @@ services:
   - type: web
     name: goodbuck-algo
     env: node
+    plan: starter            # a persistent disk needs a paid instance
     buildCommand: npm install && cd premiumtrader-backend && npm install && cd .. && npx vite build
     startCommand: npm start
     envVars:
@@ -9,8 +10,15 @@ services:
         value: production
       - key: PORT
         value: 5000
+      # SQLite lives on the persistent disk so candles, strategies and backtests survive deploys.
+      - key: DB_PATH
+        value: /var/data/goodbuck.db
       # Secrets: set these in the Render dashboard (Environment tab), never in git.
       - key: KITE_API_KEY
         sync: false
       - key: KITE_API_SECRET
         sync: false
+    disk:
+      name: goodbuck-data
+      mountPath: /var/data
+      sizeGB: 1

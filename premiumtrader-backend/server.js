@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { KiteTicker } = require('kiteconnect');
-import { openDb, schemaVersion } from './db/index.js';
+import { openDb, schemaVersion, DEFAULT_DB_PATH } from './db/index.js';
 import { saveKiteSession, loadKiteSession, clearKiteSession, publicSessionInfo } from './kiteSession.js';
 import { strategiesRouter, seedDefaultStrategy, seedCrossPullbackStrategies, seedRedCandleStrategy } from './strategies.js';
 import { backtestsRouter } from './backtests.js';
