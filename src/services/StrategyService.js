@@ -113,6 +113,7 @@ export const OptionsService = {
   levels: (weeks = 8) => op(`/levels?weeks=${weeks}`),
   chart: (token, minutes) => op(`/chart?token=${encodeURIComponent(token)}&minutes=${minutes}`),
   similar: () => op('/similar'),
+  crosses: (days = 10) => op(`/crosses?days=${days}`),
   health: async () => {
     const res = await fetch('/api/health');
     return res.ok ? res.json() : null;

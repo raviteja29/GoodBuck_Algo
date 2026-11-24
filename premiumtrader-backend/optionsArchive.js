@@ -75,12 +75,13 @@ export function sessionDays(bars, cfg = OPTIONS_ARCHIVE) {
  * One row per (level, trading day): the levels from the strategy's setups and
  * the sessions each one applies to.
  */
-export function levelDays(setups, sessions, cfg = OPTIONS_ARCHIVE, { nextSession = null } = {}) {
+export function levelDays(setups, sessions, cfg = OPTIONS_ARCHIVE, { nextSession = null, crossTimes = null } = {}) {
   const ordered = [...setups].sort((a, b) => a.crossTs - b.crossTs);
   const out = [];
   ordered.forEach((s, k) => {
     if (!Number.isFinite(s.touch) || !s.touchTs) return;
-    const until = ordered[k + 1]?.crossTs ?? Infinity;
+    // A level ends at the next cross of any kind (a cross the strategy ignores still ends the setup).
+    const until = (crossTimes ? crossTimes.find((t) => t > s.crossTs) : ordered[k + 1]?.crossTs) ?? Infinity;
     let days = sessions.filter((d) => s.touchTs < at(d, cfg.sessionEndMin) && until > at(d, cfg.sessionStartMin));
     // A level that's still valid also applies to the next session, even before it opens.
     if (nextSession && until === Infinity && !days.includes(nextSession) && s.touchTs < at(nextSession, cfg.sessionEndMin)) days.push(nextSession);
@@ -95,6 +96,16 @@ export function levelDays(setups, sessions, cfg = OPTIONS_ARCHIVE, { nextSession
       });
     }
   });
+  return out;
+}
+
+/** Times of every HMA cross in an engine result, sloped or not. */
+export function crossTimesOf({ bars, series: { fast, slow } }) {
+  const out = [];
+  for (let i = 1; i < bars.length; i++) {
+    if (![fast[i], fast[i - 1], slow[i], slow[i - 1]].every(Number.isFinite)) continue;
+    if ((fast[i - 1] >= slow[i - 1] && fast[i] < slow[i]) || (fast[i - 1] <= slow[i - 1] && fast[i] > slow[i])) out.push(bars[i].ts);
+  }
   return out;
 }
 
@@ -181,7 +192,7 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
   const candles = getCandles(db, source).filter((c) => c.time + 15 * 60000 <= now);
   const result = runCrossPullback({ candles, from: back(cfg.lookbackDays + 30), to: today, config });
   const since = back(cfg.lookbackDays - 1);
-  const rows = pickContracts(levelDays(result.setups, sessionDays(result.bars, cfg), cfg, { nextSession: nextSessionDay(now, cfg) }), options, cfg, { known: knownExpiries(db, cfg), today })
+  const rows = pickContracts(levelDays(result.setups, sessionDays(result.bars, cfg), cfg, { nextSession: nextSessionDay(now, cfg), crossTimes: crossTimesOf(result) }), options, cfg, { known: knownExpiries(db, cfg), today })
     .filter((r) => r.day >= since);
 
   const saveContract = db.prepare(`INSERT INTO option_contracts (instrument_token, tradingsymbol, underlying, expiry, strike, type, lot_size, first_saved_at)

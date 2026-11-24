@@ -141,3 +141,11 @@ test('expiry follows holiday moves: after Mon 23 Nov expiry, Tue 24 belongs to 1
   assert.equal(expiryForDay('2026-11-23', ['2026-11-23', '2026-12-01'], [], '2026-11-23'), '2026-11-23'); // on expiry day
   assert.equal(expiryForDay('2026-12-02', listed, known, today), '2026-12-08');
 });
+
+test('a level ends at the next cross even if the strategy ignores that cross', () => {
+  const setups = [{ crossTs: IST(2026, 11, 20, 12, 15), side: 'long', touch: 25735.9, touchTs: IST(2026, 11, 20, 14, 45), stop: 25306 }];
+  const ignoredCross = IST(2026, 11, 20, 23, 15);
+  const rows = levelDays(setups, ['2026-11-20', '2026-11-23'], undefined, { crossTimes: [setups[0].crossTs, ignoredCross] });
+  assert.deepEqual(rows.map((r) => r.day), ['2026-11-20']); // not carried to Mon 23
+  assert.equal(rows[0].until, ignoredCross);
+});
