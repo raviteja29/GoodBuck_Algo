@@ -26,9 +26,9 @@ const SHORT = [
   [110, 130, 105, 115, 112, 102],  // 2 highest high of the stretch: 130 = stop
   [115, 125, 108, 112, 113, 103],  // 3
   [112, 125, 100, 104, 112, 103.5],// 4 fast turns down
-  [104, 115, 98, 100, 102, 103.8], // 5 fast (falling) crosses below slow -> short setup, stop 130
-  [98, 101, 95, 97, 102, 104],     // 6 trigger = fast[5] = 102; high 101 -> no touch (fast flat at 102)
-  [99, 103, 97, 100, 100, 104],    // 7 trigger = fast[6] = 102; touches -> SHORT at 102; risk 28, target 46
+  [104, 115, 98, 100, 103, 103.8], // 5 fast (falling) crosses below slow -> short setup, stop 130
+  [98, 101, 95, 97, 102, 104],     // 6 trigger = fast[5] = 103; high 101 -> no touch
+  [99, 103, 97, 100, 100, 104],    // 7 fast still falling (102 < 103); trigger = fast[6] = 102; touches -> SHORT at 102; risk 28, target 46
   [80, 60, 45, 50, 98, 104],       // 8 low 45 <= 46 -> target
   [50, 101, 49, 90, 96, 104],      // 9 high 101 < 102 -> no re-entry
   [90, 104, 88, 100, 95, 104],     // 10 touches touch point 102 -> SHORT re-entry
@@ -71,13 +71,21 @@ test('fallback stop = highest high since the previous cross when the lines never
   assert.equal(r.trades[0].stop, 140);
 });
 
-test('cross without the fast line sloping the right way starts no setup', () => {
+test('every cross starts a setup; the first touch only counts once the fast line slopes the setup way', () => {
+  //            open  high  low  close  fast  slow
   const rows = [
     [100, 110, 95, 105, 110, 100],
-    [105, 112, 100, 110, 111, 112], // fast RISING but slow jumps above it -> bearish cross, wrong slope
-    [99, 115, 97, 100, 112, 113],   // would touch fast[1]=111
+    [105, 120, 100, 110, 111, 112],  // 1 bearish cross while fast is RISING -> setup starts anyway (stop 120)
+    [99, 112, 97, 100, 111.5, 113],  // 2 fast still rising (111 > 110): a touch of 111 does NOT count
+    [100, 108, 99, 104, 111.2, 113], // 3 fast still rising at the last close (111.5 > 111): no touch counted (high 108 anyway)
+    [104, 106, 100, 102, 110, 113],  // 4 fast now falling (111.2 < 111.5); trigger 111.2: high 106 -> no touch
+    [102, 111, 101, 108, 109, 113],  // 5 fast falling (110 < 111.2); trigger 110: high 111 -> FIRST TOUCH at 110
   ];
-  assert.equal(run(rows).trades.length, 0);
+  const r = run(rows);
+  assert.equal(r.setups.length, 1);
+  assert.equal(r.setups[0].slopedAtCross, false);
+  assert.equal(r.setups[0].touch, 110);
+  assert.equal(new Date(r.setups[0].touchTs).getTime(), Date.parse('2026-03-02T10:00:00+05:30') + 5 * 900000);
 });
 
 test('setup waits if the fast line turns back before the touch', () => {
@@ -222,7 +230,8 @@ test('entry only AT the touch point: no fill at the open when price gaps past it
   // Bar 6 gaps ABOVE the line and never trades 102 -> touch point fixed at 102, but no trade.
   // Bar 7 still above. Bar 8 trades down through 102 -> short at exactly 102.
   const rows = [
-    ...SHORT.slice(0, 6),
+    ...SHORT.slice(0, 5),
+    [104, 115, 98, 100, 102, 103.8], // 5 cross with the fast line at 102 (falling)
     [104, 108, 103, 105, 102, 104],  // 6 trigger fast[5]=102: high>=102 (touched) but low 103 > 102 -> no fill
     [105, 107, 103.5, 104, 102, 104],// 7 still above the touch point
     [104, 104.5, 99, 100, 101, 104], // 8 trades 102 -> SHORT at 102 (not at the 104 open)
@@ -240,9 +249,9 @@ test('20 Nov case: night-session touch fixes 25455; morning open at 25361 does n
     ['2026-11-19T21:00:00', 25500, 25560, 25480, 25540, 25520, 25400],
     ['2026-11-19T21:15:00', 25540, 25600, 25520, 25580, 25530, 25410], // both lines rising -> swing high 25600 (stop)
     ['2026-11-19T21:30:00', 25580, 25590, 25500, 25510, 25525, 25415], // fast turns down
-    ['2026-11-19T21:45:00', 25510, 25520, 25380, 25400, 25455, 25460], // fast (falling) crosses below slow -> short setup
-    ['2026-11-19T22:00:00', 25400, 25430, 25350, 25420, 25455, 25462], // line 25455: high 25430 -> no touch yet
-    ['2026-11-19T22:15:00', 25420, 25470, 25410, 25440, 25450, 25463], // NIGHT touch of 25455 -> touch point fixed, no trade (outside hours)
+    ['2026-11-19T21:45:00', 25510, 25520, 25380, 25400, 25458, 25460], // fast (falling) crosses below slow -> short setup
+    ['2026-11-19T22:00:00', 25400, 25430, 25350, 25420, 25455, 25462], // line 25458: high 25430 -> no touch yet; fast still falling
+    ['2026-11-19T22:15:00', 25420, 25470, 25410, 25440, 25450, 25463], // NIGHT touch of 25455 (fast fell 25458 -> 25455) -> touch point fixed, no trade (outside hours)
     ['2026-11-20T09:15:00', 25361, 25400, 25330, 25390, 25420, 25466], // session opens at 25361 -> NO trade at 25361
     ['2026-11-20T09:30:00', 25390, 25430, 25380, 25420, 25410, 25467], // still below 25455
     ['2026-11-20T09:45:00', 25420, 25470, 25410, 25450, 25405, 25468], // trades 25455 -> SHORT at 25455

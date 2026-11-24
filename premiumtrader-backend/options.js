@@ -109,9 +109,9 @@ export function optionStop(db, contract, level) {
 }
 
 /**
- * Every HMA 50 / HMA 130 cross the strategy sees over the last `days` (on
- * completed GIFT NIFTY candles), including the ones it ignores because HMA 50
- * wasn't sloping the cross's way, with each accepted cross's first touch.
+ * Every HMA 50 / HMA 130 cross over the last `days` (completed GIFT NIFTY
+ * candles). Each starts a setup; its first touch counts only once HMA 50
+ * slopes the setup's way (down for a short, up for a long).
  */
 export function listCrosses(db, { days = 10, now = Date.now() } = {}) {
   const { config } = normalizeConfig(DEFAULT_CROSS_CONFIG);
@@ -137,7 +137,7 @@ export function listCrosses(db, { days = 10, now = Date.now() } = {}) {
     out.push({
       ts: b.ts, side: bear ? 'short' : 'long',
       hma50: round(fast[i]), hma50Prev: round(fast[i - 1]), hma130: round(slow[i]),
-      sloped: !!s,
+      slopedAtCross: s ? s.slopedAtCross !== false : null,
       touchTs: s?.touchTs ?? null, touch: round(s?.touch), stop: round(s?.stop),
     });
   }
