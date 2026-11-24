@@ -11,7 +11,7 @@ const fmtPrice = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimu
 const fmtPrice2 = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—');
 const fmtStrike = (v) => Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 const SIDE = { short: 'Short', long: 'Long' };
-const levelKey = (l) => `${l.crossTs}:${l.day}`;
+const levelKey = (l) => `${l.expiry || l.day}:${l.crossTs}`;
 const sessionOf = (day) => ({ from: Date.parse(`${day}T09:00:00+05:30`), to: Date.parse(`${day}T15:45:00+05:30`) });
 const inSession = (ms) => {
   const m = new Date(ms + 330 * 60000);
@@ -78,7 +78,7 @@ export default function OptionsPage() {
       <header className="gb-page-head">
         <div>
           <h1 className="gb-title">Options</h1>
-          <p className="gb-subtitle">CE at the strike below and PE at the strike above each Cross Pullback level · saved within 15 minutes of a touch</p>
+          <p className="gb-subtitle">Each first touch with CE at the strike below and PE at the strike above · the latest short and long carry over into the next week · saved within 15 minutes of a touch</p>
         </div>
         {health?.lastRun && (
           <p className="gb-muted">Updated {fmtDay(health.lastRun.day)} · {health.contracts} contracts · {health.candles.toLocaleString('en-IN')} candles</p>
@@ -108,17 +108,16 @@ export default function OptionsPage() {
               <span className="gb-opt-chev" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
               <span className="gb-h2">{fmtDay(w.weekStart)} – {fmtDay(w.weekEnd)}</span>
               {w.current && <span className="gb-badge gb-badge-active">This week</span>}
-              <span className="gb-muted gb-opt-week-meta">{w.levels.length} level{w.levels.length === 1 ? '' : 's'} · {w.expiry ? `expiry ${fmtDay(w.expiry)}` : 'expiry not available'}</span>
+              <span className="gb-muted gb-opt-week-meta">{w.levels.filter((l) => !l.carried).length} touch{w.levels.filter((l) => !l.carried).length === 1 ? '' : 'es'} this week · {w.expiry ? `expiry ${fmtDay(w.expiry)}` : 'expiry not available'}</span>
             </button>
             {isOpen && (
               <div id={panelId} className="gb-card gb-table-wrap">
                 <table className="gb-table gb-opt-table">
                   <thead>
                     <tr>
-                      <th>Day</th>
-                      <th>Level</th>
+                      <th className="gb-l">Touch date</th>
+                      <th>Touch level</th>
                       <th className="gb-l">Side</th>
-                      <th className="gb-l gb-hide-sm">Set at</th>
                       <th className="gb-l">CE · strike below</th>
                       <th className="gb-l">PE · strike above</th>
                     </tr>
@@ -127,13 +126,15 @@ export default function OptionsPage() {
                     {w.levels.map((l) => {
                       const k = levelKey(l);
                       return (
-                        <tr key={k} className="gb-opt-row" aria-selected={selected === k} tabIndex={0}
+                        <tr key={k} className={`gb-opt-row${l.carried ? ' gb-opt-carried' : ''}`} aria-selected={selected === k} tabIndex={0}
                           onClick={() => setSelected(k)}
                           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(k); } }}>
-                          <td>{fmtDay(l.day)}</td>
+                          <td className="gb-l">
+                            {fmtWhen(l.touchTs)}
+                            {l.carried && <span className="gb-muted gb-opt-carried-tag" title="Latest touch of this side from before the week, with this week's strikes"> · carried over</span>}
+                          </td>
                           <td>{fmtPrice(l.level)}</td>
                           <td className="gb-l"><span className={l.side === 'short' ? 'gb-neg' : 'gb-pos'}>{SIDE[l.side]}</span></td>
-                          <td className="gb-l gb-hide-sm">{fmtWhen(l.touchTs)}</td>
                           <td className="gb-l">{l.expiry ? <OptionCell o={l.ce} /> : <span className="gb-muted">Expired before saving</span>}</td>
                           <td className="gb-l">{l.expiry ? <OptionCell o={l.pe} /> : <span className="gb-muted">—</span>}</td>
                         </tr>
@@ -192,7 +193,9 @@ function LevelChart({ level, giftToken, onClose }) {
   // Option: the level's trading day. GIFT NIFTY: from the cross through that day, so the touch shows too.
   const focus = useMemo(() => {
     const day = sessionOf(level.day);
-    return instrument === 'gift' ? { from: Math.min(level.crossTs, level.touchTs) - 2 * 3600e3, to: day.to } : day;
+    if (instrument === 'gift') return { from: Math.min(level.crossTs, level.touchTs) - 2 * 3600e3, to: Math.max(day.to, level.touchTs + 6 * 3600e3) };
+    // Carried over: the week's first day may be a holiday, so show its first few days.
+    return level.carried ? { from: day.from, to: day.to + 3 * 86400e3 } : day;
   }, [instrument, level]);
 
   const title = instrument === 'gift' ? 'GIFT NIFTY' : chart?.instrument?.symbol || `NIFTY ${fmtStrike(strike)} ${type}`;
@@ -201,7 +204,7 @@ function LevelChart({ level, giftToken, onClose }) {
     <section className="gb-card gb-opt-chart" aria-label="Level chart">
       <div className="gb-opt-chart-head">
         <div>
-          <h2 className="gb-h2">{SIDE[level.side]} level {fmtPrice(level.level)} · {fmtDay(level.day)}</h2>
+          <h2 className="gb-h2">{SIDE[level.side]} level {fmtPrice(level.level)}{level.carried ? ' · carried over' : ''}</h2>
           <p className="gb-muted">
             First touch {fmtWhen(level.touchTs)}{touchInSession ? '' : ' (outside market hours)'} · strikes {level.strikeBelow === level.strikeAbove ? fmtStrike(level.strikeBelow) : `${fmtStrike(level.strikeBelow)} / ${fmtStrike(level.strikeAbove)}`}
             {level.expiry ? ` · expiry ${fmtDay(level.expiry)}` : ''}

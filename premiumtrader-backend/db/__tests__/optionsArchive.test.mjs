@@ -65,7 +65,7 @@ test('due once per 15-minute block, a minute after the candle closes', async () 
   const { setMeta } = await import('../index.js');
   const db = openDb(':memory:');
   assert.equal(archiveDue(db, IST(2026, 11, 25, 10, 16)), true); // never run
-  setMeta(db, 'options_archive_last_run_v3', { at: IST(2026, 11, 25, 10, 16) });
+  setMeta(db, 'options_archive_last_run_v4', { at: IST(2026, 11, 25, 10, 16) });
   assert.equal(archiveDue(db, IST(2026, 11, 25, 10, 25)), false);
   assert.equal(archiveDue(db, IST(2026, 11, 25, 10, 30)), false); // the 10:15 candle is still the latest + grace
   assert.equal(archiveDue(db, IST(2026, 11, 25, 10, 31)), true);
@@ -148,4 +148,21 @@ test('a level ends at the next cross even if the strategy ignores that cross', (
   const rows = levelDays(setups, ['2026-11-20', '2026-11-23'], undefined, { crossTimes: [setups[0].crossTs, ignoredCross] });
   assert.deepEqual(rows.map((r) => r.day), ['2026-11-20']); // not carried to Mon 23
   assert.equal(rows[0].until, ignoredCross);
+});
+
+test('carried over: each week gets the latest short and the latest long touch from before it', async () => {
+  const { carriedLevels, weekFrom } = await import('../../optionsArchive.js');
+  const s = (side, cross, touch, level) => ({ side, crossTs: cross, touchTs: touch, touch: level, stop: level + 50 });
+  const setups = [
+    s('short', IST(2026, 11, 12, 10, 0), IST(2026, 11, 12, 11, 0), 25600),
+    s('long', IST(2026, 11, 16, 10, 0), IST(2026, 11, 16, 12, 0), 25400),
+    s('short', IST(2026, 11, 20, 23, 15), IST(2026, 11, 23, 10, 0), 25700), // latest short, Mon 23
+    s('long', IST(2026, 11, 24, 2, 0), IST(2026, 11, 24, 9, 30), 25650),    // in the 1 Dec week itself
+  ];
+  // After the Mon 23 Nov expiry, the 1 Dec week starts on Tue 24.
+  assert.equal(weekFrom('2026-12-01', ['2026-11-17', '2026-11-23', '2026-12-01']), '2026-11-24');
+  assert.equal(weekFrom('2026-12-08', ['2026-11-23', '2026-12-01', '2026-12-08']), '2026-12-02');
+  const rows = carriedLevels(setups, [{ expiry: '2026-12-01', from: '2026-11-24' }]);
+  assert.deepEqual(rows.map((r) => `${r.side}:${r.level}@${r.day}`), ['short:25700@2026-11-24', 'long:25400@2026-11-24']);
+  assert.ok(rows.every((r) => r.carried));
 });

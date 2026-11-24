@@ -64,3 +64,19 @@ test('option stop-loss = lowest low in the previous stretch; entry = touch candl
   const night = optionStop(db, c, { ...lvl, touch_ts: IST(2026, 11, 24, 20, 0) });
   assert.deepEqual([night.entry, night.entryBasis], [112, 'next open']);
 });
+
+test('one row per level; the latest short and long from before the week are carried over', () => {
+  const db = openDb(':memory:');
+  const lvl = db.prepare(`INSERT INTO option_levels (cross_ts, day, side, level, touch_ts, until_ts, expiry, strike_below, strike_above, saved_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 0)`);
+  db.prepare(`INSERT INTO option_contracts VALUES (300, 'X', 'NIFTY', '2026-11-23', 25000, 'CE', 75, 0)`).run();
+  // Older short (replaced), latest short Mon 23, older long Mon 16 — all carried into the 1 Dec week
+  lvl.run(IST(2026, 11, 12, 10, 0), '2026-11-24', 'short', 25600, IST(2026, 11, 12, 11, 0), '2026-12-01', 25600, 25600);
+  lvl.run(IST(2026, 11, 16, 10, 0), '2026-11-24', 'long', 25400, IST(2026, 11, 16, 12, 0), '2026-12-01', 25400, 25400);
+  lvl.run(IST(2026, 11, 20, 23, 15), '2026-11-24', 'short', 25700, IST(2026, 11, 23, 10, 0), '2026-12-01', 25700, 25700);
+  // A touch inside the week, valid on two days: still one row
+  lvl.run(IST(2026, 11, 24, 2, 0), '2026-11-24', 'long', 25650, IST(2026, 11, 24, 9, 30), '2026-12-01', 25650, 25650);
+  lvl.run(IST(2026, 11, 24, 2, 0), '2026-11-25', 'long', 25650, IST(2026, 11, 24, 9, 30), '2026-12-01', 25650, 25650);
+  const [week] = listLevelWeeks(db, { today: '2026-11-25' });
+  assert.equal(week.weekStart, '2026-11-24');
+  assert.deepEqual(week.levels.map((l) => `${l.side}:${l.level}:${l.carried ? 'carried' : 'own'}`), ['long:25650:own', 'short:25700:carried', 'long:25400:carried']);
+});

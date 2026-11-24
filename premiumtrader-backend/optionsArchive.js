@@ -39,7 +39,7 @@ export const OPTIONS_ARCHIVE = {
   graceMin: 1,
 };
 
-const LAST_RUN_KEY = 'options_archive_last_run_v3'; // renamed whenever the saving rule changes, so the new rule runs at once
+const LAST_RUN_KEY = 'options_archive_last_run_v4'; // renamed whenever the saving rule changes, so the new rule runs at once
 const IST_OFFSET_MS = 330 * 60000;
 const isoDay = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
 const istDay = (ms) => new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10);
@@ -71,6 +71,19 @@ export function sessionDays(bars, cfg = OPTIONS_ARCHIVE) {
   return [...days].sort();
 }
 
+/** What every row of a level carries: its price, times, validity and the GIFT NIFTY stop. */
+function levelBase(ordered, k, crossTimes) {
+  const s = ordered[k];
+  // A level ends at the next cross of any kind (a cross the strategy ignores still ends the setup).
+  const until = (crossTimes ? crossTimes.find((t) => t > s.crossTs) : ordered[k + 1]?.crossTs) ?? Infinity;
+  return {
+    crossTs: s.crossTs, side: s.side, level: s.touch, touchTs: s.touchTs, until: Number.isFinite(until) ? until : null,
+    stretchFrom: ordered[k - 1]?.crossTs ?? null, giftStop: Number.isFinite(s.stop) ? s.stop : null,
+  };
+}
+
+const touched = (s) => Number.isFinite(s.touch) && s.touchTs;
+
 /**
  * One row per (level, trading day): the levels from the strategy's setups and
  * the sessions each one applies to.
@@ -79,9 +92,9 @@ export function levelDays(setups, sessions, cfg = OPTIONS_ARCHIVE, { nextSession
   const ordered = [...setups].sort((a, b) => a.crossTs - b.crossTs);
   const out = [];
   ordered.forEach((s, k) => {
-    if (!Number.isFinite(s.touch) || !s.touchTs) return;
-    // A level ends at the next cross of any kind (a cross the strategy ignores still ends the setup).
-    const until = (crossTimes ? crossTimes.find((t) => t > s.crossTs) : ordered[k + 1]?.crossTs) ?? Infinity;
+    if (!touched(s)) return;
+    const base = levelBase(ordered, k, crossTimes);
+    const until = base.until ?? Infinity;
     let days = sessions.filter((d) => s.touchTs < at(d, cfg.sessionEndMin) && until > at(d, cfg.sessionStartMin));
     // A level that's still valid also applies to the next session, even before it opens.
     if (nextSession && until === Infinity && !days.includes(nextSession) && s.touchTs < at(nextSession, cfg.sessionEndMin)) days.push(nextSession);
@@ -89,13 +102,30 @@ export function levelDays(setups, sessions, cfg = OPTIONS_ARCHIVE, { nextSession
       const next = sessions.find((d) => at(d, cfg.sessionStartMin) >= s.touchTs);
       if (next) days = [next];
     }
-    for (const day of days) {
-      out.push({
-        crossTs: s.crossTs, side: s.side, level: s.touch, touchTs: s.touchTs, until: Number.isFinite(until) ? until : null, day,
-        stretchFrom: ordered[k - 1]?.crossTs ?? null, giftStop: Number.isFinite(s.stop) ? s.stop : null,
-      });
-    }
+    for (const day of days) out.push({ ...base, day });
   });
+  return out;
+}
+
+/**
+ * Carried over: at the start of each expiry week, the latest short and the
+ * latest long first touch from before it (so the week opens knowing where the
+ * last down-trend and up-trend triggered), with that week's strikes.
+ * weeks: [{ expiry, from }] — `from` is the week's first day; rows use it as their day.
+ */
+export function carriedLevels(setups, weeks, { crossTimes = null } = {}) {
+  const ordered = [...setups].sort((a, b) => a.crossTs - b.crossTs);
+  const out = [];
+  for (const w of weeks) {
+    const cutoff = at(w.from, 0);
+    for (const side of ['short', 'long']) {
+      let best = -1;
+      ordered.forEach((s, k) => {
+        if (s.side === side && touched(s) && s.touchTs < cutoff && (best < 0 || s.touchTs > ordered[best].touchTs)) best = k;
+      });
+      if (best >= 0) out.push({ ...levelBase(ordered, best, crossTimes), day: w.from, carried: true });
+    }
+  }
   return out;
 }
 
@@ -125,6 +155,23 @@ const marketOpen = (now, cfg = OPTIONS_ARCHIVE) => {
 };
 
 const dayAdd = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+
+/** Wednesday that starts the calendar expiry week containing `day` (YYYY-MM-DD). */
+export function weekStart(day) {
+  const d = new Date(`${day}T00:00:00Z`);
+  const back = (d.getUTCDay() - 3 + 7) % 7; // 3 = Wednesday
+  return new Date(d.getTime() - back * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * First day of the week that ends at `expiry`: the day after the previous
+ * expiry (Tue 24 Nov after the Mon 23 Nov holiday move), normally Wednesday.
+ */
+export function weekFrom(expiry, expiries) {
+  const prev = [...expiries].filter((e) => e < expiry).sort().at(-1);
+  const wed = weekStart(expiry);
+  return prev ? [dayAdd(prev, 1), dayAdd(wed, -2)].sort().at(-1) : wed;
+}
 
 /**
  * The NIFTY expiry a trading day belongs to. Weekly expiry is Tuesday, moved
@@ -192,8 +239,20 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
   const candles = getCandles(db, source).filter((c) => c.time + 15 * 60000 <= now);
   const result = runCrossPullback({ candles, from: back(cfg.lookbackDays + 30), to: today, config });
   const since = back(cfg.lookbackDays - 1);
-  const rows = pickContracts(levelDays(result.setups, sessionDays(result.bars, cfg), cfg, { nextSession: nextSessionDay(now, cfg), crossTimes: crossTimesOf(result) }), options, cfg, { known: knownExpiries(db, cfg), today })
-    .filter((r) => r.day >= since);
+  const nextSession = nextSessionDay(now, cfg);
+  const crossTimes = crossTimesOf(result);
+  const sessions = sessionDays(result.bars, cfg);
+  const known = knownExpiries(db, cfg);
+  const listed = [...new Set(options.map((o) => o.expiry))];
+  // The expiry weeks in the lookback window (and the next session's), each with the latest short / long carried over.
+  const weekExpiries = new Set([...sessions.filter((d) => d >= since), nextSession].map((d) => expiryForDay(d, listed, known, today)).filter(Boolean));
+  const allExpiries = [...new Set([...listed, ...known])];
+  const weeks = [...weekExpiries].map((expiry) => ({ expiry, from: weekFrom(expiry, allExpiries) }));
+  const rows = pickContracts([
+    // (a week's first day is kept even if it's just before the window, as stale rows on it are dropped below)
+    ...levelDays(result.setups, sessions, cfg, { nextSession, crossTimes }).filter((r) => r.day >= since || weeks.some((w) => w.from === r.day)),
+    ...carriedLevels(result.setups, weeks, { crossTimes }),
+  ], options, cfg, { known, today });
 
   const saveContract = db.prepare(`INSERT INTO option_contracts (instrument_token, tradingsymbol, underlying, expiry, strike, type, lot_size, first_saved_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(instrument_token) DO NOTHING`);
@@ -202,8 +261,10 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
     ON CONFLICT(cross_ts, day) DO UPDATE SET until_ts = excluded.until_ts, expiry = COALESCE(excluded.expiry, option_levels.expiry),
       strike_below = excluded.strike_below, strike_above = excluded.strike_above,
       stretch_from_ts = excluded.stretch_from_ts, gift_stop = excluded.gift_stop`);
-  // A cross after this level's day means it was valid there only until then; drop days it no longer covers.
-  const dropStale = db.prepare('DELETE FROM option_levels WHERE cross_ts = ? AND day > ? AND day NOT IN (SELECT value FROM json_each(?))');
+  // Rows in the window are recomputed each run; drop the ones that no longer apply (a later
+  // cross ended the level, or a newer touch replaced a carried-over one).
+  const dropStale = db.prepare(`DELETE FROM option_levels WHERE (day >= ? OR day IN (SELECT value FROM json_each(?)))
+    AND (cross_ts || ':' || day) NOT IN (SELECT value FROM json_each(?))`);
 
   // Contracts to bring up to date: this run's level contracts, plus every
   // earlier level contract that hasn't expired yet (they get each new day).
@@ -223,20 +284,18 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
     WHERE oc.underlying = ? AND oc.expiry >= ?`).all(cfg.interval, cfg.underlying, today);
   for (const { token } of earlier) if (live.has(token) && !wanted.has(token)) wanted.set(token, live.get(token));
 
-  for (const [crossTs, days] of Object.entries(Object.groupBy(rows, (r) => r.crossTs))) {
-    dropStale.run(Number(crossTs), since, JSON.stringify(days.map((r) => r.day)));
-  }
+  dropStale.run(since, JSON.stringify(weeks.map((w) => w.from)), JSON.stringify(rows.map((r) => `${r.crossTs}:${r.day}`)));
 
   // New contracts get their whole history at once. Known ones are refreshed
   // while the market is open, and once more after the close for the final candles.
   const finalKey = 'options_final_refresh_day';
   const afterClose = !marketOpen(now, cfg) && getMeta(db, finalKey) !== today && istMin(now) >= cfg.sessionEndMin;
   const refreshLive = marketOpen(now, cfg) || afterClose;
-  const known = db.prepare('SELECT 1 FROM candle_days WHERE instrument_token = ? AND interval = ? LIMIT 1');
+  const hasCandles = db.prepare('SELECT 1 FROM candle_days WHERE instrument_token = ? AND interval = ? LIMIT 1');
   let requests = 0, failed = 0;
   for (const c of wanted.values()) {
     saveContract.run(c.token, c.symbol, cfg.underlying, c.expiry, c.strike, c.type, c.lotSize, Date.now());
-    if (!refreshLive && known.get(c.token, cfg.interval)) continue;
+    if (!refreshLive && hasCandles.get(c.token, cfg.interval)) continue;
     try {
       // Whole life: Kite returns candles from the day the contract was listed.
       requests += (await ensureCandles(db, fetchHistorical, { token: c.token, interval: cfg.interval, from: back(cfg.fullHistoryDays), to: today, now })).requests;
@@ -250,6 +309,7 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
   const summary = {
     day: today, at: now, since,
     levels: [...new Set(rows.map((r) => r.crossTs))].length,
+    carried: rows.filter((r) => r.carried).length,
     contracts: wanted.size, requests, failed, missing: missing.length,
     tookSec: Math.round((Date.now() - started) / 1000),
   };
