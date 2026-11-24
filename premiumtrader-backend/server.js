@@ -19,6 +19,7 @@ import { strategiesRouter, seedDefaultStrategy, seedCrossPullbackStrategies, see
 import { backtestsRouter } from './backtests.js';
 import { runOptionsArchive, archiveDue, archiveStatus } from './optionsArchive.js';
 import { optionsRouter } from './options.js';
+import { ensureGiftHistory } from './similarity.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -1454,6 +1455,11 @@ async function maybeArchiveOptions(reason, force = false) {
     const kc = kiteFor(session.access_token);
     const fetchHistorical = (token, interval, f, t) => kc.getHistoricalData(token, interval, f, t, false, true);
     const instruments = await loadInstruments(false, 'options-archive');
+    // Up to 3 years of GIFT NIFTY for the "similar weeks" panel (once a day, only missing days).
+    try {
+      const h = await ensureGiftHistory(db, (token, interval, f, t) => kc.getHistoricalData(token, interval, f, t, false, false));
+      if (h.requests) console.log(`[HISTORY] GIFT NIFTY history updated (${h.requests} requests)`);
+    } catch (e) { console.warn('[HISTORY] GIFT NIFTY history failed:', e.message); }
     const r = await runOptionsArchive(db, fetchHistorical, instruments, { log: (m) => console.warn(m) });
     if (r.requests || r.failed) console.log(`[OPTIONS] ${reason}: ${r.contracts} contracts for ${r.levels} levels since ${r.since}, ${r.requests} requests, ${r.failed} failed, ${r.missing} not available (${r.tookSec}s)`);
   } catch (e) {

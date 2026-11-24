@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { OptionsService } from '../../services/StrategyService';
 import CandleChart from './CandleChart';
+import SimilarWeeks from './SimilarWeeks';
 
 const IST = 'Asia/Kolkata';
 const fmtDay = (day) => new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(`${day}T00:00:00Z`));
@@ -100,6 +101,8 @@ export default function OptionsPage() {
       )}
 
       {level && <LevelChart key={levelKey(level)} level={level} giftToken={data.giftToken} onClose={() => setSelected(null)} />}
+
+      <SimilarWeeks />
 
       {(data?.weeks || []).map((w) => {
         const isOpen = !!openWeeks?.has(w.weekStart);

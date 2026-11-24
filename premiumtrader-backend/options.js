@@ -7,6 +7,7 @@ import { requireSession } from './strategies.js';
 import { OPTIONS_ARCHIVE } from './optionsArchive.js';
 import { DEFAULT_CROSS_CONFIG } from './strategy/config.js';
 import { computeHMASeries, computeSMASeries } from './strategy/indicators.js';
+import { similarWeeks, optionSimilarityStatus } from './similarity.js';
 
 const IST_OFFSET_MS = 330 * 60000;
 const SESSION_START_MIN = 9 * 60 + 15;
@@ -156,6 +157,10 @@ export function optionsRouter(db, { verifyToken }) {
 
   r.get('/levels', (req, res) => {
     res.json({ giftToken: GIFT.token, weeks: listLevelWeeks(db, { weeks: Math.min(Number(req.query.weeks) || 8, 52) }) });
+  });
+
+  r.get('/similar', (req, res) => {
+    res.json({ gift: similarWeeks(db), options: optionSimilarityStatus(db) });
   });
 
   r.get('/chart', (req, res) => {
