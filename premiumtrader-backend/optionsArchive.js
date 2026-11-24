@@ -12,6 +12,11 @@
 //             Wednesday → Tuesday week; if that one has expired, nothing can be saved).
 // Each contract's 15-minute candles (with OI) are saved for its whole life:
 // everything Kite has from listing, then each new day until it expires.
+//
+// It runs every 15 minutes while logged in, just after each GIFT NIFTY candle
+// closes, so a new first touch has its contracts saved within ~15 minutes and
+// they're kept current through the session (tracked). A level that's still
+// active is mapped to the next session even before that session starts.
 // Each run looks back LOOKBACK_DAYS for levels, so a missed day is filled in.
 
 import { ensureCandles, getCandles, todayIST } from './candles.js';
@@ -29,7 +34,8 @@ export const OPTIONS_ARCHIVE = {
   historyDays: 120,              // GIFT NIFTY history for the HMA 130 warm-up
   sessionStartMin: 9 * 60 + 15,  // 09:15 IST
   sessionEndMin: 15 * 60 + 30,   // 15:30 IST
-  runAfterMinIST: 15 * 60 + 40,  // 15:40 IST, after the close
+  everyMin: 15,                  // run just after each 15-minute candle closes
+  graceMin: 1,
 };
 
 const LAST_RUN_KEY = 'options_archive_last_run_v3'; // renamed whenever the saving rule changes, so the new rule runs at once
@@ -68,23 +74,43 @@ export function sessionDays(bars, cfg = OPTIONS_ARCHIVE) {
  * One row per (level, trading day): the levels from the strategy's setups and
  * the sessions each one applies to.
  */
-export function levelDays(setups, sessions, cfg = OPTIONS_ARCHIVE) {
+export function levelDays(setups, sessions, cfg = OPTIONS_ARCHIVE, { nextSession = null } = {}) {
   const ordered = [...setups].sort((a, b) => a.crossTs - b.crossTs);
   const out = [];
   ordered.forEach((s, k) => {
     if (!Number.isFinite(s.touch) || !s.touchTs) return;
     const until = ordered[k + 1]?.crossTs ?? Infinity;
     let days = sessions.filter((d) => s.touchTs < at(d, cfg.sessionEndMin) && until > at(d, cfg.sessionStartMin));
+    // A level that's still valid also applies to the next session, even before it opens.
+    if (nextSession && until === Infinity && !days.includes(nextSession) && s.touchTs < at(nextSession, cfg.sessionEndMin)) days.push(nextSession);
     if (!days.length) {
       const next = sessions.find((d) => at(d, cfg.sessionStartMin) >= s.touchTs);
       if (next) days = [next];
     }
     for (const day of days) {
-      out.push({ crossTs: s.crossTs, side: s.side, level: s.touch, touchTs: s.touchTs, until: Number.isFinite(until) ? until : null, day });
+      out.push({
+        crossTs: s.crossTs, side: s.side, level: s.touch, touchTs: s.touchTs, until: Number.isFinite(until) ? until : null, day,
+        stretchFrom: ordered[k - 1]?.crossTs ?? null, giftStop: Number.isFinite(s.stop) ? s.stop : null,
+      });
     }
   });
   return out;
 }
+
+/** Today if it's a weekday before 15:30 IST, else the next weekday (holidays aren't known here). */
+export function nextSessionDay(now, cfg = OPTIONS_ARCHIVE) {
+  let day = todayIST(now);
+  const weekday = (d) => { const w = new Date(`${d}T00:00:00Z`).getUTCDay(); return w >= 1 && w <= 5; };
+  if (weekday(day) && istMin(now) < cfg.sessionEndMin) return day;
+  do { day = toInputDate(addDays(new Date(`${day}T00:00:00`), 1)); } while (!weekday(day));
+  return day;
+}
+
+const marketOpen = (now, cfg = OPTIONS_ARCHIVE) => {
+  const w = new Date(now + IST_OFFSET_MS).getUTCDay();
+  const m = istMin(now);
+  return w >= 1 && w <= 5 && m >= cfg.sessionStartMin && m < cfg.sessionEndMin + cfg.everyMin;
+};
 
 /** Attach the expiry and the contracts (CE and PE at the strikes below and above) to each level-day. */
 export function pickContracts(rows, options, cfg = OPTIONS_ARCHIVE) {
@@ -101,10 +127,11 @@ export function pickContracts(rows, options, cfg = OPTIONS_ARCHIVE) {
   });
 }
 
-/** True when a run is due: after the close, not yet run today. */
+/** True once per 15-minute block, a minute after the block's candle closes. */
 export function archiveDue(db, now = Date.now(), cfg = OPTIONS_ARCHIVE) {
   const last = getMeta(db, LAST_RUN_KEY);
-  return istMin(now) >= cfg.runAfterMinIST && last?.day !== todayIST(now);
+  const block = (t) => Math.floor((t - cfg.graceMin * 60000) / (cfg.everyMin * 60000));
+  return !last?.at || block(now) > block(last.at);
 }
 
 /**
@@ -122,23 +149,29 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
   const { config } = normalizeConfig(DEFAULT_CROSS_CONFIG);
   const source = { token: config.instrument.token, interval: config.timeframe, from: back(cfg.historyDays), to: today };
   await ensureCandles(db, fetchHistorical, { ...source, now });
-  const result = runCrossPullback({ candles: getCandles(db, source), from: back(cfg.lookbackDays + 30), to: today, config });
+  // Only completed candles: a forming candle could show a cross that disappears.
+  const candles = getCandles(db, source).filter((c) => c.time + 15 * 60000 <= now);
+  const result = runCrossPullback({ candles, from: back(cfg.lookbackDays + 30), to: today, config });
   const since = back(cfg.lookbackDays - 1);
-  const rows = pickContracts(levelDays(result.setups, sessionDays(result.bars, cfg), cfg), options, cfg).filter((r) => r.day >= since);
+  const rows = pickContracts(levelDays(result.setups, sessionDays(result.bars, cfg), cfg, { nextSession: nextSessionDay(now, cfg) }), options, cfg)
+    .filter((r) => r.day >= since);
 
   const saveContract = db.prepare(`INSERT INTO option_contracts (instrument_token, tradingsymbol, underlying, expiry, strike, type, lot_size, first_saved_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(instrument_token) DO NOTHING`);
-  const saveLevel = db.prepare(`INSERT INTO option_levels (cross_ts, day, side, level, touch_ts, until_ts, expiry, strike_below, strike_above, saved_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  const saveLevel = db.prepare(`INSERT INTO option_levels (cross_ts, day, side, level, touch_ts, until_ts, expiry, strike_below, strike_above, stretch_from_ts, gift_stop, saved_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(cross_ts, day) DO UPDATE SET until_ts = excluded.until_ts, expiry = COALESCE(excluded.expiry, option_levels.expiry),
-      strike_below = excluded.strike_below, strike_above = excluded.strike_above`);
+      strike_below = excluded.strike_below, strike_above = excluded.strike_above,
+      stretch_from_ts = excluded.stretch_from_ts, gift_stop = excluded.gift_stop`);
+  // A cross after this level's day means it was valid there only until then; drop days it no longer covers.
+  const dropStale = db.prepare('DELETE FROM option_levels WHERE cross_ts = ? AND day > ? AND day NOT IN (SELECT value FROM json_each(?))');
 
   // Contracts to bring up to date: this run's level contracts, plus every
   // earlier level contract that hasn't expired yet (they get each new day).
   const wanted = new Map();
   const missing = [];
   for (const r of rows) {
-    saveLevel.run(r.crossTs, r.day, r.side, r.level, r.touchTs, r.until, r.expiry, r.strikeBelow, r.strikeAbove, Date.now());
+    saveLevel.run(r.crossTs, r.day, r.side, r.level, r.touchTs, r.until, r.expiry, r.strikeBelow, r.strikeAbove, r.stretchFrom, r.giftStop, Date.now());
     if (!r.expiry) { missing.push(`${r.day} ${r.level.toFixed(1)} (week's expiry no longer listed)`); continue; }
     for (const { contract: c, strike, type } of r.contracts) {
       if (!c) missing.push(`${r.day} ${strike} ${type}`);
@@ -151,9 +184,20 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
     WHERE oc.underlying = ? AND oc.expiry >= ?`).all(cfg.interval, cfg.underlying, today);
   for (const { token } of earlier) if (live.has(token) && !wanted.has(token)) wanted.set(token, live.get(token));
 
+  for (const [crossTs, days] of Object.entries(Object.groupBy(rows, (r) => r.crossTs))) {
+    dropStale.run(Number(crossTs), since, JSON.stringify(days.map((r) => r.day)));
+  }
+
+  // New contracts get their whole history at once. Known ones are refreshed
+  // while the market is open, and once more after the close for the final candles.
+  const finalKey = 'options_final_refresh_day';
+  const afterClose = !marketOpen(now, cfg) && getMeta(db, finalKey) !== today && istMin(now) >= cfg.sessionEndMin;
+  const refreshLive = marketOpen(now, cfg) || afterClose;
+  const known = db.prepare('SELECT 1 FROM candle_days WHERE instrument_token = ? AND interval = ? LIMIT 1');
   let requests = 0, failed = 0;
   for (const c of wanted.values()) {
     saveContract.run(c.token, c.symbol, cfg.underlying, c.expiry, c.strike, c.type, c.lotSize, Date.now());
+    if (!refreshLive && known.get(c.token, cfg.interval)) continue;
     try {
       // Whole life: Kite returns candles from the day the contract was listed.
       requests += (await ensureCandles(db, fetchHistorical, { token: c.token, interval: cfg.interval, from: back(cfg.fullHistoryDays), to: today, now })).requests;
@@ -170,7 +214,10 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
     contracts: wanted.size, requests, failed, missing: missing.length,
     tookSec: Math.round((Date.now() - started) / 1000),
   };
-  if (!failed) setMeta(db, LAST_RUN_KEY, summary); // a failed run is retried on the next check
+  if (!failed) {
+    setMeta(db, LAST_RUN_KEY, summary); // a failed run is retried on the next check
+    if (afterClose) setMeta(db, finalKey, today);
+  }
   return summary;
 }
 

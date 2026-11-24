@@ -25,7 +25,7 @@ test('levels are grouped by week with their 4 contracts; chart prefers 15m, fall
   const c = db.prepare(`INSERT INTO option_contracts VALUES (?, ?, 'NIFTY', '2026-12-01', ?, ?, 75, 0)`);
   c.run(101, 'NIFTY26D0125150CE', 25150, 'CE');
   c.run(102, 'NIFTY26D0125150PE', 25150, 'PE');
-  db.prepare(`INSERT INTO option_levels VALUES (?, '2026-11-25', 'short', 25161.5, ?, NULL, '2026-12-01', 25150, 25200, 0)`).run(IST(2026, 11, 24, 17, 15), IST(2026, 11, 24, 20, 0));
+  db.prepare(`INSERT INTO option_levels (cross_ts, day, side, level, touch_ts, until_ts, expiry, strike_below, strike_above, saved_at) VALUES (?, '2026-11-25', 'short', 25161.5, ?, NULL, '2026-12-01', 25150, 25200, 0)`).run(IST(2026, 11, 24, 17, 15), IST(2026, 11, 24, 20, 0));
   const ins = db.prepare(`INSERT INTO candles VALUES (?, ?, ?, 100, 110, 90, 105, 1, 5)`);
   ins.run(101, '15minute', IST(2026, 10, 1, 9, 15));
   ins.run(101, '15minute', IST(2026, 11, 25, 9, 15));
@@ -41,4 +41,22 @@ test('levels are grouped by week with their 4 contracts; chart prefers 15m, fall
   const pe = chartData(db, { token: 102, minutes: 5 });
   assert.deepEqual([pe.sourceMinutes, pe.bars.length], [5, 6]);
   assert.equal(chartData(db, { token: 999 }), null);
+});
+
+test('option stop-loss = lowest low in the previous stretch; entry = touch candle close (or next open)', async () => {
+  const { optionStop } = await import('../../options.js');
+  const db = openDb(':memory:');
+  const ins = db.prepare(`INSERT INTO candles VALUES (201, '15minute', ?, ?, ?, ?, ?, 0, 0)`);
+  // stretch: 24 Nov 10:00 → 25 Nov 10:00 cross; lows 120, 95, 110; touch at 25 Nov 11:05
+  ins.run(IST(2026, 11, 24, 10, 0), 130, 140, 120, 135);
+  ins.run(IST(2026, 11, 24, 14, 0), 100, 105, 95, 98);
+  ins.run(IST(2026, 11, 25, 10, 0), 112, 118, 110, 115);
+  ins.run(IST(2026, 11, 25, 10, 30), 90, 92, 80, 85); // after the cross: not in the stretch
+  ins.run(IST(2026, 11, 25, 11, 0), 140, 150, 138, 142.5);
+  const c = { token: 201, strike: 25150, type: 'CE', symbol: 'X', interval: '15minute' };
+  const lvl = { touch_ts: IST(2026, 11, 25, 11, 5), cross_ts: IST(2026, 11, 25, 10, 0), stretch_from_ts: IST(2026, 11, 24, 10, 0) };
+  const r = optionStop(db, c, lvl);
+  assert.deepEqual([r.entry, r.entryBasis, r.sl, r.gap], [142.5, 'touch candle close', 95, 47.5]);
+  const night = optionStop(db, c, { ...lvl, touch_ts: IST(2026, 11, 24, 20, 0) });
+  assert.deepEqual([night.entry, night.entryBasis], [112, 'next open']);
 });

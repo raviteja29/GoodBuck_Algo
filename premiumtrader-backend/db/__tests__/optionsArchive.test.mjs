@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../index.js';
-import { strikesForLevel, niftyOptions, sessionDays, levelDays, pickContracts, archiveDue, runOptionsArchive } from '../../optionsArchive.js';
+import { strikesForLevel, niftyOptions, sessionDays, levelDays, pickContracts, archiveDue, runOptionsArchive, nextSessionDay } from '../../optionsArchive.js';
 
 const IST = (y, m, d, hh, mm) => Date.UTC(y, m - 1, d, hh, mm) - 330 * 60000;
 
@@ -61,10 +61,23 @@ test('sessions are days with candles inside 09:15–15:30', () => {
   assert.deepEqual(sessionDays(bars), ['2026-11-20']);
 });
 
-test('due only after 15:40 IST and once a day', () => {
+test('due once per 15-minute block, a minute after the candle closes', async () => {
+  const { setMeta } = await import('../index.js');
   const db = openDb(':memory:');
-  assert.equal(archiveDue(db, IST(2026, 11, 23, 15, 0)), false);
-  assert.equal(archiveDue(db, IST(2026, 11, 23, 22, 30)), true);
+  assert.equal(archiveDue(db, IST(2026, 11, 25, 10, 16)), true); // never run
+  setMeta(db, 'options_archive_last_run_v3', { at: IST(2026, 11, 25, 10, 16) });
+  assert.equal(archiveDue(db, IST(2026, 11, 25, 10, 25)), false);
+  assert.equal(archiveDue(db, IST(2026, 11, 25, 10, 30)), false); // the 10:15 candle is still the latest + grace
+  assert.equal(archiveDue(db, IST(2026, 11, 25, 10, 31)), true);
+});
+
+test('a still-valid level is mapped to the next session before it opens', () => {
+  const setups = [{ crossTs: IST(2026, 11, 23, 12, 0), side: 'short', touch: 25300, touchTs: IST(2026, 11, 23, 13, 0), stop: 25400 }];
+  const rows = levelDays(setups, ['2026-11-23'], undefined, { nextSession: nextSessionDay(IST(2026, 11, 24, 20, 0)) });
+  assert.deepEqual(rows.map((r) => r.day), ['2026-11-23', '2026-11-25']); // Tue 24 evening → Wed 25
+  assert.equal(rows[0].giftStop, 25400);
+  assert.equal(nextSessionDay(IST(2026, 11, 27, 20, 0)), '2026-11-30'); // Fri evening → Mon
+  assert.equal(nextSessionDay(IST(2026, 11, 25, 10, 0)), '2026-11-25');
 });
 
 test('run saves the full 15m history of the 4 level contracts, then keeps them up to date', async () => {
@@ -92,7 +105,7 @@ test('run saves the full 15m history of the 4 level contracts, then keeps them u
     return out;
   };
   const instruments = instrumentList(['2026-11-17', '2026-11-23', '2026-12-01']);
-  const now = IST(2026, 11, 23, 22, 30);
+  const now = IST(2026, 11, 23, 22, 35);
   const r = await runOptionsArchive(db, fetchHistorical, instruments, { now });
   assert.equal(r.failed, 0);
   assert.ok(optionCalls.length > 0 && optionCalls.every((c) => c.interval === '15minute'));
@@ -106,10 +119,11 @@ test('run saves the full 15m history of the 4 level contracts, then keeps them u
   assert.equal(new Date(first + 330 * 60000).toISOString().slice(0, 10), '2026-10-01');
   assert.equal(archiveDue(db, now + 60000), false);
   // Next day: live level contracts are fetched again for the new day only
+  const knownTokens = new Set(optionCalls.map((c) => c.token));
   optionCalls.length = 0;
-  const next = IST(2026, 11, 24, 22, 30);
+  const next = IST(2026, 11, 24, 22, 35);
   await runOptionsArchive(db, fetchHistorical, instruments.filter((i) => isoOk(i, '2026-11-24')), { now: next });
-  assert.ok(optionCalls.every((c) => c.from >= '2026-11-23'), 'only the missing days are fetched');
+  assert.ok(optionCalls.filter((c) => knownTokens.has(c.token)).every((c) => c.from >= '2026-11-23'), 'known contracts: only the missing days');
 });
 
 const isoOk = (i, day) => i.expiry.toISOString().slice(0, 10) >= day;

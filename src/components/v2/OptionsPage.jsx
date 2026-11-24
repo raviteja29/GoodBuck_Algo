@@ -6,7 +6,7 @@ const IST = 'Asia/Kolkata';
 const fmtDay = (day) => new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', weekday: 'short', day: '2-digit', month: 'short' }).format(new Date(`${day}T00:00:00Z`));
 const fmtWhen = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ms));
 const fmtPrice = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '—');
-const fmtDate = (ms) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, day: '2-digit', month: 'short' }).format(new Date(ms));
+const fmtPrice2 = (v) => (Number.isFinite(v) ? v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—');
 const fmtStrike = (v) => Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 const SIDE = { short: 'Short', long: 'Long' };
 const levelKey = (l) => `${l.crossTs}:${l.day}`;
@@ -17,19 +17,64 @@ const inSession = (ms) => {
   return mins >= 555 && mins < 930;
 };
 
+/** Wednesday that starts the expiry week containing today (IST). */
+const currentWeekStart = () => {
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const d = new Date(`${today}T00:00:00Z`);
+  return new Date(d.getTime() - ((d.getUTCDay() - 3 + 7) % 7) * 86400000).toISOString().slice(0, 10);
+};
+
+/** "Entry 142.5 · SL 95.0 (−47.5)" for one option at a level. */
+function OptionCell({ o }) {
+  if (!o) return <span className="gb-muted">—</span>;
+  const head = <span className="gb-opt-sym">{fmtStrike(o.strike)} {o.type}</span>;
+  if (o.entry == null && o.sl == null) return <div className="gb-opt-cell">{head}<span className="gb-muted">not saved yet</span></div>;
+  return (
+    <div className="gb-opt-cell">
+      {head}
+      <span>
+        <span title={o.entryBasis ? `Price at the first touch (${o.entryBasis})` : undefined}>Entry {fmtPrice2(o.entry)}</span>
+        {' · '}
+        <span title={o.sl == null ? 'The previous stretch had no market hours, so the option has no price there' : 'Lowest price of this option during the previous stretch'}>SL {o.sl == null ? 'n/a' : fmtPrice2(o.sl)}</span>
+        {o.gap != null && <span className="gb-muted"> ({o.gap >= 0 ? '−' : '+'}{fmtPrice2(Math.abs(o.gap))})</span>}
+      </span>
+    </div>
+  );
+}
+
 /** Options tab: every Cross Pullback level with its saved strikes; click a row for the chart. */
 export default function OptionsPage() {
   const [data, setData] = useState(null);
   const [health, setHealth] = useState(null);
   const [error, setError] = useState(null);
   const [selected, setSelected] = useState(null); // level key
+  const [openWeeks, setOpenWeeks] = useState(null); // Set of weekStart; null until data arrives
 
+  // Saved every 15 minutes on the server; refresh here every minute so a new touch shows up.
   useEffect(() => {
     let alive = true;
-    OptionsService.levels(12).then((d) => alive && setData(d)).catch((e) => alive && setError(e.message));
-    OptionsService.health().then((h) => alive && setHealth(h?.optionsArchive || null)).catch(() => {});
-    return () => { alive = false; };
+    const load = () => {
+      OptionsService.levels(12).then((d) => alive && (setData(d), setError(null))).catch((e) => alive && setError(e.message));
+      OptionsService.health().then((h) => alive && setHealth(h?.optionsArchive || null)).catch(() => {});
+    };
+    load();
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
+    return () => { alive = false; clearInterval(t); };
   }, []);
+
+  // Open the current week (or the latest) the first time data arrives.
+  useEffect(() => {
+    if (!data || openWeeks) return;
+    const cur = currentWeekStart();
+    const first = data.weeks.find((w) => w.weekStart === cur) || data.weeks[0];
+    setOpenWeeks(new Set(first ? [first.weekStart] : []));
+  }, [data, openWeeks]);
+
+  const toggleWeek = (key) => setOpenWeeks((prev) => {
+    const next = new Set(prev || []);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   const levels = useMemo(() => (data?.weeks || []).flatMap((w) => w.levels), [data]);
   const level = levels.find((l) => levelKey(l) === selected) || null;
@@ -39,10 +84,10 @@ export default function OptionsPage() {
       <header className="gb-page-head">
         <div>
           <h1 className="gb-title">Options</h1>
-          <p className="gb-subtitle">CE and PE at the strikes either side of each Cross Pullback level · 15-minute candles with OI, full contract history</p>
+          <p className="gb-subtitle">CE at the strike below and PE at the strike above each Cross Pullback level · saved within 15 minutes of a touch</p>
         </div>
         {health?.lastRun && (
-          <p className="gb-muted">Last saved {fmtDay(health.lastRun.day)} · {health.contracts} contracts · {health.candles.toLocaleString('en-IN')} candles</p>
+          <p className="gb-muted">Updated {fmtDay(health.lastRun.day)} · {health.contracts} contracts · {health.candles.toLocaleString('en-IN')} candles</p>
         )}
       </header>
 
@@ -50,58 +95,59 @@ export default function OptionsPage() {
       {!data && !error && <div className="gb-card gb-opt-msg">Loading…</div>}
       {data && !data.weeks.length && (
         <div className="gb-card gb-opt-msg">
-          No levels saved yet. They're saved automatically after 15:40 on any trading day you're logged in.
+          No levels saved yet. They're saved within 15 minutes of each touch while you're logged in.
         </div>
       )}
 
       {level && <LevelChart key={levelKey(level)} level={level} giftToken={data.giftToken} onClose={() => setSelected(null)} />}
 
-      {(data?.weeks || []).map((w) => (
-        <section key={w.weekStart} className="gb-section">
-          <div className="gb-section-head">
-            <h2 className="gb-h2">{fmtDay(w.weekStart)} – {fmtDay(w.weekEnd)}</h2>
-            <span className="gb-muted">{w.expiry ? `Expiry ${fmtDay(w.expiry)}` : 'Expiry not available'}</span>
-          </div>
-          <div className="gb-card gb-table-wrap">
-            <table className="gb-table gb-opt-table">
-              <thead>
-                <tr>
-                  <th>Day</th>
-                  <th>Level</th>
-                  <th className="gb-l">Side</th>
-                  <th className="gb-l gb-hide-sm">Set at</th>
-                  <th>Strikes</th>
-                  <th>Saved</th>
-                  <th className="gb-hide-sm">History from</th>
-                </tr>
-              </thead>
-              <tbody>
-                {w.levels.map((l) => {
-                  const k = levelKey(l);
-                  const total = l.contracts.length;
-                  const complete = l.saved === total;
-                  return (
-                    <tr key={k} className="gb-opt-row" aria-selected={selected === k} tabIndex={0}
-                      onClick={() => setSelected(k)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(k); } }}>
-                      <td>{fmtDay(l.day)}</td>
-                      <td>{fmtPrice(l.level)}</td>
-                      <td className="gb-l"><span className={l.side === 'short' ? 'gb-neg' : 'gb-pos'}>{SIDE[l.side]}</span></td>
-                      <td className="gb-l gb-hide-sm">{fmtWhen(l.touchTs)}</td>
-                      <td>{l.strikeBelow === l.strikeAbove ? fmtStrike(l.strikeBelow) : `${fmtStrike(l.strikeBelow)} / ${fmtStrike(l.strikeAbove)}`}</td>
-                      <td>
-                        {!l.expiry ? <span className="gb-muted">Expired before saving</span>
-                          : <span className={complete ? 'gb-pos' : 'gb-opt-partial'}>{complete ? '✓ ' : ''}{l.saved} / {total}</span>}
-                      </td>
-                      <td className="gb-hide-sm">{l.historyFrom ? fmtDate(l.historyFrom) : '—'}</td>
+      {(data?.weeks || []).map((w) => {
+        const isOpen = !!openWeeks?.has(w.weekStart);
+        const panelId = `gb-week-${w.weekStart}`;
+        return (
+          <section key={w.weekStart} className="gb-section">
+            <button type="button" className="gb-opt-week" aria-expanded={isOpen} aria-controls={panelId} onClick={() => toggleWeek(w.weekStart)}>
+              <span className="gb-opt-chev" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
+              <span className="gb-h2">{fmtDay(w.weekStart)} – {fmtDay(w.weekEnd)}</span>
+              {w.weekStart === currentWeekStart() && <span className="gb-badge gb-badge-active">This week</span>}
+              <span className="gb-muted gb-opt-week-meta">{w.levels.length} level{w.levels.length === 1 ? '' : 's'} · {w.expiry ? `expiry ${fmtDay(w.expiry)}` : 'expiry not available'}</span>
+            </button>
+            {isOpen && (
+              <div id={panelId} className="gb-card gb-table-wrap">
+                <table className="gb-table gb-opt-table">
+                  <thead>
+                    <tr>
+                      <th>Day</th>
+                      <th>Level</th>
+                      <th className="gb-l">Side</th>
+                      <th className="gb-l gb-hide-sm">Set at</th>
+                      <th className="gb-l">CE · strike below</th>
+                      <th className="gb-l">PE · strike above</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ))}
+                  </thead>
+                  <tbody>
+                    {w.levels.map((l) => {
+                      const k = levelKey(l);
+                      return (
+                        <tr key={k} className="gb-opt-row" aria-selected={selected === k} tabIndex={0}
+                          onClick={() => setSelected(k)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(k); } }}>
+                          <td>{fmtDay(l.day)}</td>
+                          <td>{fmtPrice(l.level)}</td>
+                          <td className="gb-l"><span className={l.side === 'short' ? 'gb-neg' : 'gb-pos'}>{SIDE[l.side]}</span></td>
+                          <td className="gb-l gb-hide-sm">{fmtWhen(l.touchTs)}</td>
+                          <td className="gb-l">{l.expiry ? <OptionCell o={l.ce} /> : <span className="gb-muted">Expired before saving</span>}</td>
+                          <td className="gb-l">{l.expiry ? <OptionCell o={l.pe} /> : <span className="gb-muted">—</span>}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        );
+      })}
     </>
   );
 }
@@ -123,8 +169,10 @@ function LevelChart({ level, giftToken, onClose }) {
     if (!token) { setChart(null); return undefined; }
     let alive = true;
     setError(null);
-    OptionsService.chart(token, tf).then((d) => alive && setChart(d)).catch((e) => alive && setError(e.message));
-    return () => { alive = false; };
+    const load = () => OptionsService.chart(token, tf).then((d) => alive && setChart(d)).catch((e) => alive && setError(e.message));
+    load();
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
+    return () => { alive = false; clearInterval(t); };
   }, [token, tf]);
 
   const step = (dir) => {

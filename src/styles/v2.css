@@ -376,3 +376,12 @@
 }
 .gb-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (max-width: 760px) { .gb-opt-chart { padding: 16px; } }
+
+.gb-opt-week {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; width: 100%; min-height: 44px; padding: 4px 0;
+  border: none; background: none; color: var(--gb-text); text-align: left; cursor: pointer;
+}
+.gb-opt-chev { width: 16px; color: var(--gb-text-2); }
+.gb-opt-week-meta { margin-left: auto; }
+.gb-opt-cell { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.gb-opt-sym { font-weight: 600; }
