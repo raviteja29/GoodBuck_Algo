@@ -51,7 +51,7 @@ test('expiry is the week (Tue 17 level traded Wed 18 → 23 Nov); CE and PE at b
 
 test('a day whose weekly expiry has already gone is not mapped to the next week', () => {
   const options = niftyOptions(instrumentList(['2026-11-23', '2026-12-01']));
-  const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-16' }], options);
+  const [r] = pickContracts([{ crossTs: 1, side: 'short', level: 25357.6, touchTs: 1, until: null, day: '2026-11-16' }], options, undefined, { today: '2026-11-20' });
   assert.equal(r.expiry, null);
   assert.ok(r.contracts.every((c) => c.contract === null));
 });
@@ -127,3 +127,17 @@ test('run saves the full 15m history of the 4 level contracts, then keeps them u
 });
 
 const isoOk = (i, day) => i.expiry.toISOString().slice(0, 10) >= day;
+
+test('expiry follows holiday moves: after Mon 23 Nov expiry, Tue 24 belongs to 1 Dec', async () => {
+  const { expiryForDay } = await import('../../optionsArchive.js');
+  const listed = ['2026-12-01', '2026-12-08'];
+  const known = ['2026-11-23'];
+  const today = '2026-11-24';
+  assert.equal(expiryForDay('2026-11-24', listed, known, today), '2026-12-01'); // holiday Tue after the moved expiry
+  assert.equal(expiryForDay('2026-11-25', listed, known, today), '2026-12-01');
+  assert.equal(expiryForDay('2026-11-23', listed, known, today), null);         // its expiry (today's list no longer has it)
+  assert.equal(expiryForDay('2026-11-20', listed, known, today), null);
+  assert.equal(expiryForDay('2026-11-16', listed, known, today), null);         // 17 Nov: expired, never seen
+  assert.equal(expiryForDay('2026-11-23', ['2026-11-23', '2026-12-01'], [], '2026-11-23'), '2026-11-23'); // on expiry day
+  assert.equal(expiryForDay('2026-12-02', listed, known, today), '2026-12-08');
+});
