@@ -18,13 +18,6 @@ const inSession = (ms) => {
   return mins >= 555 && mins < 930;
 };
 
-/** Wednesday that starts the expiry week containing today (IST). */
-const currentWeekStart = () => {
-  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-  const d = new Date(`${today}T00:00:00Z`);
-  return new Date(d.getTime() - ((d.getUTCDay() - 3 + 7) % 7) * 86400000).toISOString().slice(0, 10);
-};
-
 /** "Entry 142.5 · SL 95.0 (−47.5)" for one option at a level. */
 function OptionCell({ o }) {
   if (!o) return <span className="gb-muted">—</span>;
@@ -66,9 +59,8 @@ export default function OptionsPage() {
   // Open the current week (or the latest) the first time data arrives.
   useEffect(() => {
     if (!data || openWeeks) return;
-    const cur = currentWeekStart();
-    const first = data.weeks.find((w) => w.weekStart === cur) || data.weeks[0];
-    setOpenWeeks(new Set(first ? [first.weekStart] : []));
+    const first = data.weeks.find((w) => w.current) || data.weeks[0];
+    setOpenWeeks(new Set(first ? [first.key] : []));
   }, [data, openWeeks]);
 
   const toggleWeek = (key) => setOpenWeeks((prev) => {
@@ -105,14 +97,14 @@ export default function OptionsPage() {
       <SimilarWeeks />
 
       {(data?.weeks || []).map((w) => {
-        const isOpen = !!openWeeks?.has(w.weekStart);
-        const panelId = `gb-week-${w.weekStart}`;
+        const isOpen = !!openWeeks?.has(w.key);
+        const panelId = `gb-week-${w.key.replace(/[^a-z0-9-]/gi, '')}`;
         return (
-          <section key={w.weekStart} className="gb-section">
-            <button type="button" className="gb-opt-week" aria-expanded={isOpen} aria-controls={panelId} onClick={() => toggleWeek(w.weekStart)}>
+          <section key={w.key} className="gb-section">
+            <button type="button" className="gb-opt-week" aria-expanded={isOpen} aria-controls={panelId} onClick={() => toggleWeek(w.key)}>
               <span className="gb-opt-chev" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
               <span className="gb-h2">{fmtDay(w.weekStart)} – {fmtDay(w.weekEnd)}</span>
-              {w.weekStart === currentWeekStart() && <span className="gb-badge gb-badge-active">This week</span>}
+              {w.current && <span className="gb-badge gb-badge-active">This week</span>}
               <span className="gb-muted gb-opt-week-meta">{w.levels.length} level{w.levels.length === 1 ? '' : 's'} · {w.expiry ? `expiry ${fmtDay(w.expiry)}` : 'expiry not available'}</span>
             </button>
             {isOpen && (

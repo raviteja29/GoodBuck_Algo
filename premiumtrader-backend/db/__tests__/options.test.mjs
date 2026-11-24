@@ -30,8 +30,12 @@ test('levels are grouped by week with their 4 contracts; chart prefers 15m, fall
   ins.run(101, '15minute', IST(2026, 10, 1, 9, 15));
   ins.run(101, '15minute', IST(2026, 11, 25, 9, 15));
   for (let m = 0; m < 30; m += 5) ins.run(102, '5minute', IST(2026, 11, 25, 9, 15 + m));
-  const [week] = listLevelWeeks(db);
+  const [week] = listLevelWeeks(db, { today: '2026-11-26' });
   assert.equal(week.weekStart, '2026-11-25');
+  assert.equal(week.current, true);
+  // After a holiday-moved expiry (Mon 23 Nov), the next week starts the day after it.
+  db.prepare(`INSERT INTO option_contracts VALUES (300, 'X', 'NIFTY', '2026-11-23', 25000, 'CE', 75, 0)`).run();
+  assert.equal(listLevelWeeks(db, { today: '2026-11-24' })[0].weekStart, '2026-11-24');
   const [l] = week.levels;
   assert.deepEqual(l.contracts.map((x) => `${x.strike}${x.type}:${x.bars}`), ['25150CE:2', '25150PE:6', '25200CE:0', '25200PE:0']);
   assert.equal(l.saved, 2);

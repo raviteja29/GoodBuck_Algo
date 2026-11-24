@@ -4,7 +4,8 @@
 
 import express from 'express';
 import { requireSession } from './strategies.js';
-import { OPTIONS_ARCHIVE } from './optionsArchive.js';
+import { OPTIONS_ARCHIVE, knownExpiries } from './optionsArchive.js';
+import { todayIST } from './candles.js';
 import { DEFAULT_CROSS_CONFIG } from './strategy/config.js';
 import { computeHMASeries, computeSMASeries } from './strategy/indicators.js';
 import { similarWeeks, optionSimilarityStatus } from './similarity.js';
@@ -24,14 +25,25 @@ export function weekStart(day) {
 }
 
 /** Levels grouped into Wednesday → Tuesday weeks, newest first, with what's saved for each. */
-export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE } = {}) {
-  const rows = db.prepare('SELECT * FROM option_levels ORDER BY day DESC, touch_ts DESC').all();
+export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE, today = todayIST() } = {}) {
+  // Newest expiry first; within it, newest day / touch first.
+  const rows = db.prepare(`SELECT * FROM option_levels ORDER BY COALESCE(expiry, day) DESC, day DESC, touch_ts DESC`).all();
+  const known = knownExpiries(db, cfg).sort();
+  const dayAdd = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+  // An expiry week runs from the day after the previous expiry to this expiry
+  // (normally Wed → Tue; Tue 24 Nov → Tue 1 Dec after the Mon 23 Nov holiday move).
+  const rangeFor = (expiry) => {
+    const prev = known.filter((e) => e < expiry).at(-1);
+    const wed = weekStart(expiry);
+    const from = prev ? [dayAdd(prev, 1), dayAdd(wed, -2)].sort().at(-1) : wed;
+    return { from, to: expiry };
+  };
   const findContract = db.prepare('SELECT instrument_token AS token, tradingsymbol AS symbol FROM option_contracts WHERE underlying = ? AND expiry = ? AND strike = ? AND type = ?');
   const coverage = db.prepare(`SELECT interval, COUNT(*) AS bars, MIN(ts) AS first, MAX(ts) AS last FROM candles
     WHERE instrument_token = ? AND interval IN ('5minute', '15minute') GROUP BY interval`);
   const byWeek = new Map();
   for (const r of rows) {
-    const key = weekStart(r.day);
+    const key = r.expiry ? `exp:${r.expiry}` : `wk:${weekStart(r.day)}`;
     if (!byWeek.has(key)) {
       if (byWeek.size >= weeks) break;
       byWeek.set(key, []);
@@ -58,12 +70,11 @@ export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE } = {}) {
       contracts,
     });
   }
-  return [...byWeek.entries()].map(([start, levels]) => ({
-    weekStart: start,
-    weekEnd: new Date(Date.parse(`${start}T00:00:00Z`) + 6 * 86400000).toISOString().slice(0, 10),
-    expiry: levels.find((l) => l.expiry)?.expiry ?? null,
-    levels,
-  }));
+  return [...byWeek.entries()].map(([key, levels]) => {
+    const expiry = levels.find((l) => l.expiry)?.expiry ?? null;
+    const { from, to } = expiry ? rangeFor(expiry) : { from: key.slice(3), to: dayAdd(key.slice(3), 6) };
+    return { key, weekStart: from, weekEnd: to, expiry, current: today >= from && today <= to, levels };
+  });
 }
 
 /**

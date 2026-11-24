@@ -8,8 +8,9 @@
 // opens, the next session after it was set):
 //   strikes = the strike just below and just above the level (only that one
 //             strike when the level is exactly on it), CE and PE of each,
-//   expiry  = the first NIFTY expiry on or after that session's day (within its
-//             Wednesday → Tuesday week; if that one has expired, nothing can be saved).
+//   expiry  = the expiry of that day's week: normally the Tuesday on/after it,
+//             or the earlier day it moved to for a holiday (then the days after
+//             it belong to the next week). If it has expired, nothing can be saved.
 // Each contract's 15-minute candles (with OI) are saved for its whole life:
 // everything Kite has from listing, then each new day until it expires.
 //
@@ -112,19 +113,46 @@ const marketOpen = (now, cfg = OPTIONS_ARCHIVE) => {
   return w >= 1 && w <= 5 && m >= cfg.sessionStartMin && m < cfg.sessionEndMin + cfg.everyMin;
 };
 
+const dayAdd = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+
+/**
+ * The NIFTY expiry a trading day belongs to. Weekly expiry is Tuesday, moved
+ * earlier when Tuesday is a holiday (e.g. Mon 23 Nov), so a day after a moved
+ * expiry (Tue 24 Nov) already belongs to the next week (1 Dec).
+ *   listed: expiries in Kite's current list (live)
+ *   known:  every expiry we've seen, including expired ones (from saved data)
+ * Returns null when that day's expiry has already expired.
+ */
+export function expiryForDay(day, listed, known = [], today = day) {
+  let tue = day;
+  while (new Date(`${tue}T00:00:00Z`).getUTCDay() !== 2) tue = dayAdd(tue, 1);
+  const live = [...new Set(listed)].sort();
+  const all = [...new Set([...listed, ...known])].sort();
+  const thisWeek = all.filter((e) => e >= dayAdd(tue, -3) && e <= tue).at(-1);
+  if (thisWeek) {
+    if (thisWeek >= day) return live.includes(thisWeek) ? thisWeek : null;
+    return live.find((e) => e > thisWeek && e >= day) || null; // that week's expiry was moved before this day
+  }
+  if (tue < today) return null; // expired and never seen
+  return live.find((e) => e >= day) || null;
+}
+
 /** Attach the expiry and the contracts (CE and PE at the strikes below and above) to each level-day. */
-export function pickContracts(rows, options, cfg = OPTIONS_ARCHIVE) {
-  const expiries = [...new Set(options.map((o) => o.expiry))].sort();
+export function pickContracts(rows, options, cfg = OPTIONS_ARCHIVE, { known = [], today = null } = {}) {
+  const listed = [...new Set(options.map((o) => o.expiry))];
   const find = (expiry, strike, type) => options.find((o) => o.expiry === expiry && o.strike === strike && o.type === type) || null;
   return rows.map((r) => {
-    // A week runs Wednesday → Tuesday, so the day's expiry is at most 6 days away.
-    // A later one means that week's expiry has already gone from Kite's list.
-    const next = expiries.find((e) => e >= r.day);
-    const expiry = next && (Date.parse(next) - Date.parse(r.day)) / 86400000 <= 6 ? next : null;
+    const expiry = expiryForDay(r.day, listed, known, today || r.day);
     const { below, above } = strikesForLevel(r.level, cfg.strikeStep);
     const contracts = [...new Set([below, above])].flatMap((strike) => ['CE', 'PE'].map((type) => ({ strike, type, contract: expiry ? find(expiry, strike, type) : null })));
     return { ...r, expiry, strikeBelow: below, strikeAbove: above, contracts };
   });
+}
+
+/** Every expiry seen so far (saved contracts and levels), expired ones included. */
+export function knownExpiries(db, cfg = OPTIONS_ARCHIVE) {
+  return db.prepare(`SELECT expiry FROM option_contracts WHERE underlying = ? UNION SELECT expiry FROM option_levels WHERE expiry IS NOT NULL`)
+    .all(cfg.underlying).map((r) => r.expiry);
 }
 
 /** True once per 15-minute block, a minute after the block's candle closes. */
@@ -153,7 +181,7 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
   const candles = getCandles(db, source).filter((c) => c.time + 15 * 60000 <= now);
   const result = runCrossPullback({ candles, from: back(cfg.lookbackDays + 30), to: today, config });
   const since = back(cfg.lookbackDays - 1);
-  const rows = pickContracts(levelDays(result.setups, sessionDays(result.bars, cfg), cfg, { nextSession: nextSessionDay(now, cfg) }), options, cfg)
+  const rows = pickContracts(levelDays(result.setups, sessionDays(result.bars, cfg), cfg, { nextSession: nextSessionDay(now, cfg) }), options, cfg, { known: knownExpiries(db, cfg), today })
     .filter((r) => r.day >= since);
 
   const saveContract = db.prepare(`INSERT INTO option_contracts (instrument_token, tradingsymbol, underlying, expiry, strike, type, lot_size, first_saved_at)
