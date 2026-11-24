@@ -5,8 +5,9 @@
 import express from 'express';
 import { requireSession } from './strategies.js';
 import { OPTIONS_ARCHIVE, knownExpiries } from './optionsArchive.js';
-import { todayIST } from './candles.js';
-import { DEFAULT_CROSS_CONFIG } from './strategy/config.js';
+import { DEFAULT_CROSS_CONFIG, normalizeConfig } from './strategy/config.js';
+import { runCrossPullback } from './strategy/rules/crossPullback.js';
+import { getCandles, todayIST } from './candles.js';
 import { computeHMASeries, computeSMASeries } from './strategy/indicators.js';
 import { similarWeeks, optionSimilarityStatus } from './similarity.js';
 
@@ -107,6 +108,42 @@ export function optionStop(db, contract, level) {
   };
 }
 
+/**
+ * Every HMA 50 / HMA 130 cross the strategy sees over the last `days` (on
+ * completed GIFT NIFTY candles), including the ones it ignores because HMA 50
+ * wasn't sloping the cross's way, with each accepted cross's first touch.
+ */
+export function listCrosses(db, { days = 10, now = Date.now() } = {}) {
+  const { config } = normalizeConfig(DEFAULT_CROSS_CONFIG);
+  const today = todayIST(now);
+  const back = (n) => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86400000).toISOString().slice(0, 10);
+  const candles = getCandles(db, { token: GIFT.token, interval: GIFT_INTERVAL, from: back(days + 120), to: today })
+    .filter((c) => c.time + 15 * 60000 <= now);
+  if (!candles.length) return { crosses: [], lastCandle: null };
+  const r = runCrossPullback({ candles, from: back(days + 30), to: today, config });
+  const { fast, slow } = r.series;
+  const since = Date.parse(`${back(days - 1)}T00:00:00+05:30`);
+  const setupAt = new Map(r.setups.map((s) => [s.crossTs, s]));
+  const round = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  const out = [];
+  for (let i = 1; i < r.bars.length; i++) {
+    if (![fast[i], fast[i - 1], slow[i], slow[i - 1]].every(Number.isFinite)) continue;
+    const bear = fast[i - 1] >= slow[i - 1] && fast[i] < slow[i];
+    const bull = fast[i - 1] <= slow[i - 1] && fast[i] > slow[i];
+    if (!bear && !bull) continue;
+    const b = r.bars[i];
+    if (b.ts < since) continue;
+    const s = setupAt.get(b.ts);
+    out.push({
+      ts: b.ts, side: bear ? 'short' : 'long',
+      hma50: round(fast[i]), hma50Prev: round(fast[i - 1]), hma130: round(slow[i]),
+      sloped: !!s,
+      touchTs: s?.touchTs ?? null, touch: round(s?.touch), stop: round(s?.stop),
+    });
+  }
+  return { crosses: out.reverse(), lastCandle: candles.at(-1).time };
+}
+
 /** Group bars into `minutes` buckets aligned to 09:15 IST (like NSE charts). */
 export function resample(bars, minutes) {
   if (minutes <= 5) return bars;
@@ -168,6 +205,10 @@ export function optionsRouter(db, { verifyToken }) {
 
   r.get('/levels', (req, res) => {
     res.json({ giftToken: GIFT.token, weeks: listLevelWeeks(db, { weeks: Math.min(Number(req.query.weeks) || 8, 52) }) });
+  });
+
+  r.get('/crosses', (req, res) => {
+    res.json(listCrosses(db, { days: Math.min(Number(req.query.days) || 10, 60) }));
   });
 
   r.get('/similar', (req, res) => {
