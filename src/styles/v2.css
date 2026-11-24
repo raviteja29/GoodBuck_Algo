@@ -364,6 +364,8 @@
 .gb-opt-row { cursor: pointer; }
 .gb-opt-row:hover td { background: rgba(118, 118, 128, 0.12); }
 .gb-opt-row[aria-selected='true'] td { background: rgba(10, 132, 255, 0.16); }
+.gb-opt-carried td { border-top-style: dashed; }
+.gb-opt-carried-tag { font-size: 12px; white-space: nowrap; }
 .gb-opt-partial { color: var(--gb-orange); }
 .gb-opt-chart { padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
 .gb-opt-chart-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }

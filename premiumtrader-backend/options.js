@@ -4,7 +4,7 @@
 
 import express from 'express';
 import { requireSession } from './strategies.js';
-import { OPTIONS_ARCHIVE, knownExpiries } from './optionsArchive.js';
+import { OPTIONS_ARCHIVE, knownExpiries, weekStart, weekFrom } from './optionsArchive.js';
 import { DEFAULT_CROSS_CONFIG, normalizeConfig } from './strategy/config.js';
 import { runCrossPullback } from './strategy/rules/crossPullback.js';
 import { getCandles, todayIST } from './candles.js';
@@ -18,37 +18,35 @@ const GIFT_INTERVAL = DEFAULT_CROSS_CONFIG.timeframe; // '15minute'
 const dayStart = (day) => Date.parse(`${day}T00:00:00+05:30`);
 const dayEnd = (day) => Date.parse(`${day}T23:59:59.999+05:30`);
 
-/** Wednesday that starts the expiry week containing `day` (YYYY-MM-DD). */
-export function weekStart(day) {
-  const d = new Date(`${day}T00:00:00Z`);
-  const back = (d.getUTCDay() - 3 + 7) % 7; // 3 = Wednesday
-  return new Date(d.getTime() - back * 86400000).toISOString().slice(0, 10);
-}
+export { weekStart };
 
-/** Levels grouped into Wednesday → Tuesday weeks, newest first, with what's saved for each. */
+/**
+ * Levels grouped into expiry weeks (Wednesday → Tuesday, moved for holidays),
+ * newest first. One row per level: the first touches made in the week, plus
+ * the latest short and latest long from before it ("carried over"), all with
+ * that week's strikes.
+ */
 export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE, today = todayIST() } = {}) {
-  // Newest expiry first; within it, newest day / touch first.
-  const rows = db.prepare(`SELECT * FROM option_levels ORDER BY COALESCE(expiry, day) DESC, day DESC, touch_ts DESC`).all();
-  const known = knownExpiries(db, cfg).sort();
+  const rows = db.prepare(`SELECT * FROM option_levels ORDER BY COALESCE(expiry, day) DESC, day, touch_ts DESC`).all();
+  const known = knownExpiries(db, cfg);
   const dayAdd = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
-  // An expiry week runs from the day after the previous expiry to this expiry
-  // (normally Wed → Tue; Tue 24 Nov → Tue 1 Dec after the Mon 23 Nov holiday move).
-  const rangeFor = (expiry) => {
-    const prev = known.filter((e) => e < expiry).at(-1);
-    const wed = weekStart(expiry);
-    const from = prev ? [dayAdd(prev, 1), dayAdd(wed, -2)].sort().at(-1) : wed;
-    return { from, to: expiry };
-  };
   const findContract = db.prepare('SELECT instrument_token AS token, tradingsymbol AS symbol FROM option_contracts WHERE underlying = ? AND expiry = ? AND strike = ? AND type = ?');
   const coverage = db.prepare(`SELECT interval, COUNT(*) AS bars, MIN(ts) AS first, MAX(ts) AS last FROM candles
     WHERE instrument_token = ? AND interval IN ('5minute', '15minute') GROUP BY interval`);
+
+  // Week → one row per level (its first day in the week).
   const byWeek = new Map();
   for (const r of rows) {
     const key = r.expiry ? `exp:${r.expiry}` : `wk:${weekStart(r.day)}`;
     if (!byWeek.has(key)) {
       if (byWeek.size >= weeks) break;
-      byWeek.set(key, []);
+      byWeek.set(key, new Map());
     }
+    const levels = byWeek.get(key);
+    if (!levels.has(r.cross_ts)) levels.set(r.cross_ts, r);
+  }
+
+  const toLevel = (r, carried) => {
     const strikes = [...new Set([r.strike_below, r.strike_above])];
     const contracts = strikes.flatMap((strike) => ['CE', 'PE'].map((type) => {
       const c = r.expiry ? findContract.get(cfg.underlying, r.expiry, strike, type) : null;
@@ -60,8 +58,9 @@ export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE, today = t
       };
     }));
     const pick = (strike, type) => contracts.find((c) => c.strike === strike && c.type === type);
-    byWeek.get(key).push({
+    return {
       day: r.day, side: r.side, level: r.level, touchTs: r.touch_ts, crossTs: r.cross_ts, untilTs: r.until_ts, expiry: r.expiry,
+      carried,
       strikeBelow: r.strike_below, strikeAbove: r.strike_above, giftStop: r.gift_stop, stretchFromTs: r.stretch_from_ts,
       // The trade view: CE at the strike below the level, PE at the strike above.
       ce: optionStop(db, pick(r.strike_below, 'CE'), r),
@@ -69,12 +68,23 @@ export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE, today = t
       saved: contracts.filter((c) => c.bars > 0).length,
       historyFrom: contracts.reduce((m, c) => (c.from && (!m || c.from < m) ? c.from : m), null),
       contracts,
-    });
-  }
-  return [...byWeek.entries()].map(([key, levels]) => {
-    const expiry = levels.find((l) => l.expiry)?.expiry ?? null;
-    const { from, to } = expiry ? rangeFor(expiry) : { from: key.slice(3), to: dayAdd(key.slice(3), 6) };
-    return { key, weekStart: from, weekEnd: to, expiry, current: today >= from && today <= to, levels };
+    };
+  };
+
+  return [...byWeek.entries()].map(([key, map]) => {
+    const all = [...map.values()];
+    const expiry = all.find((r) => r.expiry)?.expiry ?? null;
+    const from = expiry ? weekFrom(expiry, known) : key.slice(3);
+    const to = expiry || dayAdd(from, 6);
+    const cutoff = dayStart(from);
+    // Touched in this week, newest first; then the latest short and long from before it.
+    const own = all.filter((r) => r.touch_ts >= cutoff).sort((a, b) => b.touch_ts - a.touch_ts);
+    const before = all.filter((r) => r.touch_ts < cutoff).sort((a, b) => b.touch_ts - a.touch_ts);
+    const carried = ['short', 'long'].map((side) => before.find((r) => r.side === side)).filter(Boolean).sort((a, b) => b.touch_ts - a.touch_ts);
+    return {
+      key, weekStart: from, weekEnd: to, expiry, current: today >= from && today <= to,
+      levels: [...own.map((r) => toLevel(r, false)), ...carried.map((r) => toLevel(r, true))],
+    };
   });
 }
 
