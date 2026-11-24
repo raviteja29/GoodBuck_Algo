@@ -130,7 +130,7 @@ export function listCrosses(db, { days = 10, now = Date.now() } = {}) {
   const candles = getCandles(db, { token: GIFT.token, interval: GIFT_INTERVAL, from: back(days + 120), to: today })
     .filter((c) => c.time + 15 * 60000 <= now);
   if (!candles.length) return { crosses: [], lastCandle: null };
-  const r = runCrossPullback({ candles, from: back(days + 30), to: today, config });
+  const r = runCrossPullback({ candles, from: back(days + 30), to: today, config, trackAll: true });
   const { fast, slow } = r.series;
   const since = Date.parse(`${back(days - 1)}T00:00:00+05:30`);
   const setupAt = new Map(r.setups.map((s) => [s.crossTs, s]));

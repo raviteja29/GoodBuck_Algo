@@ -135,7 +135,7 @@ export function similarWeeks(db, { now = Date.now(), cfg = SIMILARITY } = {}) {
   }
 
   // First touches across the whole history, for "how many touches" afterwards.
-  const result = runCrossPullback({ candles: bars.map((b) => ({ time: b.ts, ...b })), from, to: today, config });
+  const result = runCrossPullback({ candles: bars.map((b) => ({ time: b.ts, ...b })), from, to: today, config, trackAll: true });
   const touches = result.setups.filter((s) => s.touchTs).map((s) => s.touchTs);
 
   const scored = [];
