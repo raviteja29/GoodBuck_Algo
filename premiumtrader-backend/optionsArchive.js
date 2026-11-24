@@ -237,7 +237,7 @@ export async function runOptionsArchive(db, fetchHistorical, instruments, { now 
   await ensureCandles(db, fetchHistorical, { ...source, now });
   // Only completed candles: a forming candle could show a cross that disappears.
   const candles = getCandles(db, source).filter((c) => c.time + 15 * 60000 <= now);
-  const result = runCrossPullback({ candles, from: back(cfg.lookbackDays + 30), to: today, config });
+  const result = runCrossPullback({ candles, from: back(cfg.lookbackDays + 30), to: today, config, trackAll: true });
   const since = back(cfg.lookbackDays - 1);
   const nextSession = nextSessionDay(now, cfg);
   const crossTimes = crossTimesOf(result);

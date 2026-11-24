@@ -422,3 +422,18 @@ test('stop = highest high of the WHOLE previous stretch, even where the lines we
   assert.equal(short.stop, 140);
   assert.equal(short.target, 20); // 100 - 2 x 40
 });
+
+test('tracking mode keeps a setup whose stop was passed before the first touch (backtests still drop it)', () => {
+  const rows = [
+    ...SHORT.slice(0, 6),               // short setup at bar 5, stop 130
+    [100, 102, 98, 101, 104, 104.5],    // 6 no touch
+    [101, 135, 100, 110, 105, 105.2],   // 7 fast rising: touch doesn't count; high 135 passes the stop
+    [110, 112, 100, 101, 104, 105.5],   // 8 still rising (judged on closes)
+    [101, 106, 99, 100, 102, 106],      // 9 fast fell (104 < 105): touches 104
+  ];
+  const { candles, series } = scenario(rows);
+  const opts = { candles, from: '2026-01-01', to: '2026-12-31', config: cfg(), series };
+  const tracked = runCrossPullback({ ...opts, trackAll: true }).setups.at(-1);
+  assert.deepEqual([tracked.side, tracked.touch, tracked.stop], ['short', 104, 130]);
+  assert.equal(runCrossPullback(opts).setups.at(-1).touchTs, null);
+});

@@ -86,9 +86,11 @@ function swingStop(side, bars, from, to) {
  * @param {object} opts.config   normalized hma-cross-pullback config
  * @param {object} [opts.series]  { fast, slow, liveFast? } precomputed lines (tests); computed from config otherwise.
  *                                liveFast(i) -> {a, b}; without it an injected series uses a flat line at fast[i-1].
+ * @param {boolean} [opts.trackAll] tracking only: every setup lives until the next cross and records its
+ *                                first touch with its stop, even if price passed the stop first (no filtering).
  * @returns {{trades:Array, setups:Array, series:{fast:Array, slow:Array}, bars:Array}}
  */
-export function runCrossPullback({ candles, from, to, config, series = null }) {
+export function runCrossPullback({ candles, from, to, config, series = null, trackAll = false }) {
   const bars = candles
     .map(normalizeCandle)
     .filter((c) => Number.isFinite(c.close))
@@ -251,7 +253,7 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
         const gapped = live && (side === 'short' ? b.open >= meet : b.open <= meet);
         if (live && (gapped || touched(side, b, meet))) {
           const line = gapped ? live.a + live.b * b.open : meet;
-          if (beyond(side, line, setup.stop)) {
+          if (!trackAll && beyond(side, line, setup.stop)) {
             setup.dead = true; // line already beyond the stop: the setup is broken
           } else {
             setup.touch = line;
@@ -270,7 +272,7 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
       }
 
       // A stop breach on the chart - at any hour - ends the setup.
-      if (setup && !setup.dead && touched(side, b, setup.stop)) setup.dead = true;
+      if (!trackAll && setup && !setup.dead && touched(side, b, setup.stop)) setup.dead = true;
     }
 
     // 3. Bar close: detect a cross and start a new setup.
