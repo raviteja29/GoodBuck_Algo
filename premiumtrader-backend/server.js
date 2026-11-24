@@ -200,6 +200,7 @@ app.post('/api/generate_session', async (req, res) => {
       });
       globalLastAccessToken = sessionData.access_token;
       try { saveKiteSession(db, sessionData); } catch (e) { console.error('[SESSION] Could not persist session:', e.message); }
+      setTimeout(() => maybeArchiveOptions('login', true), 5000);
       initTickerIfPossible(globalLastAccessToken);
       return res.json(sessionData);
     } catch (apiErr) {
@@ -1441,11 +1442,11 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// Options archive: after the close each day (while logged in), save the NIFTY
-// CE/PE strikes at each Cross Pullback level before the contracts expire. Checked every 10 minutes.
+// Options archive: every 15 minutes while logged in (just after each candle
+// closes), save and refresh the NIFTY CE/PE contracts at each Cross Pullback level.
 let optionsArchiveRunning = false;
-async function maybeArchiveOptions(reason) {
-  if (optionsArchiveRunning || !archiveDue(db)) return;
+async function maybeArchiveOptions(reason, force = false) {
+  if (optionsArchiveRunning || (!force && !archiveDue(db))) return;
   const session = loadKiteSession(db);
   if (!session) return;
   optionsArchiveRunning = true;
@@ -1453,16 +1454,15 @@ async function maybeArchiveOptions(reason) {
     const kc = kiteFor(session.access_token);
     const fetchHistorical = (token, interval, f, t) => kc.getHistoricalData(token, interval, f, t, false, true);
     const instruments = await loadInstruments(false, 'options-archive');
-    console.log(`[OPTIONS] Archive run started (${reason})`);
     const r = await runOptionsArchive(db, fetchHistorical, instruments, { log: (m) => console.warn(m) });
-    console.log(`[OPTIONS] Saved ${r.contracts} level-strike contracts for ${r.levels} levels since ${r.since} in ${r.tookSec}s (${r.requests} requests, ${r.failed} failed, ${r.missing} not available)`);
+    if (r.requests || r.failed) console.log(`[OPTIONS] ${reason}: ${r.contracts} contracts for ${r.levels} levels since ${r.since}, ${r.requests} requests, ${r.failed} failed, ${r.missing} not available (${r.tookSec}s)`);
   } catch (e) {
     console.error('[OPTIONS] Archive run failed:', e.message);
   } finally {
     optionsArchiveRunning = false;
   }
 }
-setInterval(() => maybeArchiveOptions('schedule'), 10 * 60 * 1000).unref();
+setInterval(() => maybeArchiveOptions('schedule'), 60 * 1000).unref();
 
 // Start the server
 server.listen(port, '0.0.0.0', () => {

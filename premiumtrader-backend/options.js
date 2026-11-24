@@ -45,9 +45,13 @@ export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE } = {}) {
         bars: best?.bars ?? 0, interval: best?.interval ?? null, from: best?.first ?? null, to: best?.last ?? null,
       };
     }));
+    const pick = (strike, type) => contracts.find((c) => c.strike === strike && c.type === type);
     byWeek.get(key).push({
       day: r.day, side: r.side, level: r.level, touchTs: r.touch_ts, crossTs: r.cross_ts, untilTs: r.until_ts, expiry: r.expiry,
-      strikeBelow: r.strike_below, strikeAbove: r.strike_above,
+      strikeBelow: r.strike_below, strikeAbove: r.strike_above, giftStop: r.gift_stop, stretchFromTs: r.stretch_from_ts,
+      // The trade view: CE at the strike below the level, PE at the strike above.
+      ce: optionStop(db, pick(r.strike_below, 'CE'), r),
+      pe: optionStop(db, pick(r.strike_above, 'PE'), r),
       saved: contracts.filter((c) => c.bars > 0).length,
       historyFrom: contracts.reduce((m, c) => (c.from && (!m || c.from < m) ? c.from : m), null),
       contracts,
@@ -59,6 +63,36 @@ export function listLevelWeeks(db, { weeks = 8, cfg = OPTIONS_ARCHIVE } = {}) {
     expiry: levels.find((l) => l.expiry)?.expiry ?? null,
     levels,
   }));
+}
+
+/**
+ * For one contract at a level: its price at the first touch, and the stop-loss
+ * = the lowest low of the option during the previous stretch (from the previous
+ * cross candle to this level's cross candle, the same window as the GIFT NIFTY stop).
+ */
+export function optionStop(db, contract, level) {
+  if (!contract?.token || !contract.interval) return contract ? { strike: contract.strike, type: contract.type, symbol: contract.symbol, entry: null, sl: null, gap: null } : null;
+  const ms = contract.interval === '15minute' ? 15 * 60000 : 5 * 60000;
+  const q = (sql, ...a) => db.prepare(sql).get(contract.token, contract.interval, ...a);
+  // Price at the touch: the close of the candle the touch happened in; if the
+  // touch was outside market hours, the open of the next candle.
+  let entry = null, entryAt = null, entryBasis = null;
+  const inBar = q('SELECT ts, close FROM candles WHERE instrument_token = ? AND interval = ? AND ts <= ? AND ts + ? > ? ORDER BY ts DESC LIMIT 1', level.touch_ts, ms, level.touch_ts);
+  if (inBar) { entry = inBar.close; entryAt = inBar.ts; entryBasis = 'touch candle close'; }
+  else {
+    const next = q('SELECT ts, open FROM candles WHERE instrument_token = ? AND interval = ? AND ts >= ? ORDER BY ts LIMIT 1', level.touch_ts);
+    if (next) { entry = next.open; entryAt = next.ts; entryBasis = 'next open'; }
+  }
+  let sl = null;
+  if (level.stretch_from_ts != null) {
+    const r = q('SELECT MIN(low) AS low FROM candles WHERE instrument_token = ? AND interval = ? AND ts >= ? AND ts < ?', level.stretch_from_ts, level.cross_ts + 15 * 60000);
+    sl = r?.low ?? null;
+  }
+  const round = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  return {
+    strike: contract.strike, type: contract.type, symbol: contract.symbol,
+    entry: round(entry), entryAt, entryBasis, sl: round(sl), gap: entry != null && sl != null ? round(entry - sl) : null,
+  };
 }
 
 /** Group bars into `minutes` buckets aligned to 09:15 IST (like NSE charts). */

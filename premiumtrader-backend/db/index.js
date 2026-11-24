@@ -170,6 +170,12 @@ const MIGRATIONS = [
   ALTER TABLE option_levels DROP COLUMN ce_token;
   ALTER TABLE option_levels DROP COLUMN pe_token;
   `,
+
+  // 7 — the previous stretch (for the option stop-loss) and the GIFT NIFTY stop.
+  `
+  ALTER TABLE option_levels ADD COLUMN stretch_from_ts INTEGER;
+  ALTER TABLE option_levels ADD COLUMN gift_stop REAL;
+  `,
 ];
 
 export function openDb(file = process.env.DB_PATH || DEFAULT_DB_PATH) {
