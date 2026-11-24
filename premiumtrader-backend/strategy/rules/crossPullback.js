@@ -236,9 +236,14 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
         }
       };
 
+      // The first touch only counts while the fast line slopes the setup's way,
+      // judged on completed candles: down for a short (its value at the last
+      // close below the close before), up for a long.
+      const sloping = i >= 2 && Number.isFinite(fast[i - 1]) && Number.isFinite(fast[i - 2])
+        && (side === 'short' ? fast[i - 1] < fast[i - 2] : fast[i - 1] > fast[i - 2]);
       if (setup.phase === 'first') {
-        // First touch of the LIVE fast line - at any hour.
-        const live = liveFast(i);
+        // First touch of the LIVE fast line - at any hour - while it slopes the right way.
+        const live = sloping ? liveFast(i) : null;
         const meet = live && liveMeetingPrice(live);
         // Opened already at/past the line (a gap): the touch is at the open, and the
         // touch point is the line's live value at that moment. Otherwise price met
@@ -273,13 +278,12 @@ export function runCrossPullback({ candles, from, to, config, series = null }) {
       const bear = fast[i - 1] >= slow[i - 1] && fast[i] < slow[i];
       const bull = fast[i - 1] <= slow[i - 1] && fast[i] > slow[i];
       if (bear || bull) {
+        // Every cross starts a setup; the slope rule applies at the first touch.
         const side = bear ? 'short' : 'long';
         const sloped = bear ? fast[i] < fast[i - 1] : fast[i] > fast[i - 1];
         const windowStart = Math.max(lastCross, 0); // whole stretch from the previous cross candle (or the start of data)
-        setup = sloped
-          ? { id: ++seq, side, phase: 'first', stop: swingStop(side, bars, windowStart, i), touch: null, touchTs: null, touchMarket: null, target: null, dead: false, firstPending: false, crossTs: b.ts }
-          : null;
-        if (setup) setups.push(setup);
+        setup = { id: ++seq, side, phase: 'first', stop: swingStop(side, bars, windowStart, i), touch: null, touchTs: null, touchMarket: null, target: null, dead: false, firstPending: false, crossTs: b.ts, slopedAtCross: sloped };
+        setups.push(setup);
         lastCross = i;
       }
     }
