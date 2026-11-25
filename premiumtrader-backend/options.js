@@ -222,7 +222,9 @@ export function optionsRouter(db, { verifyToken }) {
   });
 
   r.get('/similar', (req, res) => {
-    res.json({ gift: similarWeeks(db), options: optionSimilarityStatus(db) });
+    const from = typeof req.query.from === 'string' ? req.query.from : null;
+    const to = typeof req.query.to === 'string' ? req.query.to : null;
+    res.json({ gift: similarWeeks(db, { from, to }), options: optionSimilarityStatus(db) });
   });
 
   r.get('/chart', (req, res) => {

@@ -401,3 +401,8 @@
 .gb-sim-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .gb-sim-legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
 .gb-sim-next { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.gb-sim-range { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 12px 16px; margin-bottom: 12px; }
+.gb-sim-range label { display: flex; align-items: center; gap: 6px; color: var(--gb-text-2); font-size: 13px; }
+.gb-sim-quick { display: flex; gap: 8px; margin-left: auto; }
+.gb-sim-quick [aria-pressed='true'] { border-color: var(--gb-blue, #0A84FF); }
+@media (max-width: 600px) { .gb-sim-quick { margin-left: 0; } }
