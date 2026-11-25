@@ -7,6 +7,8 @@
 // A day runs 06:00 → 06:00 IST, so it includes that day's GIFT NIFTY night
 // session, and a day counts as complete from 06:00 the next morning.
 // Stretches line up trading day by trading day and hour by hour within the day.
+// A trading day is a full weekday session; a run that crosses a holiday is
+// skipped, so 5 trading days always means 5 weekdays in a row.
 //
 // Each stretch becomes an hourly path of % moves from its first price, so the
 // index level doesn't matter. Alongside it goes the HMA 50 vs HMA 130 gap (as %
@@ -89,7 +91,21 @@ export function dayProfiles(bars, hmaFast, hmaSlow, cfg = SIMILARITY) {
     const gap = Number.isFinite(hmaFast[i]) && Number.isFinite(hmaSlow[i]) ? ((hmaFast[i] - hmaSlow[i]) / b.close) * 100 : null;
     cur.slots[h] = { close: b.close, gap };
   });
-  return days;
+  // Trading days are full weekday sessions: weekend / special sessions (e.g. a
+  // Sunday Muhurat hour) and stray candles don't count as a day.
+  return days.filter((d) => isWeekday(d.day) && d.slots.filter(Boolean).length >= cfg.minHoursPerDay);
+}
+
+const isWeekday = (day) => { const w = new Date(`${day}T00:00:00Z`).getUTCDay(); return w >= 1 && w <= 5; };
+
+/** Weekdays from `a` to `b` inclusive (YYYY-MM-DD). */
+export function weekdaysBetween(a, b) {
+  let n = 0;
+  for (let t = Date.parse(`${a}T00:00:00Z`), end = Date.parse(`${b}T00:00:00Z`); t <= end; t += DAY_MS) {
+    const w = new Date(t).getUTCDay();
+    if (w >= 1 && w <= 5) n += 1;
+  }
+  return n;
 }
 
 /** `n` trading days from index `j` as one path: buckets[dayIndex * 24 + hour] = { pct, gap } (% from the first price). */
@@ -182,6 +198,8 @@ export function similarWeeks(db, { now = Date.now(), from = null, to = null, cfg
       const scored = [];
       // Every earlier run of n trading days that ends before the range starts.
       for (let j = 0; j + n <= first; j++) {
+        // Consecutive weekdays only: a run that skips a holiday would span an extra day.
+        if (weekdaysBetween(days[j].day, days[j + n - 1].day) !== n) continue;
         const w = stretchOf(days, j, n, cfg);
         if (w.buckets.filter(Boolean).length < minBuckets) continue;
         const sc = scoreWeek(cur, w, upTo, c);
