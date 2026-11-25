@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openDb } from '../index.js';
-import { lastWeekWindow, rangeWindow, buildStretch, scoreWeek, similarWeeks, optionSimilarityStatus } from '../../similarity.js';
+import { lastWeekWindow, rangeWindow, dayProfiles, stretchOf, scoreWeek, similarWeeks, optionSimilarityStatus } from '../../similarity.js';
 
 const IST = (y, m, d, hh, mm) => Date.UTC(y, m - 1, d, hh, mm) - 330 * 60000;
 
@@ -28,7 +28,7 @@ test('identical shapes score higher than opposite ones; levels do not matter', (
   const mk = (base, sign) => {
     const bars = [];
     for (let h = 0; h < 30; h++) { const p = base * (1 + sign * 0.001 * Math.sin(h / 4) * h / 10); bars.push({ ts: IST(2026, 11, 18, 7, 0) + h * 3600e3, open: p, high: p, low: p, close: p }); }
-    return buildStretch(bars, bars.map(() => null), bars.map(() => null), IST(2026, 11, 18, 6, 0), 7 * 86400000);
+    return stretchOf(dayProfiles(bars, bars.map(() => null), bars.map(() => null)), 0, 2);
   };
   const cur = mk(25000, 1), same = mk(20000, 1), opposite = mk(25000, -1);
   const a = scoreWeek(cur, same, 60), b = scoreWeek(cur, opposite, 60);
@@ -36,37 +36,42 @@ test('identical shapes score higher than opposite ones; levels do not matter', (
   assert.equal(a.parts.shape, 100);
 });
 
-test('similarWeeks finds the past 7-day stretch with the same pattern as the last 7 days', () => {
+test('matches any run of the same number of trading days, whatever weekday it starts on', () => {
   const db = openDb(':memory:');
   const ins = db.prepare(`INSERT INTO candles VALUES (291849, '15minute', ?, ?, ?, ?, ?, 0, NULL)`);
-  // 30 weeks of 15m bars 07:00–23:45 on weekdays; the stretch 10 weeks before the window copies its shape.
-  const now = IST(2026, 11, 26, 16, 0);              // Thu 26 Nov
-  const winStart = IST(2026, 11, 19, 6, 0);          // window: Thu 19 – Wed 25
-  const twinStart = winStart - 10 * 7 * 86400000;
-  const W = 7 * 86400000;
-  const shape = (wk, h) => ((wk % 7) + 1) * Math.sin(h / (2.3 + (wk % 5) * 1.7)) * 20; // never the twin shape
-  for (let t = winStart - 30 * W; t < now; t += 15 * 60000) {
-    const d = new Date(t + 330 * 60000); const w = d.getUTCDay(); const m = d.getUTCHours() * 60 + d.getUTCMinutes();
-    if (w === 0 || w === 6 || m < 7 * 60) continue;
-    const wk = Math.floor((t - winStart) / W) + 100;
-    const into = ((t - winStart) % W + W) % W / 3600e3;
-    const twin = (t >= winStart && t < winStart + W) || (t >= twinStart && t < twinStart + W);
-    const p = 25000 + wk * 10 + (twin ? 120 * Math.sin(into / 5) : shape(wk, into));
-    ins.run(t, p, p + 5, p - 5, p);
+  const now = IST(2026, 11, 26, 16, 0);     // Thu 26 Nov
+  // Trading days (weekdays) for 30 weeks up to Wed 25 Nov, bars 07:00–23:45.
+  const days = [];
+  for (let d = IST(2026, 11, 25, 6, 0); days.length < 150; d -= 86400000) {
+    const w = new Date(d + 330 * 60000).getUTCDay();
+    if (w !== 0 && w !== 6) days.unshift(d);
   }
-  const r = similarWeeks(db, { now });
+  const win = days.length - 5;               // the range: Thu 19 – Wed 25 = 5 trading days
+  const twin = 62;                           // a run of 5 starting on another weekday
+  const twinDay = new Date(days[twin] + 330 * 60000).getUTCDay();
+  assert.notEqual(twinDay, 4, 'twin does not start on a Thursday');
+  const shape = (k, h) => ((k % 7) + 1) * Math.sin((k * 24 + h) / (2.3 + (k % 5) * 1.7)) * 20;
+  days.forEach((d0, k) => {
+    for (let m = 60; m < 24 * 60 - 360; m += 15) {
+      const t = d0 + m * 60000; const h = m / 60;
+      const inWin = k >= win, inTwin = k >= twin && k < twin + 5;
+      const off = inWin ? k - win : k - twin;
+      const p = 25000 + k * 3 + ((inWin || inTwin) ? 120 * Math.sin((off * 24 + h) / 5) : shape(k, h));
+      ins.run(t, p, p + 5, p - 5, p);
+    }
+  });
+  const r = similarWeeks(db, { now, from: '2026-11-19', to: '2026-11-25' });
   assert.equal(r.status, 'ok');
-  assert.equal(r.weekStart, winStart);
+  assert.equal(r.tradingDays, 5);
   assert.equal(r.matches.length, 3);
-  assert.equal(r.matches[0].weekStart, twinStart);
+  assert.equal(r.matches[0].weekStart, days[twin]);
+  assert.equal(r.matches[0].days.length, 5);
   assert.ok(r.matches[0].score >= r.matches[1].score);
-  assert.ok(r.matches.every((m) => m.weekStart < winStart));
-  assert.deepEqual(optionSimilarityStatus(db), { status: 'collecting', weeksSaved: 0, weeksNeeded: 8 });
-  // The same stretch picked by date later on gives the same best match; a 2-day range is low confidence.
-  const later = similarWeeks(db, { now: now + 3 * 86400000, from: '2026-11-19', to: '2026-11-25' });
-  assert.equal(later.matches[0].weekStart, twinStart);
-  const two = similarWeeks(db, { now, from: '2026-11-23', to: '2026-11-24' });
-  assert.equal(two.status, 'ok');
+  // The top matches don't overlap each other or the range.
+  const idx = r.matches.map((m) => days.indexOf(m.weekStart));
+  assert.ok(idx.every((a, i) => idx.every((b, k) => i === k || Math.abs(a - b) >= 5)));
+  assert.ok(idx.every((a) => a + 5 <= win));
+  const two = similarWeeks(db, { now, from: '2026-11-24', to: '2026-11-25' });
   assert.equal(two.lowConfidence, true);
-  assert.ok(two.matches.every((m) => (m.weekStart - IST(2026, 11, 23, 6, 0)) % (7 * 86400000) === 0), 'same weekday');
+  assert.deepEqual(optionSimilarityStatus(db), { status: 'collecting', weeksSaved: 0, weeksNeeded: 8 });
 });

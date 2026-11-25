@@ -1,9 +1,12 @@
-// "Similar weeks": a chosen range of complete days of GIFT NIFTY (1–14 days;
-// by default the last 7) compared with every earlier stretch of the same length
-// that starts on the same weekday (e.g. Wed 18 – Tue 24 Nov vs past Wed–Tue weeks).
+// "Similar weeks": a chosen range of complete days of GIFT NIFTY (up to 14
+// calendar days; by default the last 7) compared with every earlier run of the
+// same number of consecutive TRADING days, starting on any weekday. Wed 18 –
+// Tue 24 Nov is 5 trading days (the weekend has no candles), so it's compared
+// with every 5 trading days in a row: Fri–Thu, Mon–Fri, Thu–Wed, ...
 //
 // A day runs 06:00 → 06:00 IST, so it includes that day's GIFT NIFTY night
 // session, and a day counts as complete from 06:00 the next morning.
+// Stretches line up trading day by trading day and hour by hour within the day.
 //
 // Each stretch becomes an hourly path of % moves from its first price, so the
 // index level doesn't matter. Alongside it goes the HMA 50 vs HMA 130 gap (as %
@@ -72,19 +75,33 @@ export async function ensureGiftHistory(db, fetchHistorical, { now = Date.now(),
   return r;
 }
 
-/** Bars in [start, start + lenMs) as hourly buckets: { pct, gap, close, ts } (last value in each hour). bars sorted by ts. */
-export function buildStretch(bars, hmaFast, hmaSlow, start, lenMs, cfg = SIMILARITY) {
-  let lo = 0, hi = bars.length;
-  while (lo < hi) { const mid = (lo + hi) >> 1; if (bars[mid].ts < start) lo = mid + 1; else hi = mid; }
-  const w = { start, open: null, buckets: [] };
-  for (let i = lo; i < bars.length && bars[i].ts < start + lenMs; i++) {
-    const b = bars[i];
-    if (w.open == null) w.open = b.open;
-    const k = Math.floor((b.ts - start) / (cfg.bucketMin * 60000));
+/**
+ * Trading days (06:00 → 06:00 IST days that have candles), oldest first, each
+ * with its first price and hourly slots { close, gap } (last value in each hour).
+ */
+export function dayProfiles(bars, hmaFast, hmaSlow, cfg = SIMILARITY) {
+  const days = [];
+  let cur = null;
+  bars.forEach((b, i) => {
+    const day = dayOf(b.ts, cfg);
+    if (!cur || cur.day !== day) { cur = { day, start: dayAt(day, cfg), open: b.open, slots: [] }; days.push(cur); }
+    const h = Math.floor((b.ts - cur.start) / (cfg.bucketMin * 60000));
     const gap = Number.isFinite(hmaFast[i]) && Number.isFinite(hmaSlow[i]) ? ((hmaFast[i] - hmaSlow[i]) / b.close) * 100 : null;
-    w.buckets[k] = { pct: ((b.close - w.open) / w.open) * 100, gap, close: b.close, ts: b.ts };
+    cur.slots[h] = { close: b.close, gap };
+  });
+  return days;
+}
+
+/** `n` trading days from index `j` as one path: buckets[dayIndex * 24 + hour] = { pct, gap } (% from the first price). */
+export function stretchOf(days, j, n, cfg = SIMILARITY) {
+  const perDay = (24 * 60) / cfg.bucketMin;
+  const open = days[j].open;
+  const buckets = [];
+  for (let d = 0; d < n; d++) {
+    days[j + d].slots.forEach((x, h) => { if (x) buckets[d * perDay + h] = { pct: ((x.close - open) / open) * 100, gap: x.gap }; });
   }
-  return w;
+  const last = days[j + n - 1];
+  return { index: j, start: days[j].start, end: last.start + DAY_MS - 1, days: days.slice(j, j + n).map((x) => x.day), buckets };
 }
 
 function pearson(x, y) {
@@ -123,16 +140,15 @@ let cache = { key: null, value: null };
 const pathOf = (w) => w.buckets.map((x, k) => (x ? [k, Math.round(x.pct * 1000) / 1000] : null)).filter(Boolean);
 
 /**
- * The chosen days (default: the last 7 complete days) vs every earlier stretch
- * of the same length starting on the same weekday; best `top` matches.
+ * The chosen days (default: the last 7 complete days) vs every earlier run of
+ * the same number of consecutive trading days, on any weekday; best `top`
+ * matches that don't overlap each other.
  */
 export function similarWeeks(db, { now = Date.now(), from = null, to = null, cfg = SIMILARITY } = {}) {
   const win = rangeWindow({ from, to, now, cfg });
   if (win.error) return { status: 'invalid', error: win.error, lastDay: win.lastDay, matches: [] };
   const { start, end } = win;
-  const lenMs = end - start;
-  const days = Math.round(lenMs / DAY_MS);
-  const base = { weekStart: start, weekEnd: end - 1, from: win.from, to: win.to, days, lastDay: win.lastDay, lowConfidence: days < cfg.lowConfidenceDays };
+  const base = { weekStart: start, weekEnd: end - 1, from: win.from, to: win.to, lastDay: win.lastDay };
   const today = todayIST(now);
   const histFrom = toInputDate(addDays(new Date(`${today}T00:00:00`), -Math.round(cfg.historyYears * 365)));
   const bars = getCandles(db, { token: GIFT.token, interval: DEFAULT_CROSS_CONFIG.timeframe, from: histFrom, to: today })
@@ -146,29 +162,44 @@ export function similarWeeks(db, { now = Date.now(), from = null, to = null, cfg
   const { config } = normalizeConfig(DEFAULT_CROSS_CONFIG);
   const fast = computeHMASeries(bars, config.trend.fastPeriod);
   const slow = computeHMASeries(bars, config.trend.slowPeriod);
-  const minBuckets = Math.max(6, days * cfg.minHoursPerDay);
+  const days = dayProfiles(bars, fast, slow, cfg);
+  const first = days.findIndex((d) => d.start >= start);
+  const n = first < 0 ? 0 : days.length - first; // trading days in the range (bars stop at its end)
+  const perDay = (24 * 60) / cfg.bucketMin;
+  const minBuckets = Math.max(6, n * cfg.minHoursPerDay);
   const c = { ...cfg, minBuckets };
-  const cur = buildStretch(bars, fast, slow, start, lenMs, c);
-  const filled = cur.buckets.filter(Boolean).length;
   let value;
-  if (filled < minBuckets) {
-    value = { status: 'too-early', ...base, hoursSoFar: filled, hoursNeeded: minBuckets, matches: [], weeksCompared: 0 };
+  if (!n) {
+    value = { status: 'too-early', ...base, tradingDays: 0, hoursSoFar: 0, hoursNeeded: minBuckets, matches: [], weeksCompared: 0 };
   } else {
-    const upTo = lenMs / (cfg.bucketMin * 60000) - 1;
-    const scored = [];
-    // Earlier stretches a whole number of weeks back (same weekday), ending before the range starts.
-    for (let s = start - Math.ceil(lenMs / WEEK_MS) * WEEK_MS; s >= bars[0].ts - WEEK_MS; s -= WEEK_MS) {
-      const w = buildStretch(bars, fast, slow, s, lenMs, c);
-      if (w.buckets.filter(Boolean).length < minBuckets) continue;
-      const sc = scoreWeek(cur, w, upTo, c);
-      if (sc) scored.push({ w, s: sc });
+    const cur = stretchOf(days, first, n, cfg);
+    const filled = cur.buckets.filter(Boolean).length;
+    const info = { ...base, tradingDays: n, days: cur.days, lowConfidence: n < cfg.lowConfidenceDays };
+    if (filled < minBuckets) {
+      value = { status: 'too-early', ...info, hoursSoFar: filled, hoursNeeded: minBuckets, matches: [], weeksCompared: 0 };
+    } else {
+      const upTo = n * perDay - 1;
+      const scored = [];
+      // Every earlier run of n trading days that ends before the range starts.
+      for (let j = 0; j + n <= first; j++) {
+        const w = stretchOf(days, j, n, cfg);
+        if (w.buckets.filter(Boolean).length < minBuckets) continue;
+        const sc = scoreWeek(cur, w, upTo, c);
+        if (sc) scored.push({ w, s: sc });
+      }
+      scored.sort((x, y) => y.s.score - x.s.score);
+      // Neighbouring runs share most of their days; keep the best of each overlap.
+      const picked = [];
+      for (const m of scored) {
+        if (picked.length >= cfg.top) break;
+        if (picked.every((p) => Math.abs(p.w.index - m.w.index) >= n)) picked.push(m);
+      }
+      value = {
+        status: 'ok', ...info, hours: filled, weeksCompared: scored.length, historyFrom: bars[0].ts,
+        current: pathOf(cur),
+        matches: picked.map(({ w, s }) => ({ weekStart: w.start, weekEnd: w.end, days: w.days, ...s, path: pathOf(w) })),
+      };
     }
-    scored.sort((x, y) => y.s.score - x.s.score);
-    value = {
-      status: 'ok', ...base, hours: filled, weeksCompared: scored.length, historyFrom: bars[0].ts,
-      current: pathOf(cur),
-      matches: scored.slice(0, cfg.top).map(({ w, s }) => ({ weekStart: w.start, weekEnd: w.start + lenMs - 1, ...s, path: pathOf(w) })),
-    };
   }
   cache = { key: cacheKey, value };
   return value;
