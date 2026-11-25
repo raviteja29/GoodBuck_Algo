@@ -27,7 +27,7 @@ test('a chosen range: complete days only, 1–14 days, 06:00 → 06:00 IST', () 
 test('identical shapes score higher than opposite ones; levels do not matter', () => {
   const mk = (base, sign) => {
     const bars = [];
-    for (let h = 0; h < 30; h++) { const p = base * (1 + sign * 0.001 * Math.sin(h / 4) * h / 10); bars.push({ ts: IST(2026, 11, 18, 7, 0) + h * 3600e3, open: p, high: p, low: p, close: p }); }
+    for (let h = 0; h < 40; h++) { const p = base * (1 + sign * 0.001 * Math.sin(h / 4) * h / 10); bars.push({ ts: IST(2026, 11, 18, 7, 0) + h * 3600e3, open: p, high: p, low: p, close: p }); }
     return stretchOf(dayProfiles(bars, bars.map(() => null), bars.map(() => null)), 0, 2);
   };
   const cur = mk(25000, 1), same = mk(20000, 1), opposite = mk(25000, -1);
@@ -74,4 +74,17 @@ test('matches any run of the same number of trading days, whatever weekday it st
   const two = similarWeeks(db, { now, from: '2026-11-24', to: '2026-11-25' });
   assert.equal(two.lowConfidence, true);
   assert.deepEqual(optionSimilarityStatus(db), { status: 'collecting', weeksSaved: 0, weeksNeeded: 8 });
+});
+
+test('trading days: weekday full sessions only; runs never skip a holiday', async () => {
+  const { weekdaysBetween } = await import('../../similarity.js');
+  assert.equal(weekdaysBetween('2026-11-18', '2026-11-24'), 5); // Wed → Tue
+  assert.equal(weekdaysBetween('2026-09-28', '2026-10-05'), 6); // Mon → Mon: with Fri 2 Oct a holiday this run is skipped
+  const bar = (day, hh) => { const p = 25000 + hh; return { ts: Date.parse(`${day}T${String(hh).padStart(2, '0')}:30:00+05:30`), open: p, high: p, low: p, close: p }; };
+  const bars = [];
+  for (let hh = 7; hh < 23; hh++) bars.push(bar('2026-11-06', hh));   // Fri: full session
+  for (let hh = 14; hh < 16; hh++) bars.push(bar('2026-11-08', hh));  // Sun: special session
+  for (let hh = 7; hh < 23; hh++) bars.push(bar('2026-11-09', hh));   // Mon
+  const days = dayProfiles(bars, bars.map(() => null), bars.map(() => null));
+  assert.deepEqual(days.map((d) => d.day), ['2026-11-06', '2026-11-09']);
 });
