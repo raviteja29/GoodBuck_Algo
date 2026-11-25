@@ -6,19 +6,21 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAY = 86400000;
 const fmt = (ms, opts) => new Intl.DateTimeFormat('en-IN', { timeZone: IST, ...opts }).format(new Date(ms));
 // A stretch runs 06:00 → 06:00 IST, so its last day is the one before its end.
+const wd = (day) => WEEKDAYS[new Date(`${day}T00:00:00Z`).getUTCDay()];
+const fmtDays = (days) => days.map(wd).join(' · ');
 const fmtRange = (start, end, year = true) => `${fmt(start, { weekday: 'short', day: '2-digit', month: 'short' })} – ${fmt(end - DAY + 1, { weekday: 'short', day: '2-digit', month: 'short', ...(year ? { year: 'numeric' } : {}) })}`;
 
-/** Small chart: a past 7-day stretch (% from its first price) with the last 7 days over it. */
-function MiniPath({ past, current, weekStart, days: n = 7, label }) {
+/** Small chart: a matched run of trading days (% from its first price) with the chosen days over it, trading day by trading day. */
+function MiniPath({ past, current, labels, label }) {
+  const n = labels.length || 1;
   const W = 320, H = 132, P = 6, AXIS = 14;
   const all = [...past, ...current].map((p) => p[1]);
   const lo = Math.min(0, ...all), hi = Math.max(0, ...all);
   const pad = (hi - lo) * 0.1 || 0.1;
   const y = (v) => P + ((hi + pad - v) / (hi - lo + 2 * pad)) * (H - AXIS - 2 * P);
   const x = (k) => (k / (n * 24)) * W;
-  const first = new Date(weekStart + 330 * 60000).getUTCDay();
-  const days = Array.from({ length: n }, (_, i) => WEEKDAYS[(first + i) % 7]);
-  // Break the line over gaps (the weekend) instead of drawing a straight bridge.
+  const days = labels;
+  // Break the line over gaps (overnight) instead of drawing a straight bridge.
   const segments = (pts) => pts.reduce((out, p, i) => {
     if (!i || p[0] - pts[i - 1][0] > 6) out.push([]);
     out[out.length - 1].push(`${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`);
@@ -30,7 +32,7 @@ function MiniPath({ past, current, weekStart, days: n = 7, label }) {
       {days.map((d, i) => (
         <g key={i}>
           <line x1={x(i * 24)} x2={x(i * 24)} y1={0} y2={H - AXIS} stroke="var(--gb-separator)" strokeWidth="1" />
-          <text x={x(i * 24 + 12)} y={H - 3} textAnchor="middle" fontSize={n > 10 ? 8 : 10} fill="var(--gb-text-3)">{d}</text>
+          <text x={x(i * 24 + 12)} y={H - 3} textAnchor="middle" fontSize={n > 6 ? 8 : 10} fill="var(--gb-text-3)">{d}</text>
         </g>
       ))}
       <line x1={0} x2={W} y1={y(0)} y2={y(0)} stroke="var(--gb-separator)" strokeDasharray="3 3" />
@@ -91,7 +93,7 @@ export default function SimilarWeeks() {
         <span className="gb-opt-chev" aria-hidden="true">{open ? '▾' : '▸'}</span>
         <span id="gb-sim-title" className="gb-h2">Similar weeks</span>
         <span className="gb-muted gb-opt-week-meta">
-          {g?.weekStart ? `GIFT NIFTY · ${fmtRange(g.weekStart, g.weekEnd, false)}${g.status === 'ok' ? ` vs ${g.weeksCompared} earlier stretches` : ''}` : 'GIFT NIFTY · pick days to compare'}
+          {g?.weekStart ? `GIFT NIFTY · ${fmtRange(g.weekStart, g.weekEnd, false)}${g.status === 'ok' ? ` · ${g.tradingDays} trading days vs ${g.weeksCompared} earlier runs` : ''}` : 'GIFT NIFTY · pick days to compare'}
         </span>
       </button>
       {open && (
@@ -117,25 +119,27 @@ export default function SimilarWeeks() {
           {g?.status === 'ok' && (
             <>
               <p className="gb-muted gb-sim-help">
-                {fmtRange(g.weekStart, g.weekEnd)} ({g.days} day{g.days === 1 ? '' : 's'}) matched against every earlier {g.days}-day stretch starting on the same weekday.
-                A day runs 06:00 → 06:00 IST, night session included.
+                {fmtRange(g.weekStart, g.weekEnd)} = {g.tradingDays} trading day{g.tradingDays === 1 ? '' : 's'} ({fmtDays(g.days)}), matched against every earlier run of {g.tradingDays} trading days in a row, starting on any weekday (weekends don't count).
+                A day runs 06:00 → 06:00 IST, night session included; the charts line up trading day by trading day.
                 Each is drawn as % moves from its first price. Score = 50% shape + 25% size of the moves + 25% how HMA 50 and HMA 130 sit.
               </p>
-              {g.lowConfidence && <p className="gb-opt-partial gb-sim-help">Low confidence: with fewer than 3 days, many stretches look alike.</p>}
+              {g.lowConfidence && <p className="gb-opt-partial gb-sim-help">Low confidence: with fewer than 3 trading days, many stretches look alike.</p>}
               <div className="gb-sim-grid">
                 {g.matches.map((m, i) => (
                   <article key={m.weekStart} className="gb-card gb-sim-card" aria-label={`Match ${i + 1}: ${fmtRange(m.weekStart, m.weekEnd)}, score ${m.score}`}>
                     <div className="gb-sim-head">
                       <div>
                         <div className="gb-sim-week">{fmtRange(m.weekStart, m.weekEnd)}</div>
+                        <div className="gb-muted">{fmtDays(m.days)}</div>
                         <div className="gb-muted">Shape {m.parts.shape} · Size {m.parts.size} · HMA {m.parts.hma}</div>
                       </div>
                       <div className="gb-sim-score"><b>{m.score}</b><span className="gb-muted">/100</span></div>
                     </div>
-                    <MiniPath past={m.path} current={g.current} weekStart={g.weekStart} days={g.days} label={fmtRange(m.weekStart, m.weekEnd)} />
+                    <MiniPath past={m.path} current={g.current} labels={g.days.map((d, k) => `${wd(d)}/${wd(m.days[k])}`)} label={fmtRange(m.weekStart, m.weekEnd)} />
                     <div className="gb-sim-legend">
-                      <span><i style={{ background: '#0A84FF' }} />{fmtRange(g.weekStart, g.weekEnd, false)}</span>
+                      <span><i style={{ background: '#0A84FF' }} />Your days</span>
                       <span><i style={{ background: '#A1A1A6' }} />Match</span>
+                      <span className="gb-muted">axis: yours / match</span>
                     </div>
                   </article>
                 ))}
